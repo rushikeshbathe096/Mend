@@ -1,0 +1,11 @@
+.env
+.venv/
+node_modules/
+.next/
+target/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+*.swp
+*.class
