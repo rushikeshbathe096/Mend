@@ -51,6 +51,13 @@ public class WebhookEvent {
     @Column(columnDefinition = "UUID")
     private UUID merchantId;
 
+    @Column(nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    private com.mend.domain.enums.WebhookPublishStatus publishStatus = com.mend.domain.enums.WebhookPublishStatus.PENDING;
+
+    @Column
+    private Instant publishedAt;
+
     public WebhookEvent() {
     }
 
@@ -156,5 +163,21 @@ public class WebhookEvent {
 
     public void setMerchantId(UUID merchantId) {
         this.merchantId = merchantId;
+    }
+
+    public com.mend.domain.enums.WebhookPublishStatus getPublishStatus() {
+        return publishStatus;
+    }
+
+    public void setPublishStatus(com.mend.domain.enums.WebhookPublishStatus publishStatus) {
+        this.publishStatus = publishStatus;
+    }
+
+    public Instant getPublishedAt() {
+        return publishedAt;
+    }
+
+    public void setPublishedAt(Instant publishedAt) {
+        this.publishedAt = publishedAt;
     }
 }

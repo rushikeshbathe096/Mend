@@ -62,4 +62,35 @@
 ### 5. Phase 5 Handoff Abstraction
 - **Publisher Component**: `WebhookEventPublisher` interface decoupling Phase 4 reception/verification from Phase 5 Redis queue streaming pipeline.
 
+## Phase 5 Architecture: Redis Event Pipeline
+
+### 1. Redis Streams Event Transport
+- **Asynchronous Transport**: Webhook verification and initial database persistence are completely decoupled from downstream event processing using Redis Streams (`mend:webhook-events`).
+- **PostgreSQL Source of Truth**: Database persistence always occurs FIRST with `publish_status = PENDING`. Publication to Redis follows immediately.
+- **Fail-Safe Persistence**: If Redis is unavailable, the PostgreSQL record remains committed with `publish_status = PUBLISH_FAILED`. PostgreSQL data is never rolled back or deleted due to Redis unavailability.
+
+### 2. Event Envelope Contract
+- **Contract Schema**: Standardized JSON event envelope (`WebhookEventEnvelope`) containing:
+  - `eventId`: Provider event ID
+  - `schemaVersion`: Version counter (currently `1`)
+  - `provider`: Event provider (e.g. `"RAZORPAY"`)
+  - `providerEventId`: External event ID
+  - `eventType`: Provider event type (e.g. `"payment.failed"`, `"payment.captured"`)
+  - `merchantId`: Resolved merchant UUID (or `null` if unknown)
+  - `webhookDatabaseId`: PostgreSQL primary key UUID
+  - `occurredAt`: Instant when event occurred
+  - `receivedAt`: Instant when webhook was received by Mend gateway
+  - `payloadHash`: SHA-256 payload checksum
+
+### 3. Consumer Group & Delivery Guarantees
+- **At-Least-Once Delivery**: Messages are processed via consumer group `mend-processors`.
+- **Explicit Acknowledgment (XACK)**: Messages are acknowledged (`XACK`) only after successful downstream handling (`WebhookEventHandler.handle()`).
+- **Fault Recovery**: Un-ACKed messages remain in Redis pending entries list (`XPENDING`) and are automatically recovered on consumer restart via `processPendingMessages()`.
+- **Idempotency**: Downstream handlers check PostgreSQL `processing_status` before processing. If an event is already marked `PROCESSED`, it is acknowledged safely without duplicate side effects.
+
+### 4. Retry & Observability
+- **Retry Mechanism**: `WebhookPublisherRetryService` queries `publish_status = PUBLISH_FAILED` records and re-publishes them once Redis connectivity is restored.
+- **Structured Logging**: All stream operations, failures, and recoveries are logged cleanly without leaking sensitive payload data or security tokens.
+
+
 

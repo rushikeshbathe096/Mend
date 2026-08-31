@@ -15,4 +15,8 @@ public interface ClassificationResultRepository extends JpaRepository<Classifica
     
     @Query("SELECT c FROM ClassificationResult c WHERE c.campaignId = :campaignId ORDER BY c.createdAt DESC LIMIT 1")
     Optional<ClassificationResult> findLatestByCampaignId(@Param("campaignId") UUID campaignId);
+
+    Optional<ClassificationResult> findByEventId(UUID eventId);
+
+    boolean existsByEventId(UUID eventId);
 }

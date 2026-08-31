@@ -11,6 +11,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "classification_results", indexes = {
     @Index(name = "idx_classification_results_campaign_id", columnList = "campaign_id"),
+    @Index(name = "idx_classification_results_event_id", columnList = "event_id"),
     @Index(name = "idx_classification_results_created_at", columnList = "created_at"),
     @Index(name = "idx_classification_results_failure_class", columnList = "failure_class")
 })
@@ -20,8 +21,11 @@ public class ClassificationResult {
     @Column(columnDefinition = "UUID")
     private UUID id;
 
-    @Column(name = "campaign_id", nullable = false, columnDefinition = "UUID")
+    @Column(name = "campaign_id", columnDefinition = "UUID")
     private UUID campaignId;
+
+    @Column(name = "event_id", columnDefinition = "UUID", unique = true)
+    private UUID eventId;
 
     @Column(nullable = false, length = 50)
     private String failureClass;
@@ -46,13 +50,27 @@ public class ClassificationResult {
     private Instant createdAt;
 
     public ClassificationResult() {
+        this.id = UUID.randomUUID();
+        this.createdAt = Instant.now();
     }
 
     public ClassificationResult(UUID id, UUID campaignId, String failureClass, BigDecimal confidence) {
-        this.id = id;
+        this.id = id != null ? id : UUID.randomUUID();
         this.campaignId = campaignId;
         this.failureClass = failureClass;
         this.confidence = confidence;
+        this.createdAt = Instant.now();
+    }
+
+    public ClassificationResult(UUID id, UUID eventId, UUID campaignId, String failureClass, BigDecimal confidence, String strategyRecommendation, String reasoning, String modelVersion) {
+        this.id = id != null ? id : UUID.randomUUID();
+        this.eventId = eventId;
+        this.campaignId = campaignId;
+        this.failureClass = failureClass;
+        this.confidence = confidence;
+        this.strategyRecommendation = strategyRecommendation;
+        this.reasoning = reasoning;
+        this.modelVersion = modelVersion;
         this.createdAt = Instant.now();
     }
 
@@ -71,6 +89,14 @@ public class ClassificationResult {
 
     public void setCampaignId(UUID campaignId) {
         this.campaignId = campaignId;
+    }
+
+    public UUID getEventId() {
+        return eventId;
+    }
+
+    public void setEventId(UUID eventId) {
+        this.eventId = eventId;
     }
 
     public String getFailureClass() {

@@ -12,4 +12,5 @@ import java.util.UUID;
 public interface WebhookEventRepository extends JpaRepository<WebhookEvent, UUID> {
     Optional<WebhookEvent> findByExternalEventId(String externalEventId);
     List<WebhookEvent> findByProcessingStatus(WebhookEventStatus status);
+    List<WebhookEvent> findByPublishStatus(com.mend.domain.enums.WebhookPublishStatus publishStatus);
 }

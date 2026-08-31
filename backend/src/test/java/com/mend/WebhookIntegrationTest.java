@@ -90,6 +90,7 @@ class WebhookIntegrationTest {
         assertEquals("RAZORPAY", event.getSource());
         assertEquals(payload, event.getRawPayload());
         assertEquals(WebhookEventStatus.VERIFIED, event.getProcessingStatus());
+        assertEquals(com.mend.domain.enums.WebhookPublishStatus.PUBLISHED, event.getPublishStatus());
         assertEquals(testMerchant.getId(), event.getMerchantId());
     }
 
