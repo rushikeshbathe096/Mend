@@ -1,0 +1,11 @@
+package com.mend.domain.enums;
+
+public enum FailureClass {
+    INSUFFICIENT_FUNDS,
+    BANK_TECHNICAL,
+    GATEWAY_ERROR,
+    AUTHENTICATION_FAILURE,
+    CUSTOMER_DECLINED,
+    MANDATE_INVALID,
+    UNCLASSIFIED
+}
