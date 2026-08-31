@@ -37,9 +37,14 @@ public class User {
     }
 
     public User(UUID id, String email, String passwordHash) {
+        this(id, email, passwordHash, null);
+    }
+
+    public User(UUID id, String email, String passwordHash, String displayName) {
         this.id = id;
         this.email = email;
         this.passwordHash = passwordHash;
+        this.displayName = displayName;
         this.createdAt = Instant.now();
         this.updatedAt = Instant.now();
     }

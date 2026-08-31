@@ -2,8 +2,10 @@ package com.mend.domain.enums;
 
 public enum WebhookEventStatus {
     RECEIVED,
+    VERIFIED,
     PROCESSING,
     PROCESSED,
     FAILED,
-    IGNORED
+    IGNORED,
+    INVALID_SIGNATURE
 }
