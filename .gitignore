@@ -9,3 +9,5 @@ __pycache__/
 .vscode/
 *.swp
 *.class
+/ai-service/.venv/
+ai-service/.pytest_cache/
