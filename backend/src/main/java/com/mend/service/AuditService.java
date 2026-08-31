@@ -46,6 +46,28 @@ public class AuditService {
         return auditLogRepository.save(auditLog);
     }
 
+    @Transactional
+    public AuditLog logEvent(
+            UUID merchantId,
+            UUID campaignId,
+            String eventType,
+            String actorType,
+            UUID actorId,
+            String reason) {
+        AuditLog auditLog = new AuditLog(UUID.randomUUID(), eventType != null ? eventType : "GENERAL_EVENT");
+        auditLog.setMerchantId(merchantId);
+        auditLog.setCampaignId(campaignId);
+        auditLog.setActorType(actorType != null ? actorType : "SYSTEM");
+        auditLog.setActorId(actorId);
+        auditLog.setReason(reason);
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("timestamp", Instant.now().toString());
+        auditLog.setMetadata(metadata);
+
+        return auditLogRepository.save(auditLog);
+    }
+
     @Transactional(readOnly = true)
     public List<AuditLog> getCampaignAuditLogs(UUID campaignId) {
         return auditLogRepository.findByCampaignIdOrderByCreatedAtAsc(campaignId);

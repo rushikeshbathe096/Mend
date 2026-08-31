@@ -265,6 +265,7 @@ public class DatabaseIntegrationTest extends AbstractIntegrationTest {
         campaignRepository.save(campaign);
 
         ActionIntent intent = new ActionIntent(UUID.randomUUID(), campaignId, 1, "WEBHOOK_CALLBACK", "idempotent-key-1");
+        intent.setMerchantId(merchantId);
         intent.setStatus(ActionIntentStatus.PENDING);
 
         ActionIntent saved = actionIntentRepository.save(intent);
@@ -287,9 +288,11 @@ public class DatabaseIntegrationTest extends AbstractIntegrationTest {
         campaignRepository.save(campaign);
 
         ActionIntent intent1 = new ActionIntent(UUID.randomUUID(), campaignId, 1, "WEBHOOK", "dup-key");
+        intent1.setMerchantId(merchantId);
         actionIntentRepository.save(intent1);
 
         ActionIntent intent2 = new ActionIntent(UUID.randomUUID(), campaignId, 1, "WEBHOOK", "dup-key");
+        intent2.setMerchantId(merchantId);
         assertThrows(DataIntegrityViolationException.class, () -> {
             actionIntentRepository.save(intent2);
             actionIntentRepository.flush();
