@@ -1,13 +1,21 @@
 package com.mend.domain.enums;
 
 public enum CampaignStatus {
-    FAILED,
+    CREATED,
     CLASSIFIED,
+    ELIGIBLE,
+    SCHEDULED,
+    ACTION_PENDING,
+    EXECUTING,
+    RECOVERED,
+    EXHAUSTED,
+    FAILED,
+    CANCELLED,
+
+    // Legacy values retained for backward compatibility
     STRATEGY_ASSIGNED,
     WAITING,
-    ACTION_PENDING,
     ACTION_EXECUTING,
-    RECOVERED,
     RETRY_SCHEDULED,
     PENDING_REVIEW,
     ESCALATED,

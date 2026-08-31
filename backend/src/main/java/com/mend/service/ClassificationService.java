@@ -10,6 +10,7 @@ import com.mend.dto.ai.ClassificationRequestDto;
 import com.mend.dto.ai.ClassificationResponseDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,14 +25,17 @@ public class ClassificationService {
     private final AiClassificationClient aiClassificationClient;
     private final ClassificationResultRepository classificationResultRepository;
     private final WebhookEventRepository webhookEventRepository;
+    private final CampaignLifecycleService campaignLifecycleService;
 
     public ClassificationService(
             AiClassificationClient aiClassificationClient,
             ClassificationResultRepository classificationResultRepository,
-            WebhookEventRepository webhookEventRepository) {
+            WebhookEventRepository webhookEventRepository,
+            @Autowired(required = false) CampaignLifecycleService campaignLifecycleService) {
         this.aiClassificationClient = aiClassificationClient;
         this.classificationResultRepository = classificationResultRepository;
         this.webhookEventRepository = webhookEventRepository;
+        this.campaignLifecycleService = campaignLifecycleService;
     }
 
     @Transactional
@@ -40,7 +44,11 @@ public class ClassificationService {
         Optional<ClassificationResult> existing = classificationResultRepository.findByEventId(event.getId());
         if (existing.isPresent()) {
             log.info("Idempotency check: Classification result already exists for eventId='{}'", event.getId());
-            return existing.get();
+            ClassificationResult existingResult = existing.get();
+            if (campaignLifecycleService != null) {
+                campaignLifecycleService.processClassificationResult(event, existingResult);
+            }
+            return existingResult;
         }
 
         ClassificationRequestDto request = ClassificationRequestDto.of(
@@ -74,6 +82,17 @@ public class ClassificationService {
 
         log.info("Successfully classified and persisted eventId='{}' [classification='{}', confidence={}]",
                 event.getId(), response.classification(), response.confidence());
+
+        // Process campaign lifecycle if campaign service is available
+        if (campaignLifecycleService != null) {
+            try {
+                campaignLifecycleService.processClassificationResult(event, savedResult);
+            } catch (Exception e) {
+                log.error("Failed to process campaign lifecycle for eventId='{}': {}", event.getId(), e.getMessage(), e);
+                // Re-throw so transaction rolls back cleanly or exception handled by processor
+                throw e;
+            }
+        }
 
         return savedResult;
     }

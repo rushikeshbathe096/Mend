@@ -40,7 +40,7 @@ public class Campaign {
 
     @Column(nullable = false, length = 50)
     @Enumerated(EnumType.STRING)
-    private CampaignStatus currentState = CampaignStatus.FAILED;
+    private CampaignStatus currentState = CampaignStatus.CREATED;
 
     @Column(length = 100)
     private String strategy;
