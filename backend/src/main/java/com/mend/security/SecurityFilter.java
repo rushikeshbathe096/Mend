@@ -66,6 +66,10 @@ public class SecurityFilter extends OncePerRequestFilter {
             if (merchantHeader != null && !merchantHeader.trim().isEmpty()) {
                 try {
                     merchantId = UUID.fromString(merchantHeader.trim());
+                    if (!authenticatedUser.isMemberOfMerchant(merchantId)) {
+                        writeErrorResponse(response, HttpStatus.FORBIDDEN, "Access denied: user is not a member of the specified merchant header");
+                        return;
+                    }
                 } catch (IllegalArgumentException e) {
                     writeErrorResponse(response, HttpStatus.BAD_REQUEST, "Invalid X-Merchant-Id header format");
                     return;
@@ -77,19 +81,22 @@ public class SecurityFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
 
         } catch (Exception e) {
-            writeErrorResponse(response, HttpStatus.UNAUTHORIZED, "Authentication failed: " + e.getMessage());
+            writeErrorResponse(response, HttpStatus.UNAUTHORIZED, "Authentication failed");
         } finally {
             TenantContext.clear();
         }
     }
 
     private boolean isPublicPath(String path) {
-        return path.startsWith("/api/v1/auth/login") ||
-               path.startsWith("/api/v1/auth/bootstrap") ||
-               path.startsWith("/api/v1/webhooks/razorpay") ||
-               path.startsWith("/api/v1/health") ||
-               path.startsWith("/api/health") ||
-               path.startsWith("/error");
+        if (path == null) {
+            return false;
+        }
+        return path.equals("/api/v1/auth/login") ||
+               path.equals("/api/v1/auth/bootstrap") ||
+               path.equals("/api/v1/webhooks/razorpay") ||
+               path.equals("/api/v1/health") ||
+               path.equals("/api/health") ||
+               path.equals("/error");
     }
 
     private void writeErrorResponse(HttpServletResponse response, HttpStatus status, String message) throws IOException {

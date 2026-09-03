@@ -107,19 +107,23 @@ class ClassificationServiceTest {
     }
 
     @Test
-    void classifyAndPersist_AiServiceFailure_ThrowsExceptionAndDoesNotMarkProcessed() {
+    void classifyAndPersist_AiServiceFailure_FallsBackToUnknownAndPersistsResult() {
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), "evt_ai_test_3", "payment.failed");
         final WebhookEvent savedEvent = webhookEventRepository.save(event);
 
         when(aiClassificationClient.classify(any(ClassificationRequestDto.class)))
                 .thenThrow(new AiClassificationException("AI service unavailable"));
 
-        assertThrows(AiClassificationException.class, () ->
-                classificationService.classifyAndPersist(savedEvent, "bank_declined", "Bank error")
-        );
+        ClassificationResult result = classificationService.classifyAndPersist(savedEvent, "bank_declined", "Bank error");
+
+        assertNotNull(result);
+        assertEquals("UNKNOWN", result.getFailureClass());
+        assertEquals("REVIEW_REQUIRED", result.getStrategyRecommendation());
+        assertEquals(new BigDecimal("0.30"), result.getConfidence());
+        assertTrue(result.getReasoning().contains("AI classification service unavailable"));
 
         WebhookEvent updatedEvent = webhookEventRepository.findById(savedEvent.getId()).orElseThrow();
-        assertNotEquals(WebhookEventStatus.PROCESSED, updatedEvent.getProcessingStatus());
-        assertEquals(0, classificationResultRepository.count());
+        assertEquals(WebhookEventStatus.PROCESSED, updatedEvent.getProcessingStatus());
+        assertEquals(1, classificationResultRepository.count());
     }
 }

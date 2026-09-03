@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-@Component
+// Legacy consumer disabled in favor of RedisWebhookEventConsumer
 public class RedisStreamConsumer {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisStreamConsumer.class);

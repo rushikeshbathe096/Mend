@@ -2,7 +2,7 @@ package com.mend.publisher;
 
 import tools.jackson.databind.ObjectMapper;
 import com.mend.config.RedisStreamProperties;
-import com.mend.consumer.RedisStreamConsumer;
+import com.mend.consumer.RedisWebhookEventConsumer;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
@@ -32,9 +32,11 @@ class RedisStreamPublisherConsumerTest {
     private RedisWebhookEventPublisher publisher;
 
     @Autowired
-    private RedisStreamConsumer consumer;
+    private RedisWebhookEventConsumer consumer;
 
     @Autowired
+    private com.mend.processor.DefaultWebhookEventProcessor processor;
+
     private DefaultWebhookEventHandler handler;
 
     @Autowired
@@ -56,7 +58,9 @@ class RedisStreamPublisherConsumerTest {
 
     @BeforeEach
     void setUp() {
+        handler = new DefaultWebhookEventHandler(webhookEventRepository);
         handler.setSimulateFailure(false);
+        processor.setSimulateFailure(false);
         webhookEventRepository.deleteAll();
         try {
             redisTemplate.delete(streamProperties.getStreamName());
@@ -158,18 +162,18 @@ class RedisStreamPublisherConsumerTest {
 
         publisher.publish(event);
 
-        // Simulate handler failure
-        handler.setSimulateFailure(true);
+        // Simulate processor failure
+        processor.setSimulateFailure(true);
 
         int processed = consumer.pollAndProcessMessages();
-        // Handler failed, message not ACKed
+        // Processor failed on main stream, message moved to retry stream
         assertEquals(0, processed);
 
         // Turn off simulated failure
-        handler.setSimulateFailure(false);
+        processor.setSimulateFailure(false);
 
-        // Recover pending messages
-        int recovered = consumer.processPendingMessages();
+        // Poll again to process recovered message from retry stream
+        int recovered = consumer.pollAndProcessMessages();
         assertEquals(1, recovered);
 
         WebhookEvent processedEvent = webhookEventRepository.findById(event.getId()).orElseThrow();

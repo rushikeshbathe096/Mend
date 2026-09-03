@@ -55,14 +55,21 @@ public class AuthService {
         this.userPrincipalResolver = userPrincipalResolver;
     }
 
+    private static final String DUMMY_HASH = "pbkdf2:65536:c2FsdHNhbHRzYWx0c2FsdA==:aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g=";
+
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
         if (request == null || request.getEmail() == null || request.getPassword() == null) {
             throw new InvalidRequestException("Email and password are required");
         }
 
-        User user = userRepository.findByEmail(request.getEmail().trim().toLowerCase())
-                .orElseThrow(() -> new AuthenticationException("Invalid email or password"));
+        Optional<User> userOpt = userRepository.findByEmail(request.getEmail().trim().toLowerCase());
+        if (userOpt.isEmpty()) {
+            passwordHasher.verifyPassword(request.getPassword(), DUMMY_HASH);
+            throw new AuthenticationException("Invalid email or password");
+        }
+
+        User user = userOpt.get();
 
         if (!passwordHasher.verifyPassword(request.getPassword(), user.getPasswordHash())) {
             throw new AuthenticationException("Invalid email or password");
@@ -130,25 +137,28 @@ public class AuthService {
 
         String email = request.getAdminEmail().trim().toLowerCase();
 
-        // 1. Create or fetch Merchant
-        Merchant merchant = new Merchant(UUID.randomUUID(), request.getMerchantName().trim());
-        merchant = merchantRepository.save(merchant);
-
-        // 2. Fetch MERCHANT_ADMIN role
+        // 1. Fetch MERCHANT_ADMIN role
         Role adminRole = roleRepository.findByName("MERCHANT_ADMIN")
                 .orElseThrow(() -> new InvalidRequestException("System role MERCHANT_ADMIN not found"));
 
-        // 3. Create or fetch User
+        // 2. Create or fetch User
         Optional<User> existingUserOpt = userRepository.findByEmail(email);
         User adminUser;
         if (existingUserOpt.isPresent()) {
             adminUser = existingUserOpt.get();
+            if (!passwordHasher.verifyPassword(request.getAdminPassword(), adminUser.getPasswordHash())) {
+                throw new AuthenticationException("Invalid password for existing admin account");
+            }
         } else {
             String passwordHash = passwordHasher.hashPassword(request.getAdminPassword());
             String displayName = request.getAdminDisplayName() != null ? request.getAdminDisplayName().trim() : "Admin User";
             adminUser = new User(UUID.randomUUID(), email, passwordHash, displayName);
             adminUser = userRepository.save(adminUser);
         }
+
+        // 3. Create Merchant
+        Merchant merchant = new Merchant(UUID.randomUUID(), request.getMerchantName().trim());
+        merchant = merchantRepository.save(merchant);
 
         // 4. Check if membership exists, if not create
         Optional<MerchantUser> existingMu = merchantUserRepository.findByMerchantIdAndUserId(merchant.getId(), adminUser.getId());

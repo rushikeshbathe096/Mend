@@ -68,6 +68,15 @@ public class WebhookEvent {
         this.receivedAt = Instant.now();
     }
 
+    public WebhookEvent(UUID id, String externalEventId, String eventType, String source, String rawPayload) {
+        this.id = id;
+        this.externalEventId = externalEventId;
+        this.eventType = eventType;
+        this.source = source;
+        this.rawPayload = rawPayload;
+        this.receivedAt = Instant.now();
+    }
+
     // Getters and setters
     public UUID getId() {
         return id;

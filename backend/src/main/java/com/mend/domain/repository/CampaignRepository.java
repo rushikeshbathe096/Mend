@@ -18,6 +18,7 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
     List<Campaign> findByMerchantId(UUID merchantId);
     Optional<Campaign> findByPaymentId(String paymentId);
     Optional<Campaign> findByMerchantIdAndPaymentId(UUID merchantId, String paymentId);
+    Optional<Campaign> findByMerchantIdAndSubscriptionId(UUID merchantId, String subscriptionId);
     Optional<Campaign> findByMerchantIdAndId(UUID merchantId, UUID id);
     
     @Query("SELECT c FROM Campaign c WHERE c.merchantId = :merchantId AND c.nextActionAt <= :now AND c.currentState IN :states")

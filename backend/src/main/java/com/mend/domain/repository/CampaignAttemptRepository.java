@@ -11,4 +11,5 @@ import java.util.UUID;
 public interface CampaignAttemptRepository extends JpaRepository<CampaignAttempt, UUID> {
     List<CampaignAttempt> findByCampaignId(UUID campaignId);
     Optional<CampaignAttempt> findByCampaignIdAndAttemptNumber(UUID campaignId, Integer attemptNumber);
+    Optional<CampaignAttempt> findFirstByCampaignIdOrderByAttemptNumberDesc(UUID campaignId);
 }

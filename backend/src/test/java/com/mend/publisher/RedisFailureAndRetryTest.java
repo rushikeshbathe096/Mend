@@ -1,7 +1,7 @@
 package com.mend.publisher;
 
 import com.mend.config.RedisStreamProperties;
-import com.mend.consumer.RedisStreamConsumer;
+import com.mend.consumer.RedisWebhookEventConsumer;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
@@ -33,7 +33,7 @@ class RedisFailureAndRetryTest {
     private WebhookPublisherRetryService retryService;
 
     @Autowired
-    private RedisStreamConsumer consumer;
+    private RedisWebhookEventConsumer consumer;
 
     @Autowired
     private StringRedisTemplate redisTemplate;

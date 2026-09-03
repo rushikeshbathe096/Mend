@@ -19,6 +19,10 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
 
     Optional<ActionIntent> findByIdempotencyKey(String idempotencyKey);
 
+    Optional<ActionIntent> findByResponseReference(String responseReference);
+
+    Optional<ActionIntent> findFirstByCampaignIdOrderByCreatedAtDesc(UUID campaignId);
+
     List<ActionIntent> findByCampaignId(UUID campaignId);
 
     List<ActionIntent> findByMerchantId(UUID merchantId);

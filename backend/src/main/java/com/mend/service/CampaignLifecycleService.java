@@ -14,6 +14,7 @@ import com.mend.security.AuthenticatedUser;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,18 +34,21 @@ public class CampaignLifecycleService {
     private final MerchantRepository merchantRepository;
     private final CampaignStateMachine campaignStateMachine;
     private final AuditService auditService;
+    private final RecoveryOrchestratorService recoveryOrchestratorService;
 
     public CampaignLifecycleService(
             CampaignRepository campaignRepository,
             ClassificationResultRepository classificationResultRepository,
             MerchantRepository merchantRepository,
             CampaignStateMachine campaignStateMachine,
-            AuditService auditService) {
+            AuditService auditService,
+            @Lazy RecoveryOrchestratorService recoveryOrchestratorService) {
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.merchantRepository = merchantRepository;
         this.campaignStateMachine = campaignStateMachine;
         this.auditService = auditService;
+        this.recoveryOrchestratorService = recoveryOrchestratorService;
     }
 
     @Transactional
@@ -191,6 +195,11 @@ public class CampaignLifecycleService {
                     "SYSTEM",
                     null
             );
+
+            if (recoveryOrchestratorService != null) {
+                recoveryOrchestratorService.orchestrateRecovery(campaign.getMerchantId(), campaign.getId());
+                campaign = campaignRepository.findById(campaign.getId()).orElse(campaign);
+            }
         } else {
             String ineligibilityReason = (classificationResult.getConfidence() != null && classificationResult.getConfidence().compareTo(new BigDecimal("0.50")) < 0)
                     ? "Ineligible for recovery: Low AI classification confidence (" + classificationResult.getConfidence() + ")"

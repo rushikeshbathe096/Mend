@@ -115,13 +115,13 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
         Campaign campaign = campaignLifecycleService.processClassificationResult(event, result);
 
         assertNotNull(campaign.getId());
-        assertEquals(CampaignStatus.ELIGIBLE, campaign.getCurrentState());
+        assertEquals(CampaignStatus.ACTION_PENDING, campaign.getCurrentState());
         assertEquals("INSUFFICIENT_FUNDS", campaign.getFailureClass());
         assertEquals(new BigDecimal("0.95"), campaign.getConfidence());
 
         // Verify Audit Logs
         List<AuditLog> auditLogs = auditService.getCampaignAuditLogs(campaign.getId());
-        assertTrue(auditLogs.size() >= 3, "Must have CREATED, CLASSIFIED, and ELIGIBLE audit logs");
+        assertTrue(auditLogs.size() >= 4, "Must have CREATED, CLASSIFIED, ELIGIBLE, and ACTION_PENDING audit logs");
         assertEquals("CAMPAIGN_STATE_TRANSITION", auditLogs.get(0).getEventType());
     }
 

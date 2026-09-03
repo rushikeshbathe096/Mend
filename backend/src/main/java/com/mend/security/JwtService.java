@@ -17,9 +17,12 @@ public class JwtService {
     private final ObjectMapper objectMapper;
 
     public JwtService(
-            @Value("${jwt.secret:mend_default_secure_jwt_secret_key_for_payment_recovery_2026_production}") String secret,
+            @Value("${jwt.secret}") String secret,
             @Value("${jwt.expiration:86400000}") long expirationMs,
             ObjectMapper objectMapper) {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalArgumentException("JWT secret must be configured and be at least 32 bytes long");
+        }
         this.secret = secret;
         this.expirationMs = expirationMs;
         this.objectMapper = objectMapper;

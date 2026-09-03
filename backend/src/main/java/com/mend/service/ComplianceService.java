@@ -75,6 +75,17 @@ public class ComplianceService {
 
         UUID recoveryDecisionId = recoveryDecisionEntity != null ? recoveryDecisionEntity.getId() : null;
 
+        // Idempotency Check: return existing decision if already evaluated for this recovery decision
+        Optional<ComplianceDecisionEntity> existingComplianceOpt = complianceDecisionRepository
+                .findFirstByCampaignIdOrderByEvaluatedAtDesc(campaignId);
+        if (existingComplianceOpt.isPresent()) {
+            ComplianceDecisionEntity existingEntity = existingComplianceOpt.get();
+            if (recoveryDecisionId != null && java.util.Objects.equals(existingEntity.getRecoveryDecisionId(), recoveryDecisionId)) {
+                log.info("Idempotent compliance evaluation: Returning existing ComplianceDecision for campaign '{}'", campaignId);
+                return mapToDecision(existingEntity);
+            }
+        }
+
         // Fetch Classification & Merchant Config
         ClassificationResult classificationResult = classificationResultRepository
                 .findLatestByCampaignId(campaignId)

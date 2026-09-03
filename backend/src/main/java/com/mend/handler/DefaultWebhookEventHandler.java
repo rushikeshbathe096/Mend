@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.Optional;
 
-@Component
+// Legacy handler disabled in favor of DefaultEventProcessingService and ClassificationService
 public class DefaultWebhookEventHandler implements WebhookEventHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(DefaultWebhookEventHandler.class);

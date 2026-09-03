@@ -3,9 +3,11 @@ package com.mend.publisher;
 import com.mend.domain.entity.WebhookEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "mend.redis.enabled", havingValue = "false")
 public class NoOpWebhookEventPublisher implements WebhookEventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(NoOpWebhookEventPublisher.class);

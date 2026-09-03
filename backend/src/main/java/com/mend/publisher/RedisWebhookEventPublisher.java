@@ -12,6 +12,7 @@ import com.mend.exception.WebhookPublishException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StringRecord;
@@ -24,6 +25,7 @@ import java.util.Map;
 
 @Component
 @Primary
+@ConditionalOnProperty(name = "mend.redis.enabled", havingValue = "true", matchIfMissing = true)
 public class RedisWebhookEventPublisher implements WebhookEventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(RedisWebhookEventPublisher.class);
@@ -68,7 +70,9 @@ public class RedisWebhookEventPublisher implements WebhookEventPublisher {
                 event.getMerchantId(),
                 event.getEventType(),
                 occurredAt,
-                event.getPayloadHash()
+                event.getPayloadHash(),
+                WebhookEventMessage.DEFAULT_VERSION,
+                event.getRawPayload()
         );
 
         WebhookEventEnvelope envelope = new WebhookEventEnvelope(
@@ -91,6 +95,7 @@ public class RedisWebhookEventPublisher implements WebhookEventPublisher {
         fieldMap.put("eventType", message.eventType() != null ? message.eventType() : "");
         fieldMap.put("occurredAt", message.occurredAt().toString());
         fieldMap.put("payloadHash", message.payloadHash() != null ? message.payloadHash() : "");
+        fieldMap.put("version", message.version());
 
         try {
             String jsonPayload = objectMapper.writeValueAsString(message);

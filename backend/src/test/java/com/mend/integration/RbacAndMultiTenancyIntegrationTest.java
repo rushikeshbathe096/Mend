@@ -1,6 +1,7 @@
 package com.mend.integration;
 
 import com.mend.dto.*;
+import com.mend.exception.InvalidRequestException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
 import com.mend.security.UserPrincipalResolver;
@@ -119,5 +120,26 @@ public class RbacAndMultiTenancyIntegrationTest extends AbstractIntegrationTest 
         AddMerchantMemberRequest addReq = new AddMerchantMemberRequest("new@alpha.com", "Pass123!", "New User", "REVIEWER");
         assertThrows(TenantAccessDeniedException.class, () ->
                 merchantMemberService.addMerchantMember(merchantA.getMerchantId(), addReq, reviewerUser));
+    }
+
+    @Test
+    public void testCannotAssignSystemAdminRole() {
+        AddMerchantMemberRequest req = new AddMerchantMemberRequest("escalate@alpha.com", "Pass123!", "Escalation", "SYSTEM_ADMIN");
+        assertThrows(InvalidRequestException.class, () ->
+                merchantMemberService.addMerchantMember(merchantA.getMerchantId(), req, merchantAAdminUser));
+
+        AddMerchantMemberRequest validReq = new AddMerchantMemberRequest("regular@alpha.com", "Pass123!", "Regular", "REVIEWER");
+        MerchantMemberDto member = merchantMemberService.addMerchantMember(merchantA.getMerchantId(), validReq, merchantAAdminUser);
+
+        UpdateMemberRoleRequest updateReq = new UpdateMemberRoleRequest("SYSTEM_ADMIN");
+        assertThrows(InvalidRequestException.class, () ->
+                merchantMemberService.updateMemberRole(merchantA.getMerchantId(), member.getUserId(), updateReq, merchantAAdminUser));
+    }
+
+    @Test
+    public void testPasswordRequiredForNewMember() {
+        AddMerchantMemberRequest noPassReq = new AddMerchantMemberRequest("nopass@alpha.com", "", "No Pass", "REVIEWER");
+        assertThrows(InvalidRequestException.class, () ->
+                merchantMemberService.addMerchantMember(merchantA.getMerchantId(), noPassReq, merchantAAdminUser));
     }
 }

@@ -60,7 +60,19 @@ public class ClassificationService {
                 event.getMerchantId()
         );
 
-        ClassificationResponseDto response = aiClassificationClient.classify(request);
+        ClassificationResponseDto response;
+        try {
+            response = aiClassificationClient.classify(request);
+        } catch (Exception e) {
+            log.warn("AI classification client call failed for eventId='{}': {}. Applying UNKNOWN fallback.", event.getId(), e.getMessage());
+            response = new ClassificationResponseDto(
+                    com.mend.domain.enums.FailureClass.UNKNOWN,
+                    new java.math.BigDecimal("0.30"),
+                    com.mend.domain.enums.RecommendedAction.REVIEW_REQUIRED,
+                    "AI classification service unavailable: " + e.getMessage(),
+                    "v1.0.0-fallback"
+            );
+        }
 
         ClassificationResult result = new ClassificationResult(
                 null,

@@ -85,8 +85,13 @@ public class MerchantMemberService {
             throw new InvalidRequestException("Email and roleName are required");
         }
 
+        String roleName = request.getRoleName().trim().toUpperCase();
+        if ("SYSTEM_ADMIN".equals(roleName)) {
+            throw new InvalidRequestException("Cannot assign SYSTEM_ADMIN role via merchant APIs");
+        }
+
         String email = request.getEmail().trim().toLowerCase();
-        Role role = roleRepository.findByName(request.getRoleName().trim().toUpperCase())
+        Role role = roleRepository.findByName(roleName)
                 .orElseThrow(() -> new InvalidRequestException("Role not found: " + request.getRoleName()));
 
         User targetUser;
@@ -94,8 +99,10 @@ public class MerchantMemberService {
         if (existingUser.isPresent()) {
             targetUser = existingUser.get();
         } else {
-            String rawPassword = (request.getPassword() != null && !request.getPassword().isBlank())
-                    ? request.getPassword() : "TempPass123!";
+            if (request.getPassword() == null || request.getPassword().isBlank()) {
+                throw new InvalidRequestException("Password is required when creating a new member");
+            }
+            String rawPassword = request.getPassword();
             String displayName = (request.getDisplayName() != null && !request.getDisplayName().isBlank())
                     ? request.getDisplayName().trim() : email;
 
@@ -132,10 +139,15 @@ public class MerchantMemberService {
             throw new InvalidRequestException("roleName is required");
         }
 
+        String newRoleName = request.getRoleName().trim().toUpperCase();
+        if ("SYSTEM_ADMIN".equals(newRoleName)) {
+            throw new InvalidRequestException("Cannot assign SYSTEM_ADMIN role via merchant APIs");
+        }
+
         MerchantUser mu = merchantUserRepository.findByMerchantIdAndUserId(merchantId, targetUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this merchant"));
 
-        Role newRole = roleRepository.findByName(request.getRoleName().trim().toUpperCase())
+        Role newRole = roleRepository.findByName(newRoleName)
                 .orElseThrow(() -> new InvalidRequestException("Role not found: " + request.getRoleName()));
 
         mu.setRoleId(newRole.getId());

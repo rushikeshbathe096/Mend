@@ -11,3 +11,4 @@ __pycache__/
 *.class
 /ai-service/.venv/
 ai-service/.pytest_cache/
+docs/
