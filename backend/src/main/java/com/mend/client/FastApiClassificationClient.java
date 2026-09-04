@@ -2,6 +2,8 @@ package com.mend.client;
 
 import com.mend.dto.ai.ClassificationRequestDto;
 import com.mend.dto.ai.ClassificationResponseDto;
+import com.mend.dto.ai.AgentOrchestrationRequestDto;
+import com.mend.dto.ai.AgentOrchestrationResponseDto;
 import com.mend.exception.AiClassificationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +53,12 @@ public class FastApiClassificationClient implements AiClassificationClient {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            String traceId = org.slf4j.MDC.get("traceId");
+            if (traceId == null) traceId = org.slf4j.MDC.get("correlationId");
+            if (traceId != null) {
+                headers.set("X-Correlation-ID", traceId);
+                headers.set("X-Trace-ID", traceId);
+            }
             HttpEntity<ClassificationRequestDto> entity = new HttpEntity<>(request, headers);
 
             ResponseEntity<ClassificationResponseDto> response = restTemplate.postForEntity(
@@ -67,6 +75,39 @@ public class FastApiClassificationClient implements AiClassificationClient {
         } catch (RestClientException e) {
             log.error("Failed to classify eventId='{}' via AI service at '{}': {}", request.eventId(), endpoint, e.getMessage());
             throw new AiClassificationException("AI classification service call failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public AgentOrchestrationResponseDto orchestrateAgent(AgentOrchestrationRequestDto request) {
+        String endpoint = baseUrl + "/api/v1/agent/orchestrate";
+        log.info("Sending AI Agent Orchestration request to '{}' for campaignId='{}'", endpoint, request.campaignId());
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            String traceId = org.slf4j.MDC.get("traceId");
+            if (traceId == null) traceId = org.slf4j.MDC.get("correlationId");
+            if (traceId != null) {
+                headers.set("X-Correlation-ID", traceId);
+                headers.set("X-Trace-ID", traceId);
+            }
+            HttpEntity<AgentOrchestrationRequestDto> entity = new HttpEntity<>(request, headers);
+
+            ResponseEntity<AgentOrchestrationResponseDto> response = restTemplate.postForEntity(
+                    endpoint, entity, AgentOrchestrationResponseDto.class
+            );
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                log.info("Received AI Agent response for campaignId='{}': decision='{}', traceId='{}'",
+                        request.campaignId(), response.getBody().decision(), response.getBody().agentTraceId());
+                return response.getBody();
+            } else {
+                throw new AiClassificationException("AI service agent endpoint returned status: " + response.getStatusCode());
+            }
+        } catch (Exception e) {
+            log.error("Failed to orchestrate AI agent for campaignId='{}': {}", request.campaignId(), e.getMessage());
+            throw new AiClassificationException("AI agent orchestration call failed: " + e.getMessage(), e);
         }
     }
 }

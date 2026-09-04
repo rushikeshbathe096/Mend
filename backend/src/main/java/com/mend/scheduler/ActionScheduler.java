@@ -3,18 +3,23 @@ package com.mend.scheduler;
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.repository.ActionIntentRepository;
+import com.mend.dto.payment.PaymentExecutionResult;
+import com.mend.service.ActionExecutionService;
 import com.mend.service.AuditService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -24,19 +29,96 @@ public class ActionScheduler {
     private static final Logger log = LoggerFactory.getLogger(ActionScheduler.class);
 
     private final ActionIntentRepository actionIntentRepository;
+    private final ActionExecutionService actionExecutionService;
     private final AuditService auditService;
     private final int batchSize;
     private final Duration leaseDuration;
+    private final String workerId;
+    private final boolean enabled;
+
+    @Autowired
+    public ActionScheduler(
+            ActionIntentRepository actionIntentRepository,
+            ActionExecutionService actionExecutionService,
+            AuditService auditService,
+            @Value("${mend.scheduler.worker-id:}") String workerId,
+            @Value("${mend.scheduler.batch-size:50}") int batchSize,
+            @Value("${mend.scheduler.lease-duration-minutes:5}") int leaseDurationMinutes,
+            @Value("${mend.scheduler.enabled:true}") boolean enabled) {
+        this.actionIntentRepository = actionIntentRepository;
+        this.actionExecutionService = actionExecutionService;
+        this.auditService = auditService;
+        this.batchSize = batchSize;
+        this.leaseDuration = Duration.ofMinutes(leaseDurationMinutes);
+        this.enabled = enabled;
+        this.workerId = (workerId != null && !workerId.isBlank())
+                ? workerId
+                : "worker-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    public ActionScheduler(
+            ActionIntentRepository actionIntentRepository,
+            ActionExecutionService actionExecutionService,
+            AuditService auditService,
+            int batchSize,
+            int leaseDurationMinutes) {
+        this(actionIntentRepository, actionExecutionService, auditService, null, batchSize, leaseDurationMinutes, true);
+    }
 
     public ActionScheduler(
             ActionIntentRepository actionIntentRepository,
             AuditService auditService,
-            @Value("${mend.scheduler.batch-size:50}") int batchSize,
-            @Value("${mend.scheduler.lease-duration-minutes:5}") int leaseDurationMinutes) {
-        this.actionIntentRepository = actionIntentRepository;
-        this.auditService = auditService;
-        this.batchSize = batchSize;
-        this.leaseDuration = Duration.ofMinutes(leaseDurationMinutes);
+            int batchSize,
+            int leaseDurationMinutes) {
+        this(actionIntentRepository, null, auditService, null, batchSize, leaseDurationMinutes, true);
+    }
+
+    @Scheduled(fixedDelayString = "${mend.scheduler.poll-interval-ms:5000}")
+    @Transactional
+    public List<PaymentExecutionResult> pollAndExecuteDueActions() {
+        if (!enabled) {
+            return Collections.emptyList();
+        }
+        log.debug("ActionScheduler poll cycle starting (workerId: {})...", workerId);
+
+        // 1. Release expired claims
+        releaseExpiredClaims();
+
+        // 2. Process expired intents
+        processExpiredIntents();
+
+        // 3. Claim due intents
+        List<ActionIntent> claimedIntents = claimDueIntents(workerId, batchSize);
+        if (claimedIntents.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 4. Execute claimed intents via ActionExecutionService
+        List<PaymentExecutionResult> results = new ArrayList<>();
+        for (ActionIntent intent : claimedIntents) {
+            if (actionExecutionService == null) {
+                log.warn("ActionExecutionService is null in ActionScheduler; skipping execution of claimed intent '{}'", intent.getId());
+                continue;
+            }
+            try {
+                PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), workerId);
+                if (result != null) {
+                    results.add(result);
+                }
+            } catch (Exception e) {
+                log.error("Unhandled exception executing ActionIntent '{}' in scheduler loop: {}", intent.getId(), e.getMessage(), e);
+            }
+        }
+
+        return results;
+    }
+
+    public String getWorkerId() {
+        return workerId;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
     }
 
     @Transactional

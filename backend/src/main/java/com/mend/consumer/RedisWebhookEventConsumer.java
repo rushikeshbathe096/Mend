@@ -61,6 +61,7 @@ public class RedisWebhookEventConsumer {
         }
     }
 
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${mend.consumer.poll-interval-ms:2000}")
     public int pollAndProcessMessages() {
         initConsumerGroup();
         int count = pollStream(streamName);
@@ -127,20 +128,28 @@ public class RedisWebhookEventConsumer {
 
     private boolean processSingleRecord(String targetStream, MapRecord<String, Object, Object> record) {
         Map<Object, Object> valueMap = record.getValue();
-        WebhookEventMessage message = deserializeRecord(record.getId().getValue(), valueMap);
+        Object corrObj = valueMap.get("correlationId");
+        if (corrObj == null) corrObj = valueMap.get("traceId");
+        if (corrObj == null) corrObj = valueMap.get("eventId");
+        String correlationId = corrObj != null ? corrObj.toString() : java.util.UUID.randomUUID().toString();
 
-        if (message == null) {
-            log.warn("Failed to deserialize record [id={}] from stream '{}'.", record.getId(), targetStream);
-            if (retryService != null) {
-                boolean routedToDlq = retryService.handleFailure(record.getId(), valueMap, "Deserialization failure");
-                if (routedToDlq) {
-                    redisTemplate.opsForStream().acknowledge(targetStream, consumerGroup, record.getId());
-                }
-            }
-            return false;
-        }
+        org.slf4j.MDC.put("correlationId", correlationId);
+        org.slf4j.MDC.put("traceId", correlationId);
 
         try {
+            WebhookEventMessage message = deserializeRecord(record.getId().getValue(), valueMap);
+
+            if (message == null) {
+                log.warn("Failed to deserialize record [id={}] from stream '{}'.", record.getId(), targetStream);
+                if (retryService != null) {
+                    boolean routedToDlq = retryService.handleFailure(record.getId(), valueMap, "Deserialization failure");
+                    if (routedToDlq) {
+                        redisTemplate.opsForStream().acknowledge(targetStream, consumerGroup, record.getId());
+                    }
+                }
+                return false;
+            }
+
             log.info("Consumer '{}' processing event [eventId={}, recordId={}] from stream '{}'", consumerName, message.eventId(), record.getId(), targetStream);
             boolean success = webhookEventProcessor.process(message);
 
@@ -167,6 +176,9 @@ public class RedisWebhookEventConsumer {
                 }
             }
             return false;
+        } finally {
+            org.slf4j.MDC.remove("correlationId");
+            org.slf4j.MDC.remove("traceId");
         }
     }
 

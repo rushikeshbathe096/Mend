@@ -1,4 +1,13 @@
+# Secrets and credentials — NEVER commit
 .env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+*.pem
+*.key
+*.p12
+*.jks
 .venv/
 node_modules/
 .next/

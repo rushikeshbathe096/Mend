@@ -2,6 +2,7 @@ package com.mend.domain.repository;
 
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.enums.ActionIntentStatus;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -26,6 +27,16 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     List<ActionIntent> findByCampaignId(UUID campaignId);
 
     List<ActionIntent> findByMerchantId(UUID merchantId);
+
+    Page<ActionIntent> findByMerchantId(UUID merchantId, Pageable pageable);
+
+    Page<ActionIntent> findByMerchantIdAndStatus(UUID merchantId, ActionIntentStatus status, Pageable pageable);
+
+    Optional<ActionIntent> findByMerchantIdAndId(UUID merchantId, UUID id);
+
+    long countByMerchantId(UUID merchantId);
+
+    long countByMerchantIdAndStatus(UUID merchantId, ActionIntentStatus status);
 
     List<ActionIntent> findByStatus(ActionIntentStatus status);
 

@@ -20,9 +20,9 @@ public class CampaignStateMachine {
         allowedTransitions.put(CampaignStatus.CLASSIFIED, EnumSet.of(CampaignStatus.ELIGIBLE, CampaignStatus.EXHAUSTED, CampaignStatus.CANCELLED));
         allowedTransitions.put(CampaignStatus.ELIGIBLE, EnumSet.of(CampaignStatus.SCHEDULED, CampaignStatus.ACTION_PENDING, CampaignStatus.CANCELLED));
         allowedTransitions.put(CampaignStatus.SCHEDULED, EnumSet.of(CampaignStatus.ACTION_PENDING, CampaignStatus.CANCELLED));
-        allowedTransitions.put(CampaignStatus.ACTION_PENDING, EnumSet.of(CampaignStatus.EXECUTING, CampaignStatus.CANCELLED));
+        allowedTransitions.put(CampaignStatus.ACTION_PENDING, EnumSet.of(CampaignStatus.EXECUTING, CampaignStatus.ELIGIBLE, CampaignStatus.RECOVERED, CampaignStatus.CANCELLED));
         allowedTransitions.put(CampaignStatus.EXECUTING, EnumSet.of(CampaignStatus.RECOVERED, CampaignStatus.FAILED, CampaignStatus.CANCELLED));
-        allowedTransitions.put(CampaignStatus.FAILED, EnumSet.of(CampaignStatus.SCHEDULED, CampaignStatus.EXHAUSTED, CampaignStatus.CANCELLED, CampaignStatus.RECOVERED));
+        allowedTransitions.put(CampaignStatus.FAILED, EnumSet.of(CampaignStatus.SCHEDULED, CampaignStatus.ELIGIBLE, CampaignStatus.ACTION_PENDING, CampaignStatus.EXHAUSTED, CampaignStatus.CANCELLED, CampaignStatus.RECOVERED));
 
         // Terminal states explicitly have empty transition sets
         allowedTransitions.put(CampaignStatus.RECOVERED, EnumSet.noneOf(CampaignStatus.class));

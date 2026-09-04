@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -80,10 +81,15 @@ public class ActionExecutionService {
                 actionType = ActionType.valueOf(intent.getActionType());
             }
         } catch (Exception e) {
-            actionType = ActionType.RETRY_PAYMENT;
+            actionType = null;
         }
         if (actionType == null) {
-            actionType = ActionType.RETRY_PAYMENT;
+            log.warn("ActionIntent '{}' has unsupported or invalid actionType: '{}'", intent.getId(), intent.getActionType());
+            PaymentExecutionResult unsupportedResult = PaymentExecutionResult.error(
+                    "Unsupported action type: " + intent.getActionType(),
+                    intent.getIdempotencyKey()
+            );
+            return finalizeExecution(intent.getId(), workerId, unsupportedResult);
         }
 
         PaymentExecutionRequest request = new PaymentExecutionRequest(
@@ -179,6 +185,17 @@ public class ActionExecutionService {
                     null
             );
         }
+
+        auditService.logStructuredEvent(
+                intent.getMerchantId(),
+                intent.getCampaignId(),
+                "ACTION_EXECUTING",
+                "SYSTEM",
+                null,
+                "ActionIntent " + intent.getId() + " execution started by worker: " + (workerId != null ? workerId : "default"),
+                Map.of("attemptNumber", intent.getAttemptNumber(), "actionType", intent.getActionType() != null ? intent.getActionType() : "UNKNOWN"),
+                Map.of("idempotencyKey", intent.getIdempotencyKey() != null ? intent.getIdempotencyKey() : "")
+        );
 
         return ExecutionPreparation.proceed(intent, campaign);
     }

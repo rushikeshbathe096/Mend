@@ -88,6 +88,10 @@ public class RedisWebhookEventPublisher implements WebhookEventPublisher {
                 event.getPayloadHash()
         );
 
+        String correlationId = org.slf4j.MDC.get("correlationId");
+        if (correlationId == null) correlationId = org.slf4j.MDC.get("traceId");
+        if (correlationId == null) correlationId = event.getId() != null ? event.getId().toString() : java.util.UUID.randomUUID().toString();
+
         Map<String, String> fieldMap = new HashMap<>();
         fieldMap.put("eventId", message.eventId().toString());
         fieldMap.put("externalEventId", message.externalEventId() != null ? message.externalEventId() : "");
@@ -96,6 +100,8 @@ public class RedisWebhookEventPublisher implements WebhookEventPublisher {
         fieldMap.put("occurredAt", message.occurredAt().toString());
         fieldMap.put("payloadHash", message.payloadHash() != null ? message.payloadHash() : "");
         fieldMap.put("version", message.version());
+        fieldMap.put("correlationId", correlationId);
+        fieldMap.put("traceId", correlationId);
 
         try {
             String jsonPayload = objectMapper.writeValueAsString(message);

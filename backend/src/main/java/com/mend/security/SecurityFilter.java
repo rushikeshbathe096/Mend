@@ -34,8 +34,8 @@ public class SecurityFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // Allow public endpoints
-        if (isPublicPath(path)) {
+        // Allow CORS preflight requests and public endpoints
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || isPublicPath(path)) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -74,6 +74,8 @@ public class SecurityFilter extends OncePerRequestFilter {
                     writeErrorResponse(response, HttpStatus.BAD_REQUEST, "Invalid X-Merchant-Id header format");
                     return;
                 }
+            } else if (authenticatedUser.getMemberships() != null && !authenticatedUser.getMemberships().isEmpty()) {
+                merchantId = authenticatedUser.getMemberships().get(0).getMerchantId();
             }
 
             TenantContext.setTenant(authenticatedUser, merchantId);

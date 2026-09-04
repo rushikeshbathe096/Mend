@@ -64,6 +64,8 @@ class RedisStreamPublisherConsumerTest {
         webhookEventRepository.deleteAll();
         try {
             redisTemplate.delete(streamProperties.getStreamName());
+            redisTemplate.delete(com.mend.events.RedisEventConstants.RETRY_STREAM);
+            redisTemplate.delete(com.mend.events.RedisEventConstants.DLQ_STREAM);
         } catch (Exception ignored) {
         }
 

@@ -1,18 +1,28 @@
 package com.mend.service;
 
+import com.mend.agent.AgentContext;
+import com.mend.agent.AgentDecision;
+import com.mend.agent.AgentDecisionEngine;
 import com.mend.compliance.ComplianceDecision;
 import com.mend.domain.entity.ActionIntent;
+import com.mend.domain.entity.AgentDecisionRecord;
 import com.mend.domain.entity.Campaign;
+import com.mend.domain.entity.ClassificationResult;
+import com.mend.domain.entity.MerchantConfig;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.repository.ActionIntentRepository;
+import com.mend.domain.repository.AgentDecisionRecordRepository;
 import com.mend.domain.repository.CampaignRepository;
+import com.mend.domain.repository.ClassificationResultRepository;
+import com.mend.domain.repository.MerchantConfigRepository;
 import com.mend.exception.ComplianceBlockedException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.strategy.RecoveryDecision;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +41,11 @@ public class RecoveryOrchestratorService {
     private final ComplianceService complianceService;
     private final ActionIntentService actionIntentService;
     private final ActionIntentRepository actionIntentRepository;
+    private final ClassificationResultRepository classificationResultRepository;
+    private final MerchantConfigRepository merchantConfigRepository;
+    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
+    private final AgentDecisionEngine agentDecisionEngine;
+    private final AuditService auditService;
 
     public RecoveryOrchestratorService(
             CampaignRepository campaignRepository,
@@ -38,13 +53,23 @@ public class RecoveryOrchestratorService {
             RecoveryStrategyService recoveryStrategyService,
             ComplianceService complianceService,
             ActionIntentService actionIntentService,
-            ActionIntentRepository actionIntentRepository) {
+            ActionIntentRepository actionIntentRepository,
+            ClassificationResultRepository classificationResultRepository,
+            MerchantConfigRepository merchantConfigRepository,
+            AgentDecisionRecordRepository agentDecisionRecordRepository,
+            AgentDecisionEngine agentDecisionEngine,
+            AuditService auditService) {
         this.campaignRepository = campaignRepository;
         this.campaignLifecycleService = campaignLifecycleService;
         this.recoveryStrategyService = recoveryStrategyService;
         this.complianceService = complianceService;
         this.actionIntentService = actionIntentService;
         this.actionIntentRepository = actionIntentRepository;
+        this.classificationResultRepository = classificationResultRepository;
+        this.merchantConfigRepository = merchantConfigRepository;
+        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
+        this.agentDecisionEngine = agentDecisionEngine;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -52,7 +77,7 @@ public class RecoveryOrchestratorService {
         Campaign campaign = campaignRepository.findById(campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
 
-        // Tenant Isolation Check (Step 10)
+        // Tenant Isolation Check
         if (!campaign.getMerchantId().equals(merchantId)) {
             throw new TenantAccessDeniedException("Campaign " + campaignId + " does not belong to merchant " + merchantId);
         }
@@ -66,9 +91,62 @@ public class RecoveryOrchestratorService {
             }
         }
 
-        // State Machine Check: Only trigger from ELIGIBLE state (Step 2)
+        // State Machine Check: Only trigger from ELIGIBLE state
         if (campaign.getCurrentState() != CampaignStatus.ELIGIBLE && campaign.getCurrentState() != CampaignStatus.ACTION_PENDING) {
             log.info("Campaign '{}' is in state '{}' (expected ELIGIBLE). Skipping recovery orchestration.", campaignId, campaign.getCurrentState());
+            return null;
+        }
+
+        // STEP 1: Build AgentContext
+        ClassificationResult classification = classificationResultRepository.findLatestByCampaignId(campaignId).orElse(null);
+        MerchantConfig config = merchantConfigRepository.findByMerchantId(merchantId).orElse(null);
+        AgentContext agentContext = AgentContext.build(
+                campaign,
+                classification,
+                config,
+                List.of(),
+                List.of(),
+                "COMPLIANCE_ALLOWED",
+                List.of("RETRY_PAYMENT", "REQUEST_CUSTOMER_ACTION", "PAUSE_SUBSCRIPTION", "OFFER_DISCOUNT")
+        );
+
+        // STEP 2: Execute Agent Decision Engine
+        AgentDecision decision = agentDecisionEngine.decide(agentContext);
+
+        // Persist Agent Decision Record for Memory & Auditability
+        AgentDecisionRecord record = new AgentDecisionRecord(
+                decision.decisionId(),
+                campaignId,
+                merchantId,
+                campaign.getPaymentId(),
+                decision.decision(),
+                decision.selectedAction(),
+                decision.confidence(),
+                decision.reasoning(),
+                decision.evidence() != null ? String.join(",", decision.evidence()) : "",
+                decision.nextStep(),
+                decision.stopReason(),
+                decision.modelVersion(),
+                decision.requiresHumanApproval(),
+                decision.complianceStatus(),
+                "EVALUATED"
+        );
+        agentDecisionRecordRepository.save(record);
+
+        auditService.logEvent(
+                merchantId,
+                campaignId,
+                "AGENT_DECISION_MADE",
+                "AGENT",
+                null,
+                "Decision=" + decision.decision() + ", Reason: " + decision.reasoning()
+        );
+
+        // Stop Condition Check
+        if (decision.stopReason() != null || "STOP_RECOVERY".equals(decision.decision())) {
+            log.info("Agent Decision stopped recovery for campaign '{}'. Reason: {}", campaignId, decision.stopReason());
+            record.setExecutionStatus("STOPPED");
+            agentDecisionRecordRepository.save(record);
             return null;
         }
 
@@ -92,7 +170,16 @@ public class RecoveryOrchestratorService {
         if (complianceDecision.getStatus() == ComplianceStatus.COMPLIANCE_BLOCKED) {
             log.info("Compliance BLOCKED recovery action for campaign '{}': Reason={}, Message={}",
                     campaignId, complianceDecision.getReason(), complianceDecision.getDetailMessage());
-            // Do NOT create ActionIntent and do NOT transition state to ACTION_PENDING
+            record.setComplianceStatus("COMPLIANCE_BLOCKED");
+            record.setExecutionStatus("BLOCKED");
+            agentDecisionRecordRepository.save(record);
+            return null;
+        }
+
+        if (decision.requiresHumanApproval()) {
+            log.info("Agent decision requires human review for campaign '{}'. Confidence={}", campaignId, decision.confidence());
+            record.setExecutionStatus("REVIEW_REQUIRED");
+            agentDecisionRecordRepository.save(record);
             return null;
         }
 
@@ -102,6 +189,9 @@ public class RecoveryOrchestratorService {
             actionIntent = actionIntentService.createActionIntentFromCompliance(merchantId, campaignId);
         } catch (ComplianceBlockedException e) {
             log.info("Action intent creation blocked by compliance exception for campaign '{}': {}", campaignId, e.getMessage());
+            record.setComplianceStatus("COMPLIANCE_BLOCKED");
+            record.setExecutionStatus("BLOCKED");
+            agentDecisionRecordRepository.save(record);
             return null;
         }
 
@@ -109,6 +199,9 @@ public class RecoveryOrchestratorService {
             log.info("No ActionIntent created for campaign '{}' (possibly NO_ACTION strategy)", campaignId);
             return null;
         }
+
+        record.setExecutionStatus("AUTHORIZED");
+        agentDecisionRecordRepository.save(record);
 
         // STEP 6: Campaign State Transition (ELIGIBLE -> ACTION_PENDING)
         if (campaign.getCurrentState() == CampaignStatus.ELIGIBLE) {
@@ -128,3 +221,4 @@ public class RecoveryOrchestratorService {
         return actionIntent;
     }
 }
+

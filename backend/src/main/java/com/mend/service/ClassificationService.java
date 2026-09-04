@@ -26,16 +26,19 @@ public class ClassificationService {
     private final ClassificationResultRepository classificationResultRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final CampaignLifecycleService campaignLifecycleService;
+    private final AuditService auditService;
 
     public ClassificationService(
             AiClassificationClient aiClassificationClient,
             ClassificationResultRepository classificationResultRepository,
             WebhookEventRepository webhookEventRepository,
-            @Autowired(required = false) CampaignLifecycleService campaignLifecycleService) {
+            @Autowired(required = false) CampaignLifecycleService campaignLifecycleService,
+            @Autowired(required = false) AuditService auditService) {
         this.aiClassificationClient = aiClassificationClient;
         this.classificationResultRepository = classificationResultRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.campaignLifecycleService = campaignLifecycleService;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -85,6 +88,14 @@ public class ClassificationService {
                 response.modelVersion()
         );
 
+        java.util.Map<String, Object> safeEvidence = response.evidence() != null 
+                ? new java.util.HashMap<>(response.evidence()) 
+                : new java.util.HashMap<>();
+        safeEvidence.putIfAbsent("eventId", event.getId());
+        safeEvidence.putIfAbsent("merchantId", event.getMerchantId());
+        safeEvidence.putIfAbsent("modelVersion", response.modelVersion());
+        result.setEvidence(safeEvidence);
+
         ClassificationResult savedResult = classificationResultRepository.save(result);
 
         // Update event status to PROCESSED
@@ -94,6 +105,27 @@ public class ClassificationService {
 
         log.info("Successfully classified and persisted eventId='{}' [classification='{}', confidence={}]",
                 event.getId(), response.classification(), response.confidence());
+
+        // Emit audit log
+        if (auditService != null) {
+            java.util.Map<String, Object> evidence = new java.util.HashMap<>();
+            evidence.put("failureClass", response.classification().name());
+            evidence.put("confidence", response.confidence());
+            evidence.put("recommendedAction", response.recommendedAction().name());
+            evidence.put("modelVersion", response.modelVersion());
+            evidence.put("eventId", event.getId());
+
+            auditService.logStructuredEvent(
+                    event.getMerchantId(),
+                    null,
+                    "AI_CLASSIFICATION_COMPLETED",
+                    "SYSTEM",
+                    null,
+                    "AI classification: " + response.classification() + " (Confidence: " + response.confidence() + ")",
+                    null,
+                    evidence
+            );
+        }
 
         // Process campaign lifecycle if campaign service is available
         if (campaignLifecycleService != null) {

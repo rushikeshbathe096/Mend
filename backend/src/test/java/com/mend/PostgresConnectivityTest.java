@@ -2,6 +2,7 @@ package com.mend;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -15,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * This test connects to the PostgreSQL container running via docker-compose.
  * It verifies basic connectivity and that the database responds to queries.
  */
+@ActiveProfiles("test")
 @SpringBootTest
 class PostgresConnectivityTest {
 

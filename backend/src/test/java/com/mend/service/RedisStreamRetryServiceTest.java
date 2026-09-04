@@ -51,6 +51,10 @@ class RedisStreamRetryServiceTest {
 
     @Test
     void handleFailure_FirstFailure_RoutesToRetryStreamWithAttemptTwoAndDiagnosticFields() {
+        try {
+            redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
+            redisTemplate.delete(RedisEventConstants.DLQ_STREAM);
+        } catch (Exception ignored) {}
         UUID eventId = UUID.randomUUID();
         Map<Object, Object> valueMap = Map.of(
                 "eventId", eventId.toString(),
@@ -78,6 +82,10 @@ class RedisStreamRetryServiceTest {
 
     @Test
     void handleFailure_SecondFailure_RoutesToRetryStreamWithAttemptThree() {
+        try {
+            redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
+            redisTemplate.delete(RedisEventConstants.DLQ_STREAM);
+        } catch (Exception ignored) {}
         UUID eventId = UUID.randomUUID();
         Map<Object, Object> valueMap = Map.of(
                 "eventId", eventId.toString(),
@@ -100,6 +108,10 @@ class RedisStreamRetryServiceTest {
 
     @Test
     void handleFailure_ThirdFailureExceedsMax_RoutesToDlqStreamAndUpdatePostgres() {
+        try {
+            redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
+            redisTemplate.delete(RedisEventConstants.DLQ_STREAM);
+        } catch (Exception ignored) {}
         String extId = "evt_retry_exceeded_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), extId, "payment.failed");
         event = webhookEventRepository.save(event);
@@ -135,6 +147,10 @@ class RedisStreamRetryServiceTest {
 
     @Test
     void handleFailure_DuplicateDelivery_ToleratedWithoutCorruptingState() {
+        try {
+            redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
+            redisTemplate.delete(RedisEventConstants.DLQ_STREAM);
+        } catch (Exception ignored) {}
         UUID eventId = UUID.randomUUID();
         Map<Object, Object> valueMap = Map.of(
                 "eventId", eventId.toString(),

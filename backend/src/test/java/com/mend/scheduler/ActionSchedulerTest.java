@@ -4,6 +4,8 @@ import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
 import com.mend.domain.repository.ActionIntentRepository;
+import com.mend.dto.payment.PaymentExecutionResult;
+import com.mend.service.ActionExecutionService;
 import com.mend.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -17,20 +19,22 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @DisplayName("Action Scheduler Unit Tests")
 public class ActionSchedulerTest {
 
     private ActionIntentRepository repository;
+    private ActionExecutionService actionExecutionService;
     private AuditService auditService;
     private ActionScheduler scheduler;
 
     @BeforeEach
     void setUp() {
         repository = Mockito.mock(ActionIntentRepository.class);
+        actionExecutionService = Mockito.mock(ActionExecutionService.class);
         auditService = Mockito.mock(AuditService.class);
-        scheduler = new ActionScheduler(repository, auditService, 50, 5);
+        scheduler = new ActionScheduler(repository, actionExecutionService, auditService, "test-worker", 50, 5, true);
     }
 
     @Test
@@ -96,5 +100,44 @@ public class ActionSchedulerTest {
         List<ActionIntent> claimed = scheduler.claimDueIntents("worker-2", 10);
 
         assertTrue(claimed.isEmpty());
+    }
+
+    @Test
+    @DisplayName("pollAndExecuteDueActions claims and executes due intents")
+    void testPollAndExecuteDueActionsSuccess() {
+        UUID intentId = UUID.randomUUID();
+        ActionIntent intent = new ActionIntent(
+                intentId, UUID.randomUUID(), UUID.randomUUID(), 1,
+                ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
+                ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
+        );
+
+        when(repository.findDueIntents(eq(ActionIntentStatus.SCHEDULED), any(Instant.class), any()))
+                .thenReturn(Collections.emptyList());
+        when(repository.findDueIntents(eq(ActionIntentStatus.READY), any(Instant.class), any()))
+                .thenReturn(List.of(intent));
+        when(repository.claimIntentAtomic(any(), eq(ActionIntentStatus.READY), eq(ActionIntentStatus.CLAIMED), any(), any(), any()))
+                .thenReturn(1);
+
+        PaymentExecutionResult expectedResult = PaymentExecutionResult.success("ref-123", "Success message", "key-4");
+        when(actionExecutionService.executeActionIntent(eq(intentId), anyString()))
+                .thenReturn(expectedResult);
+
+        List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
+
+        assertEquals(1, results.size());
+        assertEquals("ref-123", results.get(0).getExternalReference());
+        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString());
+    }
+
+    @Test
+    @DisplayName("pollAndExecuteDueActions returns empty when disabled")
+    void testPollAndExecuteDisabled() {
+        ActionScheduler disabledScheduler = new ActionScheduler(repository, actionExecutionService, auditService, "test-worker", 50, 5, false);
+
+        List<PaymentExecutionResult> results = disabledScheduler.pollAndExecuteDueActions();
+
+        assertTrue(results.isEmpty());
+        verifyNoInteractions(repository);
     }
 }

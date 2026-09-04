@@ -24,7 +24,7 @@ public class AuthIntegrationTest extends AbstractIntegrationTest {
     public void testBootstrapAndLoginFlow() {
         BootstrapRequest bootstrapReq = new BootstrapRequest(
                 "Acme Corp",
-                "admin@acme.com",
+                "admin_test_flow@acme.com",
                 "AdminPass123!",
                 "Acme Admin"
         );
@@ -34,17 +34,17 @@ public class AuthIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(bootstrapRes.getMerchantId());
         assertNotNull(bootstrapRes.getUserId());
         assertEquals("Acme Corp", bootstrapRes.getMerchantName());
-        assertEquals("admin@acme.com", bootstrapRes.getUserEmail());
+        assertEquals("admin_test_flow@acme.com", bootstrapRes.getUserEmail());
         assertEquals("MERCHANT_ADMIN", bootstrapRes.getRoleName());
 
         // Login with valid credentials
-        LoginRequest loginReq = new LoginRequest("admin@acme.com", "AdminPass123!");
+        LoginRequest loginReq = new LoginRequest("admin_test_flow@acme.com", "AdminPass123!");
         LoginResponse loginRes = authService.login(loginReq);
 
         assertNotNull(loginRes.getToken());
         assertTrue(loginRes.getExpiresIn() > 0);
         assertNotNull(loginRes.getUser());
-        assertEquals("admin@acme.com", loginRes.getUser().getEmail());
+        assertEquals("admin_test_flow@acme.com", loginRes.getUser().getEmail());
         assertFalse(loginRes.getUser().getMemberships().isEmpty());
         assertEquals("MERCHANT_ADMIN", loginRes.getUser().getMemberships().get(0).getRoleName());
     }

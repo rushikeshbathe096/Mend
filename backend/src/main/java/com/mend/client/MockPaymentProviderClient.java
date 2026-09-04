@@ -21,6 +21,7 @@ public class MockPaymentProviderClient implements PaymentProviderClient {
     private PaymentExecutionStatus defaultSimulatedStatus = PaymentExecutionStatus.SUCCESS;
     private String simulatedFailureReason = "Simulated payment failure";
     private String simulatedErrorMessage = "Simulated gateway connection timeout";
+    private RuntimeException simulatedException = null;
     private final ConcurrentLinkedQueue<PaymentExecutionRequest> recordedRequests = new ConcurrentLinkedQueue<>();
 
     @Override
@@ -29,6 +30,11 @@ public class MockPaymentProviderClient implements PaymentProviderClient {
                 request.getMerchantId(), request.getCampaignId(), request.getActionType(), request.getIdempotencyKey());
 
         recordedRequests.add(request);
+
+        if (simulatedException != null) {
+            log.warn("MockPaymentProviderClient throwing simulated exception: {}", simulatedException.getMessage());
+            throw simulatedException;
+        }
 
         switch (defaultSimulatedStatus) {
             case SUCCESS:
@@ -66,10 +72,15 @@ public class MockPaymentProviderClient implements PaymentProviderClient {
         this.simulatedErrorMessage = message;
     }
 
+    public void setSimulatedException(RuntimeException exception) {
+        this.simulatedException = exception;
+    }
+
     public void reset() {
         this.defaultSimulatedStatus = PaymentExecutionStatus.SUCCESS;
         this.simulatedFailureReason = "Simulated payment failure";
         this.simulatedErrorMessage = "Simulated gateway connection timeout";
+        this.simulatedException = null;
         this.recordedRequests.clear();
     }
 
