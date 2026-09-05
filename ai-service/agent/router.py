@@ -1,6 +1,7 @@
 import uuid
 import logging
-from fastapi import APIRouter, HTTPException, status
+import os
+from fastapi import APIRouter, Header, HTTPException, status
 from agent.state import (
     AgentOrchestrationRequest,
     AgentOrchestrationResponse,
@@ -13,8 +14,12 @@ from agent.graph import build_recovery_agent_graph
 logger = logging.getLogger("mend-ai-service")
 router = APIRouter(prefix="/api/v1/agent", tags=["AI Recovery Agent"])
 
-# Singleton or factory for state graph
 _agent_graph = None
+
+def require_internal_auth(internal_token: str | None) -> None:
+    configured_token = os.getenv("MEND_AI_INTERNAL_TOKEN")
+    if configured_token and internal_token != configured_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal service token")
 
 def get_agent_graph(backend_url: str):
     global _agent_graph
@@ -23,14 +28,21 @@ def get_agent_graph(backend_url: str):
     return _agent_graph
 
 @router.post("/orchestrate", response_model=AgentOrchestrationResponse, status_code=status.HTTP_200_OK)
-def orchestrate_agent_flow(req: AgentOrchestrationRequest):
+def orchestrate_agent_flow(
+    req: AgentOrchestrationRequest,
+    x_mend_internal_token: str | None = Header(default=None),
+):
+    require_internal_auth(x_mend_internal_token)
     if not req.merchantId or not req.merchantId.strip():
         raise HTTPException(status_code=400, detail="merchantId must not be empty")
     if not req.campaignId or not req.campaignId.strip():
         raise HTTPException(status_code=400, detail="campaignId must not be empty")
 
     try:
-        backend_url = req.backendUrl or "http://localhost:8080"
+        configured_backend_url = os.getenv("MEND_BACKEND_URL", "http://localhost:8080")
+        # backendUrl is retained in the request model for compatibility, but is never
+        # trusted: accepting caller-controlled URLs would turn MCP reads into SSRF.
+        backend_url = configured_backend_url
         app = build_recovery_agent_graph(backend_url=backend_url)
 
         trace_id = req.traceId or req.correlationId or f"trace_{uuid.uuid4().hex[:12]}"
@@ -95,7 +107,7 @@ def orchestrate_agent_flow(req: AgentOrchestrationRequest):
             selectedAction=selected_act_str,
             confidence=final_state.get("confidence", 0.90),
             riskLevel=risk_enum,
-            reasoningSummary=final_state.get("reasoning_summary", "Agent orchestration completed."),
+            reasoningSummary=final_state.get("reasoning_summary", "Multi-agent recovery orchestration completed."),
             evidence=final_state.get("evidence", []),
             requiresHumanApproval=final_state.get("human_review_required", final_state.get("human_approval_required", False)),
             complianceStatus=comp_status,
@@ -104,8 +116,11 @@ def orchestrate_agent_flow(req: AgentOrchestrationRequest):
             iterationCount=final_state.get("iteration", 1),
             fallbackUsed=final_state.get("fallback_used", True),
             stopReason=final_state.get("stop_reason"),
-            modelVersion=final_state.get("model_version", "v1.5.0-langgraph"),
-            agentVersion=final_state.get("agent_version", "v1.5.0")
+            modelVersion=final_state.get("model_version", "v1.7.0-multi-agent"),
+            agentVersion=final_state.get("agent_version", "v1.7.0"),
+            strategyRecommendation=final_state.get("strategy_recommendation"),
+            customerEngagement=final_state.get("customer_engagement"),
+            agentDecisionRecords=final_state.get("agent_decision_records")
         )
 
     except Exception as e:

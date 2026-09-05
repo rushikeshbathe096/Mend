@@ -115,7 +115,7 @@ class MendMcpToolSuite:
 
         return []
 
-    # ==================== MERCHANT POLICY TOOLS ====================
+    # ==================== MERCHANT POLICY & STRATEGY TOOLS ====================
 
     def get_merchant_policy(self, merchant_id: str) -> Dict[str, Any]:
         """Tool: Fetch merchant configuration and policy parameters."""
@@ -151,16 +151,76 @@ class MendMcpToolSuite:
             return actions
         return ["RETRY_PAYMENT", "CUSTOMER_ACTION_REQUIRED", "NO_ACTION", "REVIEW_REQUIRED", "ESCALATE"]
 
-    # ==================== RISK & COMPLIANCE TOOLS ====================
+    def get_strategy_performance(self, merchant_id: str, failure_class: Optional[str] = None) -> Dict[str, Any]:
+        """Tool: Retrieve historical recovery rates for strategy learning loop."""
+        self._validate_tenant_id(merchant_id)
+        return {
+            "merchantId": merchant_id,
+            "failureClass": failure_class or "INSUFFICIENT_FUNDS",
+            "strategies": {
+                "PAYMENT_RETRY": {"total": 100, "recovered": 28, "successRate": 0.28},
+                "CUSTOMER_ACTION": {"total": 100, "recovered": 52, "successRate": 0.52},
+                "MANUAL_REVIEW": {"total": 30, "recovered": 18, "successRate": 0.60}
+            }
+        }
+
+    def get_available_recovery_strategies(self, merchant_id: str) -> List[str]:
+        """Tool: Fetch backend-supported strategy names for merchant."""
+        self._validate_tenant_id(merchant_id)
+        return ["PAYMENT_RETRY", "CUSTOMER_ACTION_REQUIRED", "NO_ACTION", "REVIEW_REQUIRED", "ESCALATE"]
+
+    # ==================== RISK & FRAUD SPECIALIZED TOOLS ====================
 
     def get_risk_signals(self, merchant_id: str, customer_id: Optional[str]) -> Dict[str, Any]:
         """Tool: Assess risk level and anomaly signals for customer."""
         self._validate_tenant_id(merchant_id)
         return {
+            "merchantId": merchant_id,
+            "customerId": customer_id or "ANONYMOUS_CUSTOMER",
             "riskLevel": "LOW",
             "score": 0.12,
             "velocityAlert": False,
-            "fraudSignal": False
+            "fraudSignal": False,
+            "signals": ["NORMAL_TRANSACTION_VELOCITY", "KNOWN_PAYMENT_METHOD"]
+        }
+
+    def get_customer_risk_history(self, merchant_id: str, customer_id: Optional[str]) -> Dict[str, Any]:
+        """Tool: Retrieve historical disputes and risk history for customer."""
+        self._validate_tenant_id(merchant_id)
+        return {
+            "merchantId": merchant_id,
+            "customerId": customer_id or "ANONYMOUS_CUSTOMER",
+            "disputeCount": 0,
+            "chargebackHistory": [],
+            "suspiciousPatternsDetected": False
+        }
+
+    # ==================== CUSTOMER ENGAGEMENT TOOLS ====================
+
+    def get_customer_contact_history(self, merchant_id: str, customer_id: Optional[str]) -> Dict[str, Any]:
+        """Tool: Retrieve historical contact attempts and responsiveness."""
+        self._validate_tenant_id(merchant_id)
+        return {
+            "merchantId": merchant_id,
+            "customerId": customer_id or "ANONYMOUS_CUSTOMER",
+            "previousContactAttempts": 1,
+            "lastContactedHoursAgo": 48,
+            "preferredChannel": "PAYMENT_LINK"
+        }
+
+    def get_allowed_customer_actions(self, merchant_id: str) -> List[str]:
+        """Tool: Fetch allowed customer-facing dunning actions."""
+        self._validate_tenant_id(merchant_id)
+        return ["PAYMENT_LINK", "EMAIL_REMINDER", "PORTAL_NOTIFICATION"]
+
+    def get_recovery_statistics(self, merchant_id: str) -> Dict[str, Any]:
+        """Tool: Fetch aggregate merchant recovery metrics."""
+        self._validate_tenant_id(merchant_id)
+        return {
+            "merchantId": merchant_id,
+            "overallRecoveryRate": 0.42,
+            "totalCampaigns": 150,
+            "recoveredCampaigns": 63
         }
 
     def get_previous_decisions(self, merchant_id: str, campaign_id: str) -> List[Dict[str, Any]]:
@@ -217,8 +277,8 @@ class MendMcpToolSuite:
         self._validate_tenant_id(merchant_id)
         return {
             "intentId": intent_id,
-            "status": "SUCCEEDED",
-            "executedAt": "2026-09-04T20:00:00Z"
+            "status": "PENDING",
+            "executedAt": None
         }
 
     def get_recovery_outcome(self, merchant_id: str, intent_id: str) -> Dict[str, Any]:
@@ -226,8 +286,8 @@ class MendMcpToolSuite:
         self._validate_tenant_id(merchant_id)
         return {
             "intentId": intent_id,
-            "reconciled": True,
-            "outcome": "RECOVERED"
+            "reconciled": False,
+            "outcome": "PENDING"
         }
 
     # ==================== CONTROLLED WRITE TOOLS ====================

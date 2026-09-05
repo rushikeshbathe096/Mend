@@ -28,6 +28,27 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
     long countByMerchantIdAndCurrentState(UUID merchantId, CampaignStatus currentState);
     long countByMerchantIdAndCurrentStateIn(UUID merchantId, List<CampaignStatus> states);
 
+    Page<Campaign> findByMerchantIdAndCustomerIdHash(UUID merchantId, String customerIdHash, Pageable pageable);
+    List<Campaign> findByMerchantIdAndCustomerIdHash(UUID merchantId, String customerIdHash);
+
+    @Query("SELECT DISTINCT c.customerIdHash FROM Campaign c WHERE c.merchantId = :merchantId AND c.customerIdHash IS NOT NULL")
+    List<String> findDistinctCustomerIdHashesByMerchantId(@Param("merchantId") UUID merchantId);
+
     @Query("SELECT c FROM Campaign c WHERE c.merchantId = :merchantId AND c.nextActionAt <= :now AND c.currentState IN :states")
     List<Campaign> findScheduledCampaignsByMerchant(@Param("merchantId") UUID merchantId, @Param("now") Instant now, @Param("states") List<CampaignStatus> states);
+
+    @Query("""
+            SELECT c FROM Campaign c
+            WHERE c.merchantId = :merchantId
+              AND (:state IS NULL OR c.currentState = :state)
+              AND (:failureClass IS NULL OR :failureClass = '' OR LOWER(c.failureClass) = LOWER(:failureClass))
+              AND (:search IS NULL OR :search = ''
+                   OR LOWER(c.paymentId) LIKE LOWER(CONCAT('%', :search, '%'))
+                   OR LOWER(COALESCE(c.customerIdHash, '')) LIKE LOWER(CONCAT('%', :search, '%')))
+            """)
+    Page<Campaign> searchMerchantCampaigns(@Param("merchantId") UUID merchantId,
+                                           @Param("state") CampaignStatus state,
+                                           @Param("failureClass") String failureClass,
+                                           @Param("search") String search,
+                                           Pageable pageable);
 }

@@ -51,6 +51,50 @@ export interface CampaignDto {
   updatedAt: string;
 }
 
+export interface PaymentSummaryDto {
+  paymentId: string;
+  customerIdHash: string;
+  merchantId: string;
+  failureClass: string;
+  amount: number;
+  currentState: string;
+  strategy?: string;
+  attemptCount: number;
+  campaignId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentDetailDto {
+  paymentSummary: PaymentSummaryDto;
+  campaign: CampaignDto;
+  attempts: CampaignAttemptDto[];
+  actionIntents: ActionIntentDto[];
+  agentDecisions: AgentDecisionRecordDto[];
+  complianceDecisions: ComplianceDecisionDto[];
+  auditLogs: AuditLogDto[];
+}
+
+export interface CustomerSummaryDto {
+  customerIdHash: string;
+  merchantId: string;
+  totalCampaigns: number;
+  activeCampaigns: number;
+  recoveredCampaigns: number;
+  totalFailedAmount: number;
+  totalRecoveredAmount: number;
+  riskSignals: string[];
+  lastActivityAt: string;
+}
+
+export interface CustomerProfileDto {
+  summary: CustomerSummaryDto;
+  campaigns: CampaignDto[];
+  paymentHistory: PaymentSummaryDto[];
+  disputeHistory: string[];
+  auditHistory: AuditLogDto[];
+}
+
 export interface ClassificationResultDto {
   id: string;
   campaignId: string;
@@ -258,3 +302,119 @@ export interface AgentDecisionRecordDto {
   executionStatus?: string;
   createdAt: string;
 }
+
+export interface ReviewItemDto {
+  id: string;
+  merchantId: string;
+  campaignId: string;
+  paymentId?: string;
+  customerIdHash?: string;
+  failureClass?: string;
+  confidence?: number;
+  campaignState?: string;
+  strategy?: string;
+  attemptCount?: number;
+  amount?: number;
+  reason?: string;
+  status: string;
+  reviewerComment?: string;
+  assignedUserId?: string;
+  createdAt: string;
+  reviewedAt?: string;
+  expiresAt?: string;
+  agentDecision?: string;
+  agentSelectedAction?: string;
+  agentConfidence?: number;
+  agentReasoning?: string;
+  agentEvidence?: string;
+  agentModelVersion?: string;
+  agentRequiresHumanApproval?: boolean;
+}
+
+export interface ReviewDecisionResponse {
+  reviewId: string;
+  campaignId: string;
+  decision: string;
+  message: string;
+  decidedAt: string;
+  review: ReviewItemDto;
+  actionIntent?: ActionIntentDto;
+  campaign?: CampaignDto;
+  validationSummary?: string[];
+}
+
+export interface ReviewQueueSummaryDto {
+  pending: number;
+  total: number;
+  byStatus: Record<string, number>;
+}
+
+export interface DemoScenarioDto {
+  id: string;
+  title: string;
+  description: string;
+  flow: string[];
+}
+
+export interface DemoTriggerResponse {
+  scenario: string;
+  status: string;
+  campaignId?: string;
+  paymentId?: string;
+  customerIdHash?: string;
+  reviewId?: string;
+  amount?: number;
+  message: string;
+  finalCampaignState?: string;
+  executionSteps: string[];
+}
+
+export interface FunnelStageDto {
+  stageName: string;
+  count: number;
+  conversionRatePercent: number;
+  dropOffCount: number;
+}
+
+export interface AnalyticsFunnelDto {
+  totalPaymentFailures: number;
+  stages: FunnelStageDto[];
+}
+
+export interface FailureClassMetricDto {
+  failureClass: string;
+  count: number;
+  recoveredCount: number;
+  recoveryRatePercent: number;
+  revenueAtRisk: number;
+  revenueRecovered: number;
+}
+
+export interface AnalyticsFailureBreakdownDto {
+  failureClasses: FailureClassMetricDto[];
+}
+
+export interface StrategyMetricDto {
+  strategyName: string;
+  totalCampaigns: number;
+  recoveredCampaigns: number;
+  successRatePercent: number;
+  revenueRecovered: number;
+}
+
+export interface AnalyticsStrategyPerformanceDto {
+  strategies: StrategyMetricDto[];
+}
+
+export interface OperationalHealthDto {
+  status?: string;
+  processingEvents?: number;
+  dlqCount?: number;
+  aiFallbackCount?: number;
+  providerFailures?: number;
+  complianceBlocks?: number;
+  activeCampaigns?: number;
+  message?: string;
+  components?: Record<string, any>;
+}
+

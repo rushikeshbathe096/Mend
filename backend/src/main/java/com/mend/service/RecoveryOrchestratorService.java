@@ -45,6 +45,7 @@ public class RecoveryOrchestratorService {
     private final MerchantConfigRepository merchantConfigRepository;
     private final AgentDecisionRecordRepository agentDecisionRecordRepository;
     private final AgentDecisionEngine agentDecisionEngine;
+    private final HumanApprovalService humanApprovalService;
     private final AuditService auditService;
 
     public RecoveryOrchestratorService(
@@ -58,6 +59,7 @@ public class RecoveryOrchestratorService {
             MerchantConfigRepository merchantConfigRepository,
             AgentDecisionRecordRepository agentDecisionRecordRepository,
             AgentDecisionEngine agentDecisionEngine,
+            HumanApprovalService humanApprovalService,
             AuditService auditService) {
         this.campaignRepository = campaignRepository;
         this.campaignLifecycleService = campaignLifecycleService;
@@ -69,6 +71,7 @@ public class RecoveryOrchestratorService {
         this.merchantConfigRepository = merchantConfigRepository;
         this.agentDecisionRecordRepository = agentDecisionRecordRepository;
         this.agentDecisionEngine = agentDecisionEngine;
+        this.humanApprovalService = humanApprovalService;
         this.auditService = auditService;
     }
 
@@ -180,6 +183,18 @@ public class RecoveryOrchestratorService {
             log.info("Agent decision requires human review for campaign '{}'. Confidence={}", campaignId, decision.confidence());
             record.setExecutionStatus("REVIEW_REQUIRED");
             agentDecisionRecordRepository.save(record);
+
+            // Route the campaign to the merchant human-approval queue. The campaign is left in
+            // ELIGIBLE with a COMPLIANCE_ALLOWED decision so the merchant's approval can revalidate
+            // and create the ActionIntent through the standard boundary.
+            try {
+                String reason = decision.reasoning() != null && !decision.reasoning().isBlank()
+                        ? decision.reasoning()
+                        : "Supervisor consensus requires merchant human review before execution";
+                humanApprovalService.createReview(merchantId, campaignId, reason);
+            } catch (Exception e) {
+                log.error("Failed to create human approval review for campaign '{}': {}", campaignId, e.getMessage(), e);
+            }
             return null;
         }
 

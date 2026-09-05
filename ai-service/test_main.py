@@ -100,3 +100,21 @@ def test_classify_missing_event_id():
     }
     response = client.post("/api/v1/classify", json=payload)
     assert response.status_code == 400
+
+def test_internal_token_is_required_when_configured(monkeypatch):
+    monkeypatch.setenv("MEND_AI_INTERNAL_TOKEN", "test-internal-token")
+    payload = {
+        "eventId": "123e4567-e89b-12d3-a456-426614174006",
+        "eventType": "payment.failed",
+        "failureCode": "network_failure"
+    }
+
+    unauthorized = client.post("/api/v1/classify", json=payload)
+    authorized = client.post(
+        "/api/v1/classify",
+        json=payload,
+        headers={"X-Mend-Internal-Token": "test-internal-token"},
+    )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200

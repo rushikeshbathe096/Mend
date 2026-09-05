@@ -25,13 +25,16 @@ public class FastApiClassificationClient implements AiClassificationClient {
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
+    private final String internalToken;
 
     @Autowired
     public FastApiClassificationClient(
             @Value("${mend.ai.base-url:http://localhost:8000}") String baseUrl,
             @Value("${mend.ai.connect-timeout-ms:2000}") int connectTimeoutMs,
-            @Value("${mend.ai.read-timeout-ms:3000}") int readTimeoutMs) {
+            @Value("${mend.ai.read-timeout-ms:3000}") int readTimeoutMs,
+            @Value("${mend.ai.internal-token:}") String internalToken) {
         this.baseUrl = baseUrl;
+        this.internalToken = internalToken;
         
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(connectTimeoutMs);
@@ -43,6 +46,7 @@ public class FastApiClassificationClient implements AiClassificationClient {
     public FastApiClassificationClient(String baseUrl, RestTemplate restTemplate) {
         this.baseUrl = baseUrl;
         this.restTemplate = restTemplate;
+        this.internalToken = "";
     }
 
     @Override
@@ -53,6 +57,9 @@ public class FastApiClassificationClient implements AiClassificationClient {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            if (!internalToken.isBlank()) {
+                headers.set("X-Mend-Internal-Token", internalToken);
+            }
             String traceId = org.slf4j.MDC.get("traceId");
             if (traceId == null) traceId = org.slf4j.MDC.get("correlationId");
             if (traceId != null) {
@@ -86,6 +93,9 @@ public class FastApiClassificationClient implements AiClassificationClient {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            if (!internalToken.isBlank()) {
+                headers.set("X-Mend-Internal-Token", internalToken);
+            }
             String traceId = org.slf4j.MDC.get("traceId");
             if (traceId == null) traceId = org.slf4j.MDC.get("correlationId");
             if (traceId != null) {

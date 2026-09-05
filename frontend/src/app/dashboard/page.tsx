@@ -9,7 +9,7 @@ import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton, CardSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { AnalyticsOverviewDto, CampaignDto, ActionIntentDto, PageResponse } from '@/types';
+import { AnalyticsOverviewDto, CampaignDto, ActionIntentDto, PageResponse, ReviewQueueSummaryDto, AnalyticsFunnelDto } from '@/types';
 
 export default function DashboardPage() {
   const { currentMerchantId } = useAuth();
@@ -17,6 +17,8 @@ export default function DashboardPage() {
   const [overview, setOverview] = useState<AnalyticsOverviewDto | null>(null);
   const [recentCampaigns, setRecentCampaigns] = useState<CampaignDto[]>([]);
   const [pendingActions, setPendingActions] = useState<ActionIntentDto[]>([]);
+  const [reviewSummary, setReviewSummary] = useState<ReviewQueueSummaryDto | null>(null);
+  const [funnel, setFunnel] = useState<AnalyticsFunnelDto | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,15 +32,19 @@ export default function DashboardPage() {
     setError(null);
 
     try {
-      const [overviewData, campaignsData, actionsData] = await Promise.all([
+      const [overviewData, campaignsData, actionsData, reviewsData, funnelData] = await Promise.all([
         api.get<AnalyticsOverviewDto>('/analytics/overview'),
         api.get<PageResponse<CampaignDto>>('/campaigns?page=0&size=5&sortBy=createdAt&sortOrder=desc'),
         api.get<PageResponse<ActionIntentDto>>('/recovery/actions?page=0&size=5'),
+        api.get<ReviewQueueSummaryDto>('/reviews/summary').catch(() => null),
+        api.get<AnalyticsFunnelDto>('/analytics/funnel').catch(() => null),
       ]);
 
       setOverview(overviewData);
       setRecentCampaigns(campaignsData.content || []);
       setPendingActions(actionsData.content || []);
+      setReviewSummary(reviewsData);
+      setFunnel(funnelData);
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard metrics from backend server.');
     } finally {
@@ -142,9 +148,39 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Recovery Funnel (authoritative backend stages) */}
+        {!loading && funnel && funnel.stages && funnel.stages.length > 0 && (
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-base font-bold text-gray-900 dark:text-white">Recovery Funnel</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Live campaign pipeline from the analytics service</p>
+              </div>
+              <Link href="/analytics" className="text-xs font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                Full Analytics &rarr;
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {funnel.stages.map((stage, idx) => (
+                <Link
+                  key={stage.stageName}
+                  href={stage.stageName === 'RECOVERED' ? '/campaigns?status=RECOVERED' : '/campaigns'}
+                  className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40 p-3 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500 truncate" title={stage.stageName}>
+                    {idx + 1}. {stage.stageName.replace(/_/g, ' ')}
+                  </div>
+                  <div className="text-xl font-black font-mono text-gray-900 dark:text-white mt-1">{stage.count}</div>
+                  <div className="text-[10px] font-mono text-gray-400 mt-0.5">{stage.conversionRatePercent}%</div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Latency & Governance Telemetry Banner */}
         {!loading && overview && (
-          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-6 divide-y md:divide-y-0 md:divide-x divide-gray-100 dark:divide-gray-800">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="flex items-center space-x-4 pt-4 md:pt-0">
               <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600 dark:text-blue-400">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -173,9 +209,7 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-[11px] text-gray-400">Scheduled to Intent completed</span>
               </div>
-            </div>
-
-            <div className="flex items-center space-x-4 pt-4 md:pt-0 md:pl-6">
+            </div>              <div className="flex items-center space-x-4 pt-4 md:pt-0">
               <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -188,6 +222,21 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-[11px] text-gray-400">Safely blocked by policy engine</span>
               </div>
+            </div>
+
+            <div className="flex items-center space-x-4 pt-4 md:pt-0">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2m14-12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              </div>
+              <Link href="/actions" className="block">
+                <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Human Review Backlog</span>
+                <div className="text-lg font-bold text-gray-900 dark:text-white font-mono">
+                  {reviewSummary?.pending ?? 0} pending
+                </div>
+                <span className="text-[11px] text-gray-400">Approvals waiting in the review queue</span>
+              </Link>
             </div>
           </div>
         )}

@@ -1,13 +1,17 @@
-# Architecture
+# Architecture (Historical Notes + Current Model)
+
+> The canonical current architecture is [ARCHITECTURE.md](ARCHITECTURE.md). The original
+> phase notes below are retained for history; references to “Planned” describe the phase in
+> which they were written, not the current implementation state.
 
 ## Components
 
 1. **Next.js (Frontend)**: User interface for dashboards and metrics. Does not own business logic.
 2. **Java Spring Boot (Backend)**: Core authoritative business/control layer. Manages compliance, state machine, business rules, action authorization, and financial execution orchestration.
 3. **Python FastAPI (AI Service)**: Recommends recovery strategies based on failure classification, confidence, and outcome analysis. Does NOT execute actions directly.
-4. **PostgreSQL**: Source of truth for business state (Planned).
-5. **Redis**: Queues, scheduling, temporary state (Planned).
-6. **Razorpay**: Payment provider (Planned).
+5. **PostgreSQL**: Source of truth for business state.
+6. **Redis**: Queues, scheduling, and event transport.
+7. **Razorpay**: Provider abstraction with mock and TEST MODE paths.
 
 ## Phase 3 Architecture: Auth, RBAC, & Multi-Tenancy
 
@@ -94,3 +98,124 @@
 
 
 
+
+---
+
+# Current System Architecture (Phase 20)
+
+## System Narrative
+
+A merchant receives a failed-payment event from Razorpay. Mend ingests it, understands it,
+runs six specialized AI agents over it, reaches a safe consensus, validates it against
+compliance policy, records an ActionIntent (the only object allowed to reach the payment
+provider), executes through the provider boundary, reconciles the authoritative outcome,
+and lets the merchant see the whole story in the console.
+
+## Authority Chain (financial safety contract)
+
+```
+Agents (recommendations only)
+        |
+        v
+Supervisor consensus
+        |
+        v
+Spring Boot validation + Compliance engine
+        |
+        v
+ActionIntent (idempotent, CLAIMED-gated, expires)
+        |
+        v
+Provider abstraction -> Razorpay TEST MODE / mock
+        |
+        v
+Reconciliation (provider state authoritative for RECOVERED)
+        |
+        v
+Outcome analysis -> Campaign state -> Analytics / Audit
+```
+
+- Agents never call Razorpay directly, never mutate authoritative campaign state, and never
+  mark a payment recovered. Every agent output is advisory; the Spring Boot boundary
+  revalidates campaign state, tenant, compliance, expiry, and intent status before execution.
+- PostgreSQL is the authoritative business store. Redis, the AI service, and the frontend
+  are never authoritative for financial state.
+
+## Layer Map
+
+| Layer | Technology | Responsibility | Authority |
+|---|---|---|---|
+| Ingestion | WebhookController -> WebhookService | HMAC verify, dedupe, persist | none (event truth in DB) |
+| Pipeline | Redis Streams + consumer group | at-least-once transport, retry/DLQ | transport only |
+| Intelligence | Python FastAPI + LangGraph (6 agents) | classification + consensus recommendation | advisory only |
+| Safety | ComplianceEngine, CampaignStateMachine, ActionIntentService | policy gate, state machine, intent idempotency | binding |
+| Execution | ActionExecutionService -> PaymentProviderClient | claim + revalidate + execute + finalize | executes only intents |
+| Provider | RazorpayPaymentProviderClient / MockPaymentProviderClient | captured/declined/error + reconciliation status | outcome evidence |
+| Reconciliation | DefaultPaymentReconciliationService | reconcile webhook outcome vs intent | RECOVERED requires evidence |
+| Observability | AuditService, traceId/correlationId, structured logs | tamper-evident hash-chained audit | read-only |
+| Product | Next.js console | dashboards, approvals, analytics | read + approve only |
+| Tenant isolation | SecurityFilter + TenantContext + service revalidation | merchant scope on every path | enforced at every layer |
+
+## Data Flow
+
+```
+HTTP webhook (signed)
+  -> HMAC-SHA256 constant-time verify (RazorpaySignatureVerifier)
+  -> parse; merchant resolved ONLY from payload (account_id / notes.merchant_id)
+  -> dedupe on webhook_events.external_event_id (unique constraint)
+  -> persist raw payload + payload_hash
+  -> publish to Redis Stream (mend:webhooks)
+  -> consumer (XACK only after success; retry stream; DLQ on deserialization)
+  -> classify (AI service / deterministic fallback)
+  -> campaign created (idempotent per merchant+payment)
+  -> 6-agent LangGraph graph (risk, decision, strategy, engagement, supervisor consensus)
+  -> Spring persists agent decision records
+  -> ComplianceEngine gate
+  -> ActionIntent created (idempotency key intent:{campaign}:attempt_{n}:{action})
+  -> scheduled -> READY -> atomic CLAIM (worker token) -> CLAIMED
+  -> executeActionIntent: re-validate CLAIMED/owner/expiry/campaign/compliance/tenant
+  -> provider (mock or Razorpay TEST MODE), provider call OUTSIDE the DB transaction
+  -> finalize: campaign_attempt (unique campaign+attempt), intent terminal state,
+     campaign state machine transition (RECOVERED only on provider success)
+  -> reconciliation of late/duplicate provider webhooks
+  -> audit events hash-chained at every transition
+  -> console: dashboard/payments/campaigns/actions/approvals/customers/analytics/audit/demo
+```
+
+## Key Idempotency Controls (duplicate financial execution is prevented by)
+
+1. Webhook dedupe - unique `external_event_id`; concurrent insert race caught on the unique
+   constraint and re-read.
+2. Campaign creation - unique index per (merchant_id, payment_id).
+3. ActionIntent - unique `idempotency_key`; `saveAndFlush` + constraint-violation re-read.
+4. Execution - intent must be CLAIMED by the same worker; expiration checked; campaign must
+   be in an executable state; terminal intents skip finalization.
+5. Attempt persistence - unique (campaign_id, attempt_number).
+6. Reconciliation - an already-SUCCEEDED intent + duplicate success event is a no-op; only
+   provider-captured evidence transitions a campaign to RECOVERED.
+
+## Scalability & Durability Classification (honest labels)
+
+- LangGraph checkpointer (`DurableMemorySaver`): process-local, file-backed,
+  restart-durable on one host. NOT distributed; a horizontal AI deployment requires a
+  shared checkpointer (Postgres/Redis-backed). PostgreSQL remains authoritative; the
+  checkpointer only resumes in-flight graph execution.
+- Redis consumer group: single group supports multiple consumers for the same stream
+  (competing consumers); XACK-only-after-processing gives at-least-once semantics.
+- Provider integration: `mend.payment.provider=mock` (default) or `razorpay`; credentials
+  are environment-driven and never enter agent state, checkpoints, audit, or logs.
+
+## Deployment Notes
+
+- Docker Compose runs PostgreSQL + Redis; backend/frontend/AI run from source or images.
+- Backend requires: SPRING_DATASOURCE_URL/USERNAME/PASSWORD, REDIS_HOST/PORT,
+  RAZORPAY_WEBHOOK_SECRET (webhook verification), JWT_SECRET, MEND_PAYMENT_PROVIDER.
+- Flyway migrations run at startup (V1..V10).
+- Health endpoints: backend `/api/health`, AI service `/health`.
+- AI service calls use `MEND_AI_INTERNAL_TOKEN` when configured; production must set a strong
+  shared token and keep the AI service on a private network. The AI orchestration request's
+  `backendUrl` field is compatibility-only and is ignored; the service uses `MEND_BACKEND_URL`
+  to avoid caller-controlled SSRF.
+- The Compose file is a local-development stack. It does not provide production TLS, Redis
+  authentication, secret management, database HA/backups, rate limiting, or distributed
+  LangGraph checkpoint storage.

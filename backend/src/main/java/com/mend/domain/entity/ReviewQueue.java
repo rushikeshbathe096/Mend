@@ -43,6 +43,9 @@ public class ReviewQueue {
     @Column
     private Instant reviewedAt;
 
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
     public ReviewQueue() {
     }
 
@@ -124,5 +127,13 @@ public class ReviewQueue {
 
     public void setReviewedAt(Instant reviewedAt) {
         this.reviewedAt = reviewedAt;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(Instant expiresAt) {
+        this.expiresAt = expiresAt;
     }
 }

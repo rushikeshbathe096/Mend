@@ -35,6 +35,7 @@ public class ActionScheduler {
     private final Duration leaseDuration;
     private final String workerId;
     private final boolean enabled;
+    private final boolean scheduledEnabled;
 
     @Autowired
     public ActionScheduler(
@@ -44,13 +45,15 @@ public class ActionScheduler {
             @Value("${mend.scheduler.worker-id:}") String workerId,
             @Value("${mend.scheduler.batch-size:50}") int batchSize,
             @Value("${mend.scheduler.lease-duration-minutes:5}") int leaseDurationMinutes,
-            @Value("${mend.scheduler.enabled:true}") boolean enabled) {
+            @Value("${mend.scheduler.enabled:true}") boolean enabled,
+            @Value("${mend.scheduler.scheduled-enabled:true}") boolean scheduledEnabled) {
         this.actionIntentRepository = actionIntentRepository;
         this.actionExecutionService = actionExecutionService;
         this.auditService = auditService;
         this.batchSize = batchSize;
         this.leaseDuration = Duration.ofMinutes(leaseDurationMinutes);
         this.enabled = enabled;
+        this.scheduledEnabled = scheduledEnabled;
         this.workerId = (workerId != null && !workerId.isBlank())
                 ? workerId
                 : "worker-" + UUID.randomUUID().toString().substring(0, 8);
@@ -60,9 +63,21 @@ public class ActionScheduler {
             ActionIntentRepository actionIntentRepository,
             ActionExecutionService actionExecutionService,
             AuditService auditService,
+            String workerId,
+            int batchSize,
+            int leaseDurationMinutes,
+            boolean enabled) {
+        this(actionIntentRepository, actionExecutionService, auditService, workerId,
+            batchSize, leaseDurationMinutes, enabled, true);
+        }
+
+        public ActionScheduler(
+            ActionIntentRepository actionIntentRepository,
+            ActionExecutionService actionExecutionService,
+            AuditService auditService,
             int batchSize,
             int leaseDurationMinutes) {
-        this(actionIntentRepository, actionExecutionService, auditService, null, batchSize, leaseDurationMinutes, true);
+        this(actionIntentRepository, actionExecutionService, auditService, null, batchSize, leaseDurationMinutes, true, true);
     }
 
     public ActionScheduler(
@@ -70,10 +85,17 @@ public class ActionScheduler {
             AuditService auditService,
             int batchSize,
             int leaseDurationMinutes) {
-        this(actionIntentRepository, null, auditService, null, batchSize, leaseDurationMinutes, true);
+        this(actionIntentRepository, null, auditService, null, batchSize, leaseDurationMinutes, true, true);
     }
 
     @Scheduled(fixedDelayString = "${mend.scheduler.poll-interval-ms:5000}")
+    public List<PaymentExecutionResult> scheduledPollAndExecuteDueActions() {
+        if (!scheduledEnabled) {
+            return Collections.emptyList();
+        }
+        return pollAndExecuteDueActions();
+    }
+
     @Transactional
     public List<PaymentExecutionResult> pollAndExecuteDueActions() {
         if (!enabled) {

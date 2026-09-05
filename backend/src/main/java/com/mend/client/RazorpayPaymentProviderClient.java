@@ -91,7 +91,10 @@ public class RazorpayPaymentProviderClient implements PaymentProviderClient {
         String idempotencyKey = request.getIdempotencyKey();
 
         // 1. Validate Action Type support
-        if (request.getActionType() != ActionType.RETRY_PAYMENT) {
+        boolean isSupported = request.getActionType() == ActionType.RETRY_PAYMENT 
+                || request.getActionType() == ActionType.REQUEST_CUSTOMER_ACTION;
+
+        if (!isSupported) {
             log.warn("Action type '{}' is not supported for automated Razorpay API execution. Intent: '{}'",
                     request.getActionType(), request.getIntentId());
             return PaymentExecutionResult.error(
@@ -112,7 +115,9 @@ public class RazorpayPaymentProviderClient implements PaymentProviderClient {
 
         // 3. Determine Endpoint
         String endpoint;
-        if (request.getPaymentId() != null && !request.getPaymentId().isBlank()) {
+        if (request.getActionType() == ActionType.REQUEST_CUSTOMER_ACTION) {
+            endpoint = baseUrl + "/v1/payment_links";
+        } else if (request.getPaymentId() != null && !request.getPaymentId().isBlank()) {
             endpoint = baseUrl + "/v1/payments/" + request.getPaymentId().trim() + "/retry";
         } else if (request.getSubscriptionId() != null && !request.getSubscriptionId().isBlank()) {
             endpoint = baseUrl + "/v1/subscriptions/" + request.getSubscriptionId().trim() + "/charge";

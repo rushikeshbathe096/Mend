@@ -1,205 +1,108 @@
 # Mend
-AI-powered payment recovery platform
 
-## Overview
-Mend detects failed recurring payments, uses AI to classify the failure and recommend a recovery strategy, applies deterministic policy/compliance rules, schedules recovery actions, executes permitted actions, processes outcomes, and learns from recovery results.
+Mend is an AI-assisted payment recovery platform that turns signed payment failures into policy-checked, auditable recovery workflows.
+
+## Problem
+
+Recurring payment failures cause revenue loss, but blind retries can be unsafe, ineffective, or non-compliant. Mend combines structured recovery recommendations with a deterministic financial execution boundary.
+
+## Solution
+
+```mermaid
+flowchart LR
+  Event[Signed payment failure] --> Classify[Classification]
+  Classify --> Risk[Risk]
+  Risk --> Decision[Decision]
+  Decision --> Strategy[Strategy]
+  Strategy --> Consensus[Supervisor consensus]
+  Consensus --> Compliance[Compliance]
+  Compliance --> Intent[ActionIntent]
+  Intent --> Execute[Provider execution]
+  Execute --> Reconcile[Reconciliation]
+  Reconcile --> Outcome[Outcome and analytics]
+```
+
+Static retry logic only applies a fixed rule. Mend adds bounded context, risk and strategy recommendations, human review, compliance, idempotent intents, provider reconciliation, and merchant-visible evidence. The agents recommend; Spring Boot remains authoritative.
 
 ## Architecture
-- **Frontend**: Next.js (React, TypeScript, Tailwind CSS)
-- **Backend**: Java 21, Spring Boot 4.1.1
-- **AI Service**: Python 3.12, FastAPI
-- **Database**: PostgreSQL 17 (Phase 2+)
-- **Cache**: Redis 7 (Phase 2+)
 
-## Setup Instructions
-
-### Prerequisites
-- Node.js 24+
-- Java 21+
-- Maven
-- Python 3.12+
-- Docker and Docker Compose (for Phase 2+ infrastructure)
-
-### Phase 2: Infrastructure Setup
-
-Phase 2 adds local PostgreSQL and Redis infrastructure. To run the complete system:
-
-```bash
-# Start infrastructure
-docker compose up -d
-
-# Verify services are healthy
-docker compose ps
-
-# Check services
-docker compose exec postgres pg_isready -U mend_user
-docker compose exec redis redis-cli ping
+```mermaid
+flowchart TD
+  Merchant[Merchant] --> Frontend[Next.js + TypeScript]
+  Frontend --> Backend[Spring Boot REST API]
+  Backend --> Postgres[(PostgreSQL)]
+  Backend --> Redis[(Redis Streams)]
+  Backend --> AI[Python FastAPI]
+  AI --> Graph[LangGraph]
+  Graph --> Six[Six bounded agent roles]
+  Six --> Backend
+  Backend --> Provider[Razorpay abstraction]
 ```
 
-See [Phase 2 Infrastructure Guide](docs/PHASE2_INFRASTRUCTURE.md) for detailed setup and troubleshooting.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), and [docs/RELIABILITY.md](docs/RELIABILITY.md).
 
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## Six Agents
 
-### Backend
-```bash
-cd backend
-./mvnw spring-boot:run
-```
+1. Recovery Supervisor: context and consensus routing.
+2. Risk & Fraud: risk signals and review recommendation.
+3. Recovery Decision: proposed action.
+4. Recovery Strategy: strategy recommendation.
+5. Customer Engagement: channel and customer-action recommendation.
+6. Outcome Analysis: observation of execution and reconciliation.
 
-Backend will connect to:
-- PostgreSQL at `localhost:5432` (or `postgres:5432` in Docker)
-- Redis at `localhost:6379` (or `redis:6379` in Docker)
+They are roles within one LangGraph workflow, not six independent services. No agent can call Razorpay, write authoritative state, bypass compliance, or mark a payment recovered.
 
-### AI Service
-```bash
-cd ai-service
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
+## Safety
 
-### Testing
-Use the verification script in the root directory:
-```bash
-./scripts/verify.sh
-```
+- PostgreSQL is business truth; Redis is transport.
+- Webhooks use raw-body HMAC verification and external-event deduplication.
+- JWT/RBAC and service-level checks enforce tenant isolation.
+- Compliance is evaluated before ActionIntent creation and revalidated before execution.
+- ActionIntent carries idempotency, expiry, claim ownership, and execution state.
+- Provider evidence, not an agent response, establishes recovery.
+- High-risk or conflicting cases can require human approval.
 
-Run backend tests:
-```bash
-cd backend
-./mvnw clean test
-```
+## Verified Results
 
-## Development Workflow
+- 276 Java tests, 32 Python tests, and 23 frontend tests passing.
+- `./scripts/verify.sh` passes, including the Next.js production build.
+- Six-agent heuristic benchmark: 85.32 ms p50 and 89.76 ms p95 over 10 local runs with no LLM keys.
+- Five-case recovery fixture: 5/5 expected routes, 40% retry, 40% human-review, 20% customer-action.
+- Webhook load measurements are qualified local results: 85.0 events/s full sequential, 101.1 ingestion-only, and 65.2 concurrent under Phase 20 conditions.
+- No recovery-uplift percentage, real recovery rate, API p99, or production throughput guarantee is claimed.
 
-### With Docker Compose Infrastructure
+## Technology
 
-```bash
-# Terminal 1: Start infrastructure
-docker compose up -d
-docker compose logs -f
+Next.js, TypeScript, Java 21, Spring Boot, PostgreSQL, Flyway, Redis Streams, Python 3.12, FastAPI, LangGraph, MCP, JWT/RBAC, and Razorpay provider abstraction with mock and TEST MODE paths.
 
-# Terminal 2: Start backend
-cd backend
-./mvnw spring-boot:run
+## Demo
 
-# Terminal 3: Start frontend
-cd frontend
-npm run dev
+The demo covers low-risk retry, high-risk human approval, customer action, provider timeout/reconciliation, duplicate webhook, and AI/MCP failure fallback. See [docs/DEMO.md](docs/DEMO.md).
 
-# Terminal 4: Start AI service
-cd ai-service
-source .venv/bin/activate
-uvicorn main:app --reload
-```
-
-### Without Docker (Frontend/AI Service Only)
-
-For local development without database:
-
-```bash
-# Frontend
-cd frontend && npm run dev
-
-# AI Service
-cd ai-service && uvicorn main:app --reload
-```
-
-## Phase Documentation
-
-- **Phase 1**: Application foundation (completed)
-  - REST API structure
-  - Health endpoint
-  - Basic project setup
-
-- **Phase 2**: Infrastructure foundation (in progress)
-  - PostgreSQL database
-  - Redis cache
-  - Docker Compose orchestration
-  - Environment configuration
-  - See [Phase 2 Guide](docs/PHASE2_INFRASTRUCTURE.md)
-
-- **Phase 3+**: Business logic, authentication, and integrations (planned)
-
-## Architecture Details
-
-See [Architecture](docs/architecture.md) for comprehensive system design.
-
-## Environment Configuration
-
-Create a `.env` file based on `.env.example`:
+## Setup
 
 ```bash
 cp .env.example .env
-# Edit .env with your configuration
+docker compose up -d
+./scripts/verify.sh
 ```
 
-The `.env` file contains:
-- PostgreSQL credentials
-- Redis configuration
-- API service URLs
-- JWT secrets (Phase 3+)
+For separate service startup, environment variables, expected ports, Razorpay TEST MODE, and troubleshooting, see [docs/SETUP.md](docs/SETUP.md).
 
-**Note**: `.env` is not committed to Git for security.
+## Project Structure
 
-## Common Commands
+- `frontend/`: merchant console and route tests.
+- `backend/`: authoritative API, event processing, compliance, ActionIntent, providers, reconciliation, and audit.
+- `ai-service/`: bounded classification, LangGraph roles, MCP tools, checkpoint helper, and AI tests.
+- `scripts/`: repository verification.
+- `docs/`: technical, evidence, demo, interview, and readiness package.
 
-### Infrastructure
-```bash
-docker compose up -d      # Start infrastructure
-docker compose down       # Stop infrastructure (keep data)
-docker compose down -v    # Stop infrastructure and remove data
-docker compose ps         # Check service status
-docker compose logs -f    # View logs
-```
+See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
 
-### Backend
-```bash
-cd backend
-./mvnw clean test         # Run tests
-./mvnw spring-boot:run    # Start server
-./mvnw compile            # Compile only
-```
+## Limitations
 
-### Frontend
-```bash
-cd frontend
-npm run dev               # Start dev server
-npm run build             # Build for production
-npm test                  # Run tests
-```
+Mend is a regression-green single-host engineering demonstration, not a production-deployment-ready SaaS. Remaining gaps include the provider lease-expiry duplicate-call boundary, synthetic MCP fallbacks, optional deployment-configured AI authentication, process-local checkpointing, external secret management, TLS/ingress, rate limiting, monitoring, database HA/backups, and live Razorpay production certification.
 
-## Troubleshooting
+## Documentation Index
 
-### Infrastructure issues
-See [Phase 2 Infrastructure Troubleshooting](docs/PHASE2_INFRASTRUCTURE.md#troubleshooting)
-
-### Backend connection issues
-```bash
-# Check infrastructure is running and healthy
-docker compose ps
-
-# Check backend logs
-cd backend && ./mvnw spring-boot:run
-
-# Test database connectivity
-docker compose exec postgres pg_isready -U mend_user
-```
-
-### Port conflicts
-```bash
-# Check what's using ports
-lsof -i :5432   # PostgreSQL
-lsof -i :6379   # Redis  
-lsof -i :8080   # Backend
-lsof -i :3000   # Frontend
-```
-- AI Service is a placeholder; real AI models are NOT implemented yet.
-- Razorpay integration is NOT implemented yet.
-- The Java backend contains only health endpoints.
+Start with [docs/PHASE21_PACKAGE_INDEX.md](docs/PHASE21_PACKAGE_INDEX.md). The current evidence source is [docs/PHASE20_FORENSIC_FINDINGS.md](docs/PHASE20_FORENSIC_FINDINGS.md). Career packaging is in [docs/CV_BULLETS.md](docs/CV_BULLETS.md) and [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md).

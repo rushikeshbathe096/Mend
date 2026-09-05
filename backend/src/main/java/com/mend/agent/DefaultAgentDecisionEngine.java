@@ -123,7 +123,7 @@ public class DefaultAgentDecisionEngine implements AgentDecisionEngine {
             return AgentDecision.create(
                     context.campaignId(),
                     context.merchantId(),
-                    "WAIT_AND_RETRY",
+                    "RETRY_PAYMENT",
                     "RETRY_PAYMENT",
                     new BigDecimal("0.90"),
                     "Deterministic fallback: Insufficient funds detected; wait and retry recommended.",
@@ -138,7 +138,7 @@ public class DefaultAgentDecisionEngine implements AgentDecisionEngine {
             return AgentDecision.create(
                     context.campaignId(),
                     context.merchantId(),
-                    "REQUEST_CUSTOMER_ACTION",
+                    "CUSTOMER_ACTION_REQUIRED",
                     "SEND_CUSTOMER_EMAIL",
                     new BigDecimal("0.88"),
                     "Deterministic fallback: Card expired; request customer payment details update.",

@@ -4,6 +4,7 @@ public enum ReviewQueueStatus {
     PENDING,
     IN_REVIEW,
     APPROVED,
+    REJECTED,
     OVERRIDDEN,
     CLOSED,
     ESCALATED

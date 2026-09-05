@@ -1,0 +1,43 @@
+{
+  "timestamp": 1788599975.1997557,
+  "sample_size": 5,
+  "benchmark_dataset_results": [
+    {
+      "id": "t1",
+      "failure_code": "insufficient_funds",
+      "selected_action": "RETRY_PAYMENT",
+      "risk_level": "LOW",
+      "human_review_required": false
+    },
+    {
+      "id": "t2",
+      "failure_code": "card_expired",
+      "selected_action": "CUSTOMER_ACTION_REQUIRED",
+      "risk_level": "LOW",
+      "human_review_required": false
+    },
+    {
+      "id": "t3",
+      "failure_code": "insufficient_funds",
+      "selected_action": "REVIEW_REQUIRED",
+      "risk_level": "HIGH",
+      "human_review_required": true
+    },
+    {
+      "id": "t4",
+      "failure_code": "bank_declined",
+      "selected_action": "REVIEW_REQUIRED",
+      "risk_level": "LOW",
+      "human_review_required": true
+    },
+    {
+      "id": "t5",
+      "failure_code": "network_failure",
+      "selected_action": "RETRY_PAYMENT",
+      "risk_level": "LOW",
+      "human_review_required": false
+    }
+  ],
+  "human_review_rate": 0.4,
+  "retry_rate": 0.4
+}

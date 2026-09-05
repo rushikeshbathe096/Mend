@@ -6,12 +6,13 @@ import { useParams } from 'next/navigation';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
 import { MetricCard } from '@/components/common/MetricCard';
+import { Modal } from '@/components/common/Modal';
 import { Timeline, TimelineStep } from '@/components/common/Timeline';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { CampaignDto, CampaignTimelineDto, AgentDecisionRecordDto } from '@/types';
+import { CampaignDto, CampaignTimelineDto, AgentDecisionRecordDto, PageResponse, ReviewItemDto, CampaignDto as CD } from '@/types';
 
 export default function CampaignDetailPage() {
   const params = useParams();
@@ -25,6 +26,11 @@ export default function CampaignDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'timeline' | 'actions' | 'compliance' | 'ai' | 'audit'>('timeline');
+
+  const [pendingReview, setPendingReview] = useState<ReviewItemDto | null>(null);
+  const [controlLoading, setControlLoading] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'terminate' | 'pause' | null>(null);
 
   const fetchCampaignDetails = useCallback(async () => {
     if (!currentMerchantId || !campaignId) {
@@ -44,6 +50,11 @@ export default function CampaignDetailPage() {
       setCampaign(cData);
       setTimeline(tData);
       setAgentDecisions(dData || []);
+
+      // Detect an active human-approval review for this campaign
+      const reviews = await api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50').catch(() => null);
+      const mine = reviews?.content?.find((r) => r.campaignId === campaignId) || null;
+      setPendingReview(mine);
     } catch (err: any) {
       setError(err.message || 'Failed to load campaign lifecycle details.');
     } finally {
@@ -204,7 +215,33 @@ export default function CampaignDetailPage() {
                 </p>
               </div>
 
-              <div className="flex items-center space-x-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {pendingReview && (
+                  <Link
+                    href="/actions"
+                    className="px-4 py-2 bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 rounded-xl text-xs font-bold hover:bg-amber-100 transition-colors"
+                  >
+                    Pending Approval
+                  </Link>
+                )}
+                {(campaign.currentState === 'ACTION_PENDING' || campaign.currentState === 'ELIGIBLE') && (
+                  <button
+                    onClick={() => setConfirmAction(campaign.currentState === 'ACTION_PENDING' ? 'pause' : 'terminate')}
+                    disabled={controlLoading}
+                    className="px-4 py-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    {campaign.currentState === 'ACTION_PENDING' ? 'Pause' : 'Terminate'}
+                  </button>
+                )}
+                {campaign.currentState === 'CREATED' && (
+                  <button
+                    onClick={() => setConfirmAction('terminate')}
+                    disabled={controlLoading}
+                    className="px-4 py-2 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 rounded-xl text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors disabled:opacity-50"
+                  >
+                    Cancel Campaign
+                  </button>
+                )}
                 <button
                   onClick={fetchCampaignDetails}
                   className="px-4 py-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold hover:bg-gray-50 transition-colors shadow-sm"
@@ -213,6 +250,28 @@ export default function CampaignDetailPage() {
                 </button>
               </div>
             </div>
+
+            {controlError && <ErrorAlert message={controlError} onRetry={() => setControlError(null)} />}
+
+            {pendingReview && (
+              <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span className="text-sm font-bold text-amber-900 dark:text-amber-300">Merchant human approval required</span>
+                  </div>
+                  <p className="text-xs text-amber-800/80 dark:text-amber-400/80 mt-1 max-w-3xl">
+                    {pendingReview.reason || 'This campaign cannot proceed until a reviewer approves or rejects the proposed recovery.'}
+                  </p>
+                </div>
+                <Link
+                  href="/actions"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors shrink-0 text-center"
+                >
+                  Review in Action Center &rarr;
+                </Link>
+              </div>
+            )}
 
             {/* Metric Overview Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -402,6 +461,55 @@ export default function CampaignDetailPage() {
           </>
         )}
       </div>
+
+      {/* Lifecycle control confirmation */}
+      <Modal
+        isOpen={confirmAction !== null}
+        onClose={() => setConfirmAction(null)}
+        title={confirmAction === 'terminate' ? 'Terminate this campaign?' : 'Pause this campaign?'}
+        subtitle={confirmAction === 'terminate' ? 'This ends the recovery workflow. Pending intents are cancelled.' : 'Pauses the campaign at ACTION_PENDING. Resume to continue.'}
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            {confirmAction === 'terminate'
+              ? 'The backend state machine will transition this campaign to CANCELLED. This cannot be undone from the UI.'
+              : 'The backend state machine will transition this campaign to ACTION_PENDING. No further action intents are created while paused.'}
+          </p>
+          <div className="flex justify-end space-x-3 pt-2">
+            <button
+              onClick={() => setConfirmAction(null)}
+              className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-xs font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                if (!campaign || !confirmAction) return;
+                setControlLoading(true);
+                setControlError(null);
+                try {
+                  const endpoint = confirmAction === 'terminate' ? 'terminate' : 'pause';
+                  await api.post<CD>(`/campaigns/${campaign.id}/${endpoint}`);
+                  setConfirmAction(null);
+                  await fetchCampaignDetails();
+                } catch (err: any) {
+                  setControlError(err.message || `Failed to ${confirmAction} the campaign on the backend.`);
+                  setConfirmAction(null);
+                } finally {
+                  setControlLoading(false);
+                }
+              }}
+              disabled={controlLoading}
+              className={`px-5 py-2 rounded-lg text-xs font-bold text-white transition-colors disabled:opacity-50 ${
+                confirmAction === 'terminate' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-600 hover:bg-amber-700'
+              }`}
+            >
+              {controlLoading ? 'Applying...' : confirmAction === 'terminate' ? 'Terminate Campaign' : 'Pause Campaign'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </ConsoleLayout>
   );
 }

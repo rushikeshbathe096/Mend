@@ -7,13 +7,24 @@ import { ErrorAlert } from '@/components/common/Feedback';
 import { CardSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { AnalyticsOverviewDto, AnalyticsRecoveryDto } from '@/types';
+import {
+  AnalyticsOverviewDto,
+  AnalyticsRecoveryDto,
+  AnalyticsFunnelDto,
+  AnalyticsFailureBreakdownDto,
+  AnalyticsStrategyPerformanceDto,
+  ReviewQueueSummaryDto,
+} from '@/types';
 
 export default function AnalyticsPage() {
   const { currentMerchantId } = useAuth();
 
   const [overview, setOverview] = useState<AnalyticsOverviewDto | null>(null);
   const [recovery, setRecovery] = useState<AnalyticsRecoveryDto | null>(null);
+  const [funnel, setFunnel] = useState<AnalyticsFunnelDto | null>(null);
+  const [failureBreakdown, setFailureBreakdown] = useState<AnalyticsFailureBreakdownDto | null>(null);
+  const [strategyPerformance, setStrategyPerformance] = useState<AnalyticsStrategyPerformanceDto | null>(null);
+  const [reviewSummary, setReviewSummary] = useState<ReviewQueueSummaryDto | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,13 +38,21 @@ export default function AnalyticsPage() {
     setError(null);
 
     try {
-      const [overviewData, recoveryData] = await Promise.all([
+      const [overviewData, recoveryData, funnelData, failureData, strategyData, reviewsData] = await Promise.all([
         api.get<AnalyticsOverviewDto>('/analytics/overview'),
         api.get<AnalyticsRecoveryDto>('/analytics/recovery'),
+        api.get<AnalyticsFunnelDto>('/analytics/funnel').catch(() => null),
+        api.get<AnalyticsFailureBreakdownDto>('/analytics/failure-breakdown').catch(() => null),
+        api.get<AnalyticsStrategyPerformanceDto>('/analytics/strategy-performance').catch(() => null),
+        api.get<ReviewQueueSummaryDto>('/reviews/summary').catch(() => null),
       ]);
 
       setOverview(overviewData);
       setRecovery(recoveryData);
+      setFunnel(funnelData);
+      setFailureBreakdown(failureData);
+      setStrategyPerformance(strategyData);
+      setReviewSummary(reviewsData);
     } catch (err: any) {
       setError(err.message || 'Failed to load recovery analytics telemetry.');
     } finally {
@@ -108,6 +127,42 @@ export default function AnalyticsPage() {
               subtext={`Ingestion latency: ${overview?.averageIngestionToCampaignLatencyMs ?? 0} ms`}
               variant="indigo"
             />
+          </div>
+        )}
+
+        {/* Recovery Funnel from the analytics service */}
+        {!loading && funnel && funnel.stages && funnel.stages.length > 0 && (
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm">
+            <h2 className="text-base font-bold text-gray-900 dark:text-white">Recovery Funnel</h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-5">
+              {funnel.totalPaymentFailures} total payment failures ingested
+            </p>
+            <div className="space-y-4">
+              {funnel.stages.map((stage, idx) => {
+                const width = Math.min(100, Math.max(stage.conversionRatePercent, 0));
+                const last = idx === funnel.stages.length - 1;
+                return (
+                  <div key={stage.stageName}>
+                    <div className="flex justify-between text-xs font-semibold mb-1.5">
+                      <span className={last ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-700 dark:text-gray-300'}>
+                        {idx + 1}. {stage.stageName.replace(/_/g, ' ')}
+                      </span>
+                      <span className={`font-mono ${last ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-gray-500'}`}>
+                        {stage.count} ({stage.conversionRatePercent}%)
+                      </span>
+                    </div>
+                    <div className="w-full h-2.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          last ? 'bg-emerald-500' : 'bg-gradient-to-r from-blue-600 to-indigo-600'
+                        }`}
+                        style={{ width: `${Math.max(1, width)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -203,9 +258,9 @@ export default function AnalyticsPage() {
                 <div className="p-4 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900">
                   <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 block">Avg Confidence</span>
                   <div className="text-2xl font-black text-blue-900 dark:text-blue-100 font-mono mt-1">
-                    {recovery.aiConfidenceMetrics?.averageConfidence !== undefined
+                    {recovery.aiConfidenceMetrics?.averageConfidence !== undefined && recovery.aiConfidenceMetrics?.averageConfidence !== null
                       ? `${(recovery.aiConfidenceMetrics.averageConfidence * 100).toFixed(0)}%`
-                      : '88%'}
+                      : `${(overview?.recoveryRate ?? 0).toFixed(0)}%`}
                   </div>
                 </div>
 
@@ -244,6 +299,101 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Failure breakdown + strategy performance tables */}
+        {!loading && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm">
+              <h2 className="text-base font-bold text-gray-900 dark:text-white mb-1">Failure Breakdown</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Recovery performance by failure class</p>
+              {!failureBreakdown || failureBreakdown.failureClasses.length === 0 ? (
+                <p className="text-xs text-gray-500 italic py-6 text-center">No failure-class metrics available yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-gray-50 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 font-bold uppercase border-b border-gray-200 dark:border-gray-800">
+                      <tr>
+                        <th className="px-3 py-2.5">Failure Class</th>
+                        <th className="px-3 py-2.5 text-right">Count</th>
+                        <th className="px-3 py-2.5 text-right">Recovered</th>
+                        <th className="px-3 py-2.5 text-right">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {failureBreakdown.failureClasses.map((fc) => (
+                        <tr key={fc.failureClass} className="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                          <td className="px-3 py-3 font-mono font-bold">{fc.failureClass}</td>
+                          <td className="px-3 py-3 text-right font-mono">{fc.count}</td>
+                          <td className="px-3 py-3 text-right font-mono text-emerald-600 dark:text-emerald-400">{fc.recoveredCount}</td>
+                          <td className="px-3 py-3 text-right font-mono">{fc.recoveryRatePercent}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm">
+              <h2 className="text-base font-bold text-gray-900 dark:text-white mb-1">Strategy Performance</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Attempts, success rates and recovered value by strategy</p>
+              {!strategyPerformance || strategyPerformance.strategies.length === 0 ? (
+                <p className="text-xs text-gray-500 italic py-6 text-center">No strategy metrics available yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-gray-50 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 font-bold uppercase border-b border-gray-200 dark:border-gray-800">
+                      <tr>
+                        <th className="px-3 py-2.5">Strategy</th>
+                        <th className="px-3 py-2.5 text-right">Campaigns</th>
+                        <th className="px-3 py-2.5 text-right">Recovered</th>
+                        <th className="px-3 py-2.5 text-right">Success</th>
+                        <th className="px-3 py-2.5 text-right">Value Recovered</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {strategyPerformance.strategies.map((s) => (
+                        <tr key={s.strategyName} className="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                          <td className="px-3 py-3 font-mono font-bold">{s.strategyName}</td>
+                          <td className="px-3 py-3 text-right font-mono">{s.totalCampaigns}</td>
+                          <td className="px-3 py-3 text-right font-mono text-emerald-600 dark:text-emerald-400">{s.recoveredCampaigns}</td>
+                          <td className="px-3 py-3 text-right font-mono">{s.successRatePercent}%</td>
+                          <td className="px-3 py-3 text-right font-mono">{formatCurrency(s.revenueRecovered)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Agent intelligence overview */}
+        {!loading && recovery && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-500">Human Review Backlog</div>
+              <div className="text-2xl font-black font-mono mt-1 text-amber-600 dark:text-amber-400">{reviewSummary?.pending ?? 0}</div>
+              <div className="text-[11px] text-gray-400 mt-1">Reviews waiting for a merchant decision</div>
+            </div>
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-500">Compliance Blocked</div>
+              <div className="text-2xl font-black font-mono mt-1 text-rose-600 dark:text-rose-400">{overview?.complianceBlocks ?? 0}</div>
+              <div className="text-[11px] text-gray-400 mt-1">Actions stopped by the policy engine</div>
+            </div>
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-500">Failed Attempts</div>
+              <div className="text-2xl font-black font-mono mt-1 text-rose-600 dark:text-rose-400">{overview?.failedRecoveryAttempts ?? 0}</div>
+              <div className="text-[11px] text-gray-400 mt-1">Failed provider executions (error/declined)</div>
+            </div>
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-500">Total Recovery Attempts</div>
+              <div className="text-2xl font-black font-mono mt-1 text-gray-900 dark:text-white">{overview?.totalAttempts ?? 0}</div>
+              <div className="text-[11px] text-gray-400 mt-1">Across all campaigns</div>
             </div>
           </div>
         )}

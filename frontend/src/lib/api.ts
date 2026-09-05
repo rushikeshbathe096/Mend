@@ -69,7 +69,7 @@ export async function fetchApi<T>(endpoint: string, options: RequestOptions = {}
         localStorage.removeItem('mend_user');
         localStorage.removeItem('mend_merchant_id');
         if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
+          window.location.assign('/login');
         }
       }
 

@@ -4,7 +4,7 @@ import logging
 from enum import Enum
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, status
 import httpx
 
 from agent.router import router as agent_router
@@ -59,6 +59,12 @@ class ClassificationResponse(BaseModel):
     reason: str
     modelVersion: str = "v1.0.0-bounded-heuristic"
     evidence: Optional[Dict[str, Any]] = Field(None, description="Safe diagnostic evidence and risk signals")
+
+def require_internal_auth(internal_token: Optional[str]) -> None:
+    """Require service authentication whenever an internal token is configured."""
+    configured_token = os.getenv("MEND_AI_INTERNAL_TOKEN")
+    if configured_token and internal_token != configured_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal service token")
 
 PROHIBITED_KEYWORDS = [
     "bypass_safety", "force_refund", "direct_charge_without_compliance",
@@ -271,7 +277,8 @@ def health_check():
     )
 
 @app.post("/api/v1/classify", response_model=ClassificationResponse, status_code=status.HTTP_200_OK)
-def classify_endpoint(request: ClassificationRequest):
+def classify_endpoint(request: ClassificationRequest, x_mend_internal_token: Optional[str] = Header(default=None)):
+    require_internal_auth(x_mend_internal_token)
     if not request.eventId or not request.eventId.strip():
         raise HTTPException(status_code=400, detail="eventId must not be empty")
 

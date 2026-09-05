@@ -23,6 +23,7 @@ class RiskLevelEnum(str, Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 class AgentNextStepEnum(str, Enum):
     EXECUTE = "EXECUTE"
@@ -30,6 +31,17 @@ class AgentNextStepEnum(str, Enum):
     WAIT_AND_RETRY = "WAIT_AND_RETRY"
     ESCALATE = "ESCALATE"
     FINISHED = "FINISHED"
+
+# Structured Pydantic response models for Specialized Agents
+
+class RiskAssessmentResponse(BaseModel):
+    riskLevel: RiskLevelEnum = Field(..., description="Deterministic risk classification")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Risk model confidence score")
+    signals: List[str] = Field(default_factory=list, description="Risk & anomaly signals")
+    recommendedHandling: str = Field(default="AUTOMATED", description="AUTOMATED or HUMAN_REVIEW")
+    humanReviewRequired: bool = Field(default=False, description="True if risk warrants manual intervention")
+    reasoningSummary: str = Field(..., description="Concise explainable risk summary")
+    modelVersion: str = Field(default="v1.7.0-risk-agent", description="Risk model version")
 
 class AgentDecisionResponse(BaseModel):
     decision: ActionDecisionEnum = Field(..., description="Action decision proposal")
@@ -43,6 +55,23 @@ class AgentDecisionResponse(BaseModel):
     nextStep: AgentNextStepEnum = Field(..., description="Next state transition direction")
     stopReason: Optional[str] = Field(default=None, description="Explicit stop reason if graph terminates")
 
+class StrategyOptimizationResponse(BaseModel):
+    strategy: str = Field(..., description="Recommended recovery strategy name")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Strategy agent confidence score")
+    reasoningSummary: str = Field(..., description="Explainable strategy rationale")
+    expectedOutcome: str = Field(default="HIGH_PROBABILITY_RECOVERY", description="Expected strategy outcome")
+    alternativeStrategy: Optional[str] = Field(default=None, description="Fallback alternative strategy")
+    stopCondition: Optional[str] = Field(default=None, description="Strategy termination condition")
+
+class CustomerEngagementResponse(BaseModel):
+    engagementNeeded: bool = Field(default=False, description="True if customer contact recommended")
+    recommendedAction: str = Field(default="NONE", description="Customer action type, e.g. CUSTOMER_ACTION_REQUIRED")
+    channel: str = Field(default="PAYMENT_LINK", description="Recommended dunning channel")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Engagement confidence score")
+    reasoningSummary: str = Field(..., description="Engagement rationale summary")
+    humanReviewRequired: bool = Field(default=False, description="True if engagement requires manual review")
+
+# LangGraph Multi-Agent State Definition
 class RecoveryAgentState(TypedDict, total=False):
     trace_id: str
     correlation_id: str
@@ -61,6 +90,16 @@ class RecoveryAgentState(TypedDict, total=False):
     available_recovery_actions: List[str]
     previous_decisions: List[Dict[str, Any]]
     previous_outcomes: List[Dict[str, Any]]
+    
+    # 6 Specialized Agent Decision Outputs
+    risk_analysis: Dict[str, Any]
+    decision_proposal: Dict[str, Any]
+    strategy_recommendation: Dict[str, Any]
+    customer_engagement: Dict[str, Any]
+    consensus_decision: Dict[str, Any]
+    outcome_analysis: Dict[str, Any]
+    
+    # Aggregated Execution State
     proposed_decision: Optional[str]
     selected_action: Optional[str]
     decision_confidence: float
@@ -82,6 +121,7 @@ class RecoveryAgentState(TypedDict, total=False):
     agent_trace_id: str
     iteration: int
     fallback_used: bool
+    agent_decision_records: List[Dict[str, Any]]
 
 class AgentOrchestrationRequest(BaseModel):
     merchantId: str
@@ -116,5 +156,8 @@ class AgentOrchestrationResponse(BaseModel):
     iterationCount: int
     fallbackUsed: bool
     stopReason: Optional[str] = None
-    modelVersion: str = "v1.5.0-langgraph"
-    agentVersion: str = "v1.5.0"
+    modelVersion: str = "v1.7.0-multi-agent"
+    agentVersion: str = "v1.7.0"
+    strategyRecommendation: Optional[Dict[str, Any]] = None
+    customerEngagement: Optional[Dict[str, Any]] = None
+    agentDecisionRecords: Optional[List[Dict[str, Any]]] = None

@@ -13,10 +13,12 @@ interface MetricCardProps {
   variant?: 'default' | 'highlight' | 'emerald' | 'rose' | 'indigo' | 'amber';
 }
 
-export const formatCurrency = (amount: number | undefined | null, currencySymbol = '$'): string => {
-  if (amount === undefined || amount === null) return `${currencySymbol}0.00`;
-  return `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const formatCurrency = (amount: number | undefined | null, currencySymbol = '₹'): string => {
+  if (amount === undefined || amount === null || Number.isNaN(amount)) return '—';
+  return `${currencySymbol}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
+
+export const formatINR = (amount: number | undefined | null): string => formatCurrency(amount, '₹');
 
 export const MetricCard: React.FC<MetricCardProps> = ({
   title,

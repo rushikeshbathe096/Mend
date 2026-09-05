@@ -25,4 +25,5 @@ public interface WebhookEventRepository extends JpaRepository<WebhookEvent, UUID
     Page<WebhookEvent> findByMerchantIdAndProcessingStatus(UUID merchantId, WebhookEventStatus status, Pageable pageable);
     Page<WebhookEvent> findByProcessingStatus(WebhookEventStatus status, Pageable pageable);
     Optional<WebhookEvent> findByMerchantIdAndId(UUID merchantId, UUID id);
+    Optional<WebhookEvent> findByMerchantIdAndExternalEventId(UUID merchantId, String externalEventId);
 }
