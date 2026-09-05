@@ -56,7 +56,7 @@ describe('AuditLogsPage', () => {
       expect(screen.getByText('cmp-789')).toBeInTheDocument();
     });
 
-    expect(api.get).toHaveBeenCalledWith('/audit?page=0&size=10');
+    expect(api.get).toHaveBeenCalledWith('/audit?page=0&size=10', { merchantId: 'm-456' });
   });
 
   it('renders error state when API request fails', async () => {

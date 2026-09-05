@@ -36,16 +36,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(parsedUser);
 
         if (storedMerchantId) {
-          setCurrentMerchantId(storedMerchantId);
-          const found = parsedUser.memberships?.find(m => m.merchantId === storedMerchantId);
+          const found = parsedUser.memberships?.find((m) => m.merchantId === storedMerchantId);
           if (found) {
+            setCurrentMerchantId(storedMerchantId);
             setCurrentMerchantName(found.merchantName);
+          } else if (parsedUser.memberships && parsedUser.memberships.length > 0) {
+            const first = parsedUser.memberships[0];
+            setCurrentMerchantId(first.merchantId);
+            setCurrentMerchantName(first.merchantName);
+            localStorage.setItem('mend_merchant_id', first.merchantId);
+          } else {
+            setCurrentMerchantId(null);
+            setCurrentMerchantName(null);
+            localStorage.removeItem('mend_merchant_id');
           }
         } else if (parsedUser.memberships && parsedUser.memberships.length > 0) {
           const first = parsedUser.memberships[0];
           setCurrentMerchantId(first.merchantId);
           setCurrentMerchantName(first.merchantName);
           localStorage.setItem('mend_merchant_id', first.merchantId);
+        } else {
+          setCurrentMerchantId(null);
+          setCurrentMerchantName(null);
+          localStorage.removeItem('mend_merchant_id');
         }
       }
     } catch (e) {
@@ -72,14 +85,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const bootstrapLogin = (token: string, user: User, merchantId: string) => {
     setToken(token);
     setUser(user);
-    setCurrentMerchantId(merchantId);
+
+    let validMerchantId = merchantId;
+    let merchantName = 'Merchant';
     if (user.memberships && user.memberships.length > 0) {
-      const found = user.memberships.find(m => m.merchantId === merchantId);
-      setCurrentMerchantName(found ? found.merchantName : 'Merchant');
+      const found = user.memberships.find((m) => m.merchantId === merchantId);
+      if (found) {
+        merchantName = found.merchantName;
+      } else {
+        const first = user.memberships[0];
+        validMerchantId = first.merchantId;
+        merchantName = first.merchantName;
+      }
     }
+
+    setCurrentMerchantId(validMerchantId);
+    setCurrentMerchantName(merchantName);
     localStorage.setItem('mend_token', token);
     localStorage.setItem('mend_user', JSON.stringify(user));
-    localStorage.setItem('mend_merchant_id', merchantId);
+    localStorage.setItem('mend_merchant_id', validMerchantId);
   };
 
   const logout = () => {

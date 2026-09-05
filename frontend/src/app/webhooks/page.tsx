@@ -53,7 +53,7 @@ export default function WebhooksPage() {
         query += `&status=${selectedStatus}`;
       }
 
-      const res = await api.get<PageResponse<WebhookEventDetailDto>>(query);
+      const res = await api.get<PageResponse<WebhookEventDetailDto>>(query, { merchantId: currentMerchantId });
       setWebhooks(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);

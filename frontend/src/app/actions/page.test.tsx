@@ -117,7 +117,7 @@ describe('RecoveryActionsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Approval' }));
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith('/reviews/review-1/approve', {});
+      expect(api.post).toHaveBeenCalledWith('/reviews/review-1/approve', {}, { merchantId: 'm-456' });
       expect(screen.getByText(/Recovery approved. ActionIntent scheduled for execution/i)).toBeInTheDocument();
     });
   });

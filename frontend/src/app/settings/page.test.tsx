@@ -49,7 +49,7 @@ describe('SettingsPage', () => {
       expect(screen.getByText(/Merchant Recovery Settings/i)).toBeInTheDocument();
     });
 
-    expect(api.get).toHaveBeenCalledWith('/merchants/config');
+    expect(api.get).toHaveBeenCalledWith('/merchants/config', { merchantId: 'm-456' });
   });
 
   it('allows user to edit and submit updated settings', async () => {
@@ -82,14 +82,18 @@ describe('SettingsPage', () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(api.put).toHaveBeenCalledWith('/merchants/config', {
-        maxAttempts: 5,
-        maxContactAttempts: 2,
-        contactWindowHours: 24,
-        retryStrategy: 'SMART_RETRY',
-        escalationThreshold: 2,
-        enabledRecoveryActions: ['PAYMENT_RETRY', 'CUSTOMER_NOTIFY'],
-      });
+      expect(api.put).toHaveBeenCalledWith(
+        '/merchants/config',
+        {
+          maxAttempts: 5,
+          maxContactAttempts: 2,
+          contactWindowHours: 24,
+          retryStrategy: 'SMART_RETRY',
+          escalationThreshold: 2,
+          enabledRecoveryActions: ['PAYMENT_RETRY', 'CUSTOMER_NOTIFY'],
+        },
+        { merchantId: 'm-456' }
+      );
       expect(screen.getByText(/Merchant recovery configuration saved successfully!/i)).toBeInTheDocument();
     });
   });

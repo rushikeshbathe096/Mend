@@ -112,7 +112,12 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({ children }) => {
           <div className="flex items-center gap-3 px-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-200">{(user?.displayName || user?.email || 'U').slice(0, 1).toUpperCase()}</div>
             <div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">{user?.displayName || user?.email}</div><div className="text-[10px] text-slate-500">{currentRole || 'User'}</div></div>
-            <button onClick={logout} aria-label="Sign out" title="Sign out" className="text-xs font-semibold text-slate-500 hover:text-white">Log out</button>
+            <button onClick={logout} aria-label="Sign out" title="Sign out" className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-slate-400 hover:bg-white/10 hover:text-white transition">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              <span>Log out</span>
+            </button>
           </div>
         </div>
       </aside>
@@ -121,7 +126,21 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({ children }) => {
         <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-white/90 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
           <div className="flex items-center justify-between gap-4">
             <div><div className="text-xs font-semibold text-[var(--ink-muted)] lg:hidden">MEND / CONSOLE</div><div className="text-sm font-semibold text-[var(--navy)]">{currentMerchantName || 'Merchant workspace'}</div></div>
-            <div className="flex items-center gap-3"><div className="hidden text-right sm:block"><div className="text-xs font-semibold text-[var(--navy)]">{user?.displayName || user?.email}</div><div className="text-[10px] text-[var(--ink-muted)]">{currentRole || 'User'}</div></div><button onClick={logout} className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-muted)] hover:border-[var(--border-strong)] hover:text-[var(--navy)] lg:hidden">Log out</button></div>
+            <div className="flex items-center gap-3">
+              <div className="hidden text-right sm:block">
+                <div className="text-xs font-semibold text-[var(--navy)]">{user?.displayName || user?.email}</div>
+                <div className="text-[10px] text-[var(--ink-muted)]">{currentRole || 'User'}</div>
+              </div>
+              <button
+                onClick={logout}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-rose-600"
+              >
+                <svg className="w-3.5 h-3.5 text-slate-500 hover:text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                <span>Log out</span>
+              </button>
+            </div>
           </div>
           <nav className="mt-3 flex gap-1 overflow-x-auto no-scrollbar lg:hidden" aria-label="Mobile primary">
             {visibleNav.map((item) => { const active = isActive(item.href); return <Link key={item.href} href={item.href} className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold ${active ? 'bg-blue-50 text-blue-700' : 'text-[var(--ink-muted)] hover:bg-[var(--surface-muted)]'}`}>{item.label}</Link>; })}

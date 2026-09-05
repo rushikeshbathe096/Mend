@@ -39,12 +39,12 @@ export default function AnalyticsPage() {
 
     try {
       const [overviewData, recoveryData, funnelData, failureData, strategyData, reviewsData] = await Promise.all([
-        api.get<AnalyticsOverviewDto>('/analytics/overview'),
-        api.get<AnalyticsRecoveryDto>('/analytics/recovery'),
-        api.get<AnalyticsFunnelDto>('/analytics/funnel').catch(() => null),
-        api.get<AnalyticsFailureBreakdownDto>('/analytics/failure-breakdown').catch(() => null),
-        api.get<AnalyticsStrategyPerformanceDto>('/analytics/strategy-performance').catch(() => null),
-        api.get<ReviewQueueSummaryDto>('/reviews/summary').catch(() => null),
+        api.get<AnalyticsOverviewDto>('/analytics/overview', { merchantId: currentMerchantId }),
+        api.get<AnalyticsRecoveryDto>('/analytics/recovery', { merchantId: currentMerchantId }),
+        api.get<AnalyticsFunnelDto>('/analytics/funnel', { merchantId: currentMerchantId }).catch(() => null),
+        api.get<AnalyticsFailureBreakdownDto>('/analytics/failure-breakdown', { merchantId: currentMerchantId }).catch(() => null),
+        api.get<AnalyticsStrategyPerformanceDto>('/analytics/strategy-performance', { merchantId: currentMerchantId }).catch(() => null),
+        api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }).catch(() => null),
       ]);
 
       setOverview(overviewData);

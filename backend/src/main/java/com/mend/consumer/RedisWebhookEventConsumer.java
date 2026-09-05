@@ -61,7 +61,7 @@ public class RedisWebhookEventConsumer {
             redisTemplate.opsForStream().createGroup(targetStream, ReadOffset.from("0"), consumerGroup);
             log.info("Successfully created Redis Stream consumer group '{}' for stream '{}'", consumerGroup, targetStream);
         } catch (Exception e) {
-            log.info("Consumer group '{}' already exists or stream initialized for '{}'", consumerGroup, targetStream);
+            log.debug("Consumer group '{}' already exists or stream initialized for '{}'", consumerGroup, targetStream);
         }
     }
 

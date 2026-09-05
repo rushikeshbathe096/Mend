@@ -41,7 +41,7 @@ describe('PaymentsPage', () => {
     jest.clearAllMocks();
   });
 
-  it('renders payments from the backend and links to details', async () => {
+  it('renders payments from the backend and propagates valid merchantId', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
       if (url.startsWith('/analytics/recovery')) return Promise.resolve({ failureClassBreakdown: {} });
       if (url.startsWith('/payments')) return Promise.resolve(onePage);
@@ -56,10 +56,11 @@ describe('PaymentsPage', () => {
       expect(screen.getByText('RETRY_IMMEDIATELY')).toBeInTheDocument();
       expect(screen.getByText('₹4,999.00')).toBeInTheDocument();
     });
-    expect(api.get).toHaveBeenCalledWith('/payments?page=0&size=10');
+    expect(api.get).toHaveBeenCalledWith('/payments?page=0&size=10', { merchantId: 'm-456' });
+    expect(api.get).toHaveBeenCalledWith('/analytics/recovery', { merchantId: 'm-456' });
   });
 
-  it('applies status and failure class filters server-side', async () => {
+  it('applies status and failure class filters server-side with merchantId', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
       if (url.startsWith('/analytics/recovery')) return Promise.resolve({ failureClassBreakdown: { NETWORK_TIMEOUT: 2 } });
       if (url.startsWith('/payments')) return Promise.resolve(onePage);
@@ -72,7 +73,7 @@ describe('PaymentsPage', () => {
     fireEvent.change(screen.getAllByDisplayValue('ALL')[0], { target: { value: 'RECOVERED' } });
 
     await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith('/payments?page=0&size=10&status=RECOVERED');
+      expect(api.get).toHaveBeenCalledWith('/payments?page=0&size=10&status=RECOVERED', { merchantId: 'm-456' });
     });
   });
 
@@ -90,13 +91,13 @@ describe('PaymentsPage', () => {
     });
   });
 
-  it('renders error state when the API fails', async () => {
-    (api.get as jest.Mock).mockRejectedValue(new Error('Failed to load payments from the backend.'));
+  it('renders error state when the API fails with merchant header denial', async () => {
+    (api.get as jest.Mock).mockRejectedValue(new Error('Access denied: user is not a member of the specified merchant header'));
 
     render(<PaymentsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Failed to load payments from the backend/i)).toBeInTheDocument();
+      expect(screen.getByText(/Access denied: user is not a member of the specified merchant header/i)).toBeInTheDocument();
     });
   });
 });

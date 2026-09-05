@@ -55,7 +55,7 @@ describe('CustomersPage', () => {
       expect(screen.getByText('cust_alpha_001')).toBeInTheDocument();
       expect(screen.getByText('REPEAT_FAILURES')).toBeInTheDocument();
     });
-    expect(api.get).toHaveBeenCalledWith('/customers');
+    expect(api.get).toHaveBeenCalledWith('/customers', { merchantId: 'm-456' });
   });
 
   it('filters customers client-side by hash', async () => {

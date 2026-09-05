@@ -39,7 +39,7 @@ const COMMON_FAILURE_CLASSES = [
 ];
 
 export default function PaymentsPage() {
-  const { currentMerchantId } = useAuth();
+  const { currentMerchantId, isLoading: isAuthLoading } = useAuth();
 
   const [payments, setPayments] = useState<PaymentSummaryDto[]>([]);
   const [page, setPage] = useState(0);
@@ -57,8 +57,9 @@ export default function PaymentsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchFailureClasses = useCallback(async () => {
+    if (isAuthLoading || !currentMerchantId) return;
     try {
-      const recovery = await api.get<AnalyticsRecoveryDto>('/analytics/recovery');
+      const recovery = await api.get<AnalyticsRecoveryDto>('/analytics/recovery', { merchantId: currentMerchantId });
       const keys = Object.keys(recovery.failureClassBreakdown || {}).filter((k) => k && k !== 'UNKNOWN');
       if (keys.length > 0) {
         setFailureClassOptions(Array.from(new Set([...keys, ...COMMON_FAILURE_CLASSES])));
@@ -66,10 +67,10 @@ export default function PaymentsPage() {
     } catch {
       // Failure-class options remain at the common defaults when analytics are unavailable
     }
-  }, []);
+  }, [currentMerchantId, isAuthLoading]);
 
   const fetchPayments = useCallback(async () => {
-    if (!currentMerchantId) {
+    if (isAuthLoading || !currentMerchantId) {
       setLoading(false);
       return;
     }
@@ -88,7 +89,7 @@ export default function PaymentsPage() {
         query += `&search=${encodeURIComponent(activeSearch.trim())}`;
       }
 
-      const res = await api.get<PageResponse<PaymentSummaryDto>>(query);
+      const res = await api.get<PageResponse<PaymentSummaryDto>>(query, { merchantId: currentMerchantId });
       setPayments(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);
@@ -97,7 +98,7 @@ export default function PaymentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentMerchantId, page, pageSize, selectedStatus, selectedFailureClass, activeSearch]);
+  }, [currentMerchantId, isAuthLoading, page, pageSize, selectedStatus, selectedFailureClass, activeSearch]);
 
   useEffect(() => {
     fetchPayments();

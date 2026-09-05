@@ -30,7 +30,7 @@ export default function CustomerProfilePage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get<CustomerProfileDto>(`/customers/${encodeURIComponent(customerIdHash)}`);
+      const data = await api.get<CustomerProfileDto>(`/customers/${encodeURIComponent(customerIdHash)}`, { merchantId: currentMerchantId });
       setProfile(data);
     } catch (err: any) {
       setError(err.message || 'Failed to load the customer recovery profile.');

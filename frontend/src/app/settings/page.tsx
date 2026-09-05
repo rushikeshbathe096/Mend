@@ -50,7 +50,7 @@ export default function MerchantSettingsPage() {
     setError(null);
 
     try {
-      const res = await api.get<MerchantConfigDto>('/merchants/config');
+      const res = await api.get<MerchantConfigDto>('/merchants/config', { merchantId: currentMerchantId });
       setConfig(res);
       setForm({
         maxAttempts: res.maxAttempts ?? 3,
@@ -89,7 +89,7 @@ export default function MerchantSettingsPage() {
     }
 
     try {
-      const updated = await api.put<MerchantConfigDto>('/merchants/config', form);
+      const updated = await api.put<MerchantConfigDto>('/merchants/config', form, { merchantId: currentMerchantId });
       setConfig(updated);
       setToastMessage('Merchant recovery configuration saved successfully!');
     } catch (err: any) {

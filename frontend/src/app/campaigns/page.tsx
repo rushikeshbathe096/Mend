@@ -77,7 +77,7 @@ export default function CampaignsPage() {
         query += `&status=${selectedState}`;
       }
 
-      const res = await api.get<PageResponse<CampaignDto>>(query);
+      const res = await api.get<PageResponse<CampaignDto>>(query, { merchantId: currentMerchantId });
       setCampaigns(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);
@@ -113,11 +113,15 @@ export default function CampaignsPage() {
     setCreateError(null);
     setCreateSuccess(null);
     try {
-      const created = await api.post<CampaignDto>('/campaigns', {
-        paymentId: createPaymentId.trim(),
-        customerIdHash: createCustomerHash.trim(),
-        subscriptionId: createSubscriptionId.trim() || undefined,
-      });
+      const created = await api.post<CampaignDto>(
+        '/campaigns',
+        {
+          paymentId: createPaymentId.trim(),
+          customerIdHash: createCustomerHash.trim(),
+          subscriptionId: createSubscriptionId.trim() || undefined,
+        },
+        { merchantId: currentMerchantId }
+      );
       setCreateSuccess(`Campaign ${created.id} created for payment ${created.paymentId}. Trigger a webhook to begin classification.`);
       resetCreateForm();
       setCreateOpen(false);

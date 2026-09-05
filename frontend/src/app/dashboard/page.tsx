@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 import { AnalyticsOverviewDto, CampaignDto, ActionIntentDto, PageResponse, ReviewQueueSummaryDto, AnalyticsFunnelDto } from '@/types';
 
 export default function DashboardPage() {
-  const { currentMerchantId } = useAuth();
+  const { currentMerchantId, isLoading: isAuthLoading } = useAuth();
 
   const [overview, setOverview] = useState<AnalyticsOverviewDto | null>(null);
   const [recentCampaigns, setRecentCampaigns] = useState<CampaignDto[]>([]);
@@ -24,37 +24,70 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchDashboardData = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
+    if (isAuthLoading) {
       return;
     }
+    if (!currentMerchantId) {
+      setLoading(false);
+      setError('No merchant account selected.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
-    try {
-      const [overviewData, campaignsData, actionsData, reviewsData, funnelData] = await Promise.all([
-        api.get<AnalyticsOverviewDto>('/analytics/overview'),
-        api.get<PageResponse<CampaignDto>>('/campaigns?page=0&size=5&sortBy=createdAt&sortOrder=desc'),
-        api.get<PageResponse<ActionIntentDto>>('/recovery/actions?page=0&size=5'),
-        api.get<ReviewQueueSummaryDto>('/reviews/summary').catch(() => null),
-        api.get<AnalyticsFunnelDto>('/analytics/funnel').catch(() => null),
-      ]);
+    const [overviewRes, campaignsRes, actionsRes, reviewsRes, funnelRes] = await Promise.allSettled([
+      api.get<AnalyticsOverviewDto>('/analytics/overview', { merchantId: currentMerchantId }),
+      api.get<PageResponse<CampaignDto>>('/campaigns?page=0&size=5&sortBy=createdAt&sortOrder=desc', { merchantId: currentMerchantId }),
+      api.get<PageResponse<ActionIntentDto>>('/recovery/actions?page=0&size=5', { merchantId: currentMerchantId }),
+      api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }),
+      api.get<AnalyticsFunnelDto>('/analytics/funnel', { merchantId: currentMerchantId }),
+    ]);
 
-      setOverview(overviewData);
-      setRecentCampaigns(campaignsData.content || []);
-      setPendingActions(actionsData.content || []);
-      setReviewSummary(reviewsData);
-      setFunnel(funnelData);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load dashboard metrics from backend server.');
-    } finally {
-      setLoading(false);
+    let primaryError: string | null = null;
+
+    if (overviewRes.status === 'fulfilled') {
+      setOverview(overviewRes.value);
+    } else {
+      primaryError = overviewRes.reason?.message || 'Failed to fetch dashboard metrics from backend server.';
     }
-  }, [currentMerchantId]);
+
+    if (campaignsRes.status === 'fulfilled') {
+      setRecentCampaigns(campaignsRes.value.content || []);
+    } else {
+      console.warn('Failed to load recent campaigns:', campaignsRes.reason);
+    }
+
+    if (actionsRes.status === 'fulfilled') {
+      setPendingActions(actionsRes.value.content || []);
+    } else {
+      console.warn('Failed to load recovery actions:', actionsRes.reason);
+    }
+
+    if (reviewsRes.status === 'fulfilled') {
+      setReviewSummary(reviewsRes.value);
+    } else {
+      console.warn('Failed to load review summary:', reviewsRes.reason);
+    }
+
+    if (funnelRes.status === 'fulfilled') {
+      setFunnel(funnelRes.value);
+    } else {
+      console.warn('Failed to load funnel analytics:', funnelRes.reason);
+    }
+
+    if (primaryError) {
+      setError(primaryError);
+    }
+
+    setLoading(false);
+  }, [currentMerchantId, isAuthLoading]);
 
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
+
+  const isInitialLoading = loading || isAuthLoading;
 
   return (
     <ConsoleLayout>
@@ -75,10 +108,10 @@ export default function DashboardPage() {
           </div>
           <button
             onClick={fetchDashboardData}
-            disabled={loading}
-            className="flex items-center gap-2 self-start rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-bold text-[var(--ink-muted)] shadow-sm hover:-translate-y-px hover:border-[var(--border-strong)] hover:text-[var(--navy)] sm:self-auto"
+            disabled={isInitialLoading}
+            className="flex items-center gap-2 self-start rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-bold text-[var(--ink-muted)] shadow-sm hover:-translate-y-px hover:border-[var(--border-strong)] hover:text-[var(--navy)] sm:self-auto disabled:opacity-50"
           >
-            <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className={`w-4 h-4 ${isInitialLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             <span>Sync Live Telemetry</span>
@@ -88,19 +121,19 @@ export default function DashboardPage() {
         {error && <ErrorAlert message={error} onRetry={fetchDashboardData} />}
 
         {/* Primary Financial Metric Cards */}
-        {loading ? (
+        {isInitialLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <CardSkeleton />
             <CardSkeleton />
             <CardSkeleton />
             <CardSkeleton />
           </div>
-        ) : (
+        ) : overview ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <MetricCard
               title="Revenue at Risk"
-              value={formatCurrency(overview?.revenueAtRisk ?? 0)}
-              subtext={`${overview?.totalPaymentFailures ?? 0} total payment failures ingested`}
+              value={formatCurrency(overview.revenueAtRisk)}
+              subtext={`${overview.totalPaymentFailures ?? 0} total payment failures ingested`}
               variant="rose"
               icon={
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -111,10 +144,10 @@ export default function DashboardPage() {
 
             <MetricCard
               title="Revenue Recovered"
-              value={formatCurrency(overview?.amountRecovered ?? 0)}
-              subtext={`${overview?.successfulRecoveries ?? overview?.recoveredCampaigns ?? 0} campaigns successfully recovered`}
+              value={formatCurrency(overview.amountRecovered)}
+              subtext={`${overview.successfulRecoveries ?? overview.recoveredCampaigns ?? 0} campaigns successfully recovered`}
               variant="emerald"
-              trend={{ value: `${overview?.recoveryRate ?? 0}% Rate`, positive: true }}
+              trend={{ value: `${overview.recoveryRate ?? 0}% Rate`, positive: true }}
               icon={
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -124,8 +157,8 @@ export default function DashboardPage() {
 
             <MetricCard
               title="Remaining at Risk"
-              value={formatCurrency(overview?.amountRemainingAtRisk ?? 0)}
-              subtext={`${overview?.activeCampaigns ?? 0} active campaigns in progress`}
+              value={formatCurrency(overview.amountRemainingAtRisk)}
+              subtext={`${overview.activeCampaigns ?? 0} active campaigns in progress`}
               variant="amber"
               icon={
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -136,8 +169,8 @@ export default function DashboardPage() {
 
             <MetricCard
               title="Action Intents"
-              value={overview?.totalActionIntents ?? 0}
-              subtext={`${overview?.successfulIntents ?? 0} executed successfully`}
+              value={overview.totalActionIntents ?? 0}
+              subtext={`${overview.successfulIntents ?? 0} executed successfully`}
               variant="indigo"
               icon={
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -146,10 +179,10 @@ export default function DashboardPage() {
               }
             />
           </div>
-        )}
+        ) : null}
 
         {/* Recovery Funnel (authoritative backend stages) */}
-        {!loading && funnel && funnel.stages && funnel.stages.length > 0 && (
+        {!isInitialLoading && funnel && funnel.stages && funnel.stages.length > 0 && (
           <div className="app-surface rounded-xl p-5 sm:p-6">
             <div className="flex items-center justify-between mb-5">
               <div>
@@ -171,7 +204,9 @@ export default function DashboardPage() {
                     {idx + 1}. {stage.stageName.replace(/_/g, ' ')}
                   </div>
                   <div className="mt-1 text-xl font-black font-mono text-[var(--navy)]">{stage.count}</div>
-                  <div className="text-[10px] font-mono text-gray-400 mt-0.5">{stage.conversionRatePercent}%</div>
+                  <div className="text-[10px] font-mono text-gray-400 mt-0.5">
+                    {typeof stage.conversionRatePercent === 'number' ? stage.conversionRatePercent.toFixed(1) : '0.0'}%
+                  </div>
                 </Link>
               ))}
             </div>
@@ -179,7 +214,7 @@ export default function DashboardPage() {
         )}
 
         {/* Latency & Governance Telemetry Banner */}
-        {!loading && overview && (
+        {!isInitialLoading && overview && (
           <div className="app-surface grid grid-cols-1 gap-6 rounded-xl p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-4">
             <div className="flex items-center space-x-4 pt-4 md:pt-0">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
@@ -209,7 +244,9 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-[11px] text-[var(--ink-faint)]">Scheduled to intent completed</span>
               </div>
-            </div>              <div className="flex items-center space-x-4 pt-4 md:pt-0">
+            </div>
+
+            <div className="flex items-center space-x-4 pt-4 md:pt-0">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -242,7 +279,7 @@ export default function DashboardPage() {
         )}
 
         {/* Activity & Action Queue Grid */}
-        {loading ? (
+        {isInitialLoading ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <TableSkeleton rows={4} columns={3} />
             <TableSkeleton rows={4} columns={3} />
@@ -255,7 +292,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100 dark:border-gray-800">
                   <div>
                     <h2 className="text-base font-bold text-[var(--navy)]">Recent recovery campaigns</h2>
-                      <p className="text-xs text-[var(--ink-muted)]">Active and recently resolved recovery pipelines</p>
+                    <p className="text-xs text-[var(--ink-muted)]">Active and recently resolved recovery pipelines</p>
                   </div>
                   <Link
                     href="/campaigns"
@@ -267,8 +304,8 @@ export default function DashboardPage() {
 
                 {recentCampaigns.length === 0 ? (
                   <EmptyState
-                    title="No Active Recovery Campaigns"
-                    description="No payment failure campaigns are currently active. New webhooks will automatically trigger recovery campaigns."
+                    title="No Recovery Campaigns Found"
+                    description="No payment failure campaigns have been created yet. New webhooks will automatically trigger recovery campaigns."
                   />
                 ) : (
                   <div className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -287,14 +324,14 @@ export default function DashboardPage() {
                             <span>Attempts: {c.attemptCount}</span>
                           </div>
                         </div>
-                        <div className="flex items-center space-x-3">
-                          {c.confidence !== undefined && (
-                            <span className="text-xs font-mono font-semibold text-gray-500">
-                              {(c.confidence * 100).toFixed(0)}% Conf
-                            </span>
-                          )}
-                          <Badge status={c.currentState} />
-                        </div>
+                          <div className="flex items-center space-x-3">
+                            {c.confidence !== undefined && (
+                              <span className="text-xs font-mono font-semibold text-gray-500">
+                                {(c.confidence * 100).toFixed(0)}% Conf
+                              </span>
+                            )}
+                            <Badge status={c.currentState} />
+                          </div>
                       </div>
                     ))}
                   </div>
@@ -308,7 +345,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100 dark:border-gray-800">
                   <div>
                     <h2 className="text-base font-bold text-[var(--navy)]">Action execution queue</h2>
-                      <p className="text-xs text-[var(--ink-muted)]">Scheduled, ready, and executed recovery actions</p>
+                    <p className="text-xs text-[var(--ink-muted)]">Scheduled, ready, and executed recovery actions</p>
                   </div>
                   <Link
                     href="/actions"
@@ -320,8 +357,8 @@ export default function DashboardPage() {
 
                 {pendingActions.length === 0 ? (
                   <EmptyState
-                    title="No Pending Recovery Actions"
-                    description="Action scheduler queue is clear. No scheduled recovery actions pending."
+                    title="No Action Intents Found"
+                    description="Action scheduler queue is clear. No recovery actions pending or executed."
                   />
                 ) : (
                   <div className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -348,3 +385,4 @@ export default function DashboardPage() {
     </ConsoleLayout>
   );
 }
+

@@ -15,28 +15,28 @@ import { PaymentDetailDto } from '@/types';
 export default function PaymentDetailPage() {
   const params = useParams();
   const paymentId = params?.paymentId as string;
-  const { currentMerchantId } = useAuth();
+  const { currentMerchantId, isLoading: isAuthLoading } = useAuth();
 
   const [detail, setDetail] = useState<PaymentDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchPayment = useCallback(async () => {
-    if (!currentMerchantId || !paymentId) {
+    if (isAuthLoading || !currentMerchantId || !paymentId) {
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get<PaymentDetailDto>(`/payments/${encodeURIComponent(paymentId)}`);
+      const data = await api.get<PaymentDetailDto>(`/payments/${encodeURIComponent(paymentId)}`, { merchantId: currentMerchantId });
       setDetail(data);
     } catch (err: any) {
       setError(err.message || 'Failed to load payment details from the backend.');
     } finally {
       setLoading(false);
     }
-  }, [currentMerchantId, paymentId]);
+  }, [currentMerchantId, isAuthLoading, paymentId]);
 
   useEffect(() => {
     fetchPayment();

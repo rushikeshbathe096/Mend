@@ -44,9 +44,9 @@ export default function CampaignDetailPage() {
 
     try {
       const [cData, tData, dData] = await Promise.all([
-        api.get<CampaignDto>(`/campaigns/${campaignId}`),
-        api.get<CampaignTimelineDto>(`/campaigns/${campaignId}/timeline`),
-        api.get<AgentDecisionRecordDto[]>(`/campaigns/${campaignId}/decisions`).catch(() => []),
+        api.get<CampaignDto>(`/campaigns/${campaignId}`, { merchantId: currentMerchantId }),
+        api.get<CampaignTimelineDto>(`/campaigns/${campaignId}/timeline`, { merchantId: currentMerchantId }),
+        api.get<AgentDecisionRecordDto[]>(`/campaigns/${campaignId}/decisions`, { merchantId: currentMerchantId }).catch(() => []),
       ]);
 
       setCampaign(cData);
@@ -54,7 +54,7 @@ export default function CampaignDetailPage() {
       setAgentDecisions(dData || []);
 
       // Detect an active human-approval review for this campaign
-      const reviews = await api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50').catch(() => null);
+      const reviews = await api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50', { merchantId: currentMerchantId }).catch(() => null);
       const mine = reviews?.content?.find((r) => r.campaignId === campaignId) || null;
       setPendingReview(mine);
     } catch (err: any) {
@@ -470,7 +470,7 @@ export default function CampaignDetailPage() {
                 setControlError(null);
                 try {
                   const endpoint = confirmAction === 'terminate' ? 'terminate' : 'pause';
-                  await api.post<CD>(`/campaigns/${campaign.id}/${endpoint}`);
+                  await api.post<CD>(`/campaigns/${campaign.id}/${endpoint}`, {}, { merchantId: currentMerchantId });
                   setConfirmAction(null);
                   await fetchCampaignDetails();
                 } catch (err: any) {

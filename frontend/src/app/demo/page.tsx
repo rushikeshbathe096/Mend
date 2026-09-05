@@ -47,7 +47,7 @@ export default function DemoEnginePage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get<DemoScenarioDto[]>('/demo/scenarios');
+      const data = await api.get<DemoScenarioDto[]>('/demo/scenarios', { merchantId: currentMerchantId });
       setScenarios(data || []);
     } catch (err: any) {
       setError(err.message || 'Failed to load the demo scenario catalog.');
@@ -65,7 +65,7 @@ export default function DemoEnginePage() {
     setRunError(null);
     setResult(null);
     try {
-      const res = await api.post<DemoTriggerResponse>('/demo/trigger-scenario', { scenario: scenarioId });
+      const res = await api.post<DemoTriggerResponse>('/demo/trigger-scenario', { scenario: scenarioId }, { merchantId: currentMerchantId });
       setResult(res);
     } catch (err: any) {
       if (err instanceof ApiError) {

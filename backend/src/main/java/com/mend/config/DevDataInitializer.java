@@ -85,6 +85,7 @@ public class DevDataInitializer implements ApplicationRunner {
     }
 
     private static final List<MerchantProfile> MERCHANTS = List.of(
+            new MerchantProfile("Test Merchant", "test_merchant", "testmerchant.com"),
             new MerchantProfile("Acme Enterprise", "acme_enterprise", "acme.com"),
             new MerchantProfile("UrbanCart", "urbancart", "urbancart.com"),
             new MerchantProfile("BrightLabs", "brightlabs", "brightlabs.com"),
@@ -127,8 +128,9 @@ public class DevDataInitializer implements ApplicationRunner {
 
         Role adminRole = adminRoleOpt.get();
 
-        if (auditLogRepository.existsByEventType("MEND_DEMO_DATASET_V1") || campaignRepository.count() >= 50) {
-            log.info("Demo dataset already populated (version MEND_DEMO_DATASET_V1, campaigns count={}). Skipping seeder.", campaignRepository.count());
+        Merchant testMerchantCheck = merchantRepository.findByExternalReference("test_merchant").orElse(null);
+        if (auditLogRepository.existsByEventType("MEND_DEMO_DATASET_V1") && testMerchantCheck != null && campaignRepository.countByMerchantId(testMerchantCheck.getId()) >= 20) {
+            log.info("Demo dataset already populated (version MEND_DEMO_DATASET_V1, test_merchant campaigns count={}). Skipping seeder.", campaignRepository.countByMerchantId(testMerchantCheck.getId()));
             return;
         }
 

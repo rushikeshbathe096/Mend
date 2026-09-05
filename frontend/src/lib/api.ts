@@ -27,14 +27,55 @@ export async function fetchApi<T>(endpoint: string, options: RequestOptions = {}
   };
 
   const storedToken = token !== undefined ? token : (typeof window !== 'undefined' ? localStorage.getItem('mend_token') : null);
-  const storedMerchantId = merchantId !== undefined ? merchantId : (typeof window !== 'undefined' ? localStorage.getItem('mend_merchant_id') : null);
+
+  let resolvedMerchantId: string | null = merchantId !== undefined ? merchantId : null;
+
+  if (typeof window !== 'undefined') {
+    const storedUserRaw = localStorage.getItem('mend_user');
+    let userMemberships: Array<{ merchantId: string }> = [];
+    if (storedUserRaw) {
+      try {
+        const parsedUser = JSON.parse(storedUserRaw);
+        userMemberships = parsedUser.memberships || [];
+      } catch {
+        // ignore JSON parse errors
+      }
+    }
+
+    const storedMerchantId = localStorage.getItem('mend_merchant_id');
+
+    if (resolvedMerchantId) {
+      if (userMemberships.length > 0) {
+        const isValid = userMemberships.some((m) => m.merchantId === resolvedMerchantId);
+        if (!isValid) {
+          resolvedMerchantId = userMemberships[0].merchantId;
+          localStorage.setItem('mend_merchant_id', resolvedMerchantId);
+        }
+      }
+    } else {
+      if (storedMerchantId && userMemberships.length > 0) {
+        const isValid = userMemberships.some((m) => m.merchantId === storedMerchantId);
+        if (isValid) {
+          resolvedMerchantId = storedMerchantId;
+        } else {
+          resolvedMerchantId = userMemberships[0].merchantId;
+          localStorage.setItem('mend_merchant_id', resolvedMerchantId);
+        }
+      } else if (userMemberships.length > 0) {
+        resolvedMerchantId = userMemberships[0].merchantId;
+        localStorage.setItem('mend_merchant_id', resolvedMerchantId);
+      } else {
+        localStorage.removeItem('mend_merchant_id');
+      }
+    }
+  }
 
   if (storedToken) {
     headers['Authorization'] = `Bearer ${storedToken}`;
   }
 
-  if (storedMerchantId) {
-    headers['X-Merchant-Id'] = storedMerchantId;
+  if (resolvedMerchantId) {
+    headers['X-Merchant-Id'] = resolvedMerchantId;
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;

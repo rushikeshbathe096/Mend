@@ -67,7 +67,7 @@ describe('DemoEnginePage', () => {
       expect(screen.getByText('High-Risk Human Review')).toBeInTheDocument();
     });
     expect(screen.getAllByText('Run Scenario').length).toBe(2);
-    expect(api.get).toHaveBeenCalledWith('/demo/scenarios');
+    expect(api.get).toHaveBeenCalledWith('/demo/scenarios', { merchantId: 'm-456' });
   });
 
   it('runs a scenario and renders the authoritative execution trace', async () => {
@@ -80,7 +80,7 @@ describe('DemoEnginePage', () => {
     fireEvent.click(screen.getAllByText('Run Scenario')[0]);
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith('/demo/trigger-scenario', { scenario: 'LOW_RISK_RETRY' });
+      expect(api.post).toHaveBeenCalledWith('/demo/trigger-scenario', { scenario: 'LOW_RISK_RETRY' }, { merchantId: 'm-456' });
       expect(screen.getByText(/campaign reached RECOVERED/i)).toBeInTheDocument();
       expect(screen.getByText('Provider webhook ingested.')).toBeInTheDocument();
       expect(screen.getAllByText('RECOVERED').length).toBeGreaterThan(0);

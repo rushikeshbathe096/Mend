@@ -34,7 +34,7 @@ export default function CustomersPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get<CustomerSummaryDto[]>('/customers');
+      const data = await api.get<CustomerSummaryDto[]>('/customers', { merchantId: currentMerchantId });
       setCustomers(data || []);
     } catch (err: any) {
       setError(err.message || 'Failed to load customer recovery profiles.');

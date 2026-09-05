@@ -60,7 +60,7 @@ export default function RecoveryActionsPage() {
       if (selectedStatus !== 'ALL') {
         query += `&status=${selectedStatus}`;
       }
-      const res = await api.get<PageResponse<ActionIntentDto>>(query);
+      const res = await api.get<PageResponse<ActionIntentDto>>(query, { merchantId: currentMerchantId });
       setActions(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);
@@ -73,8 +73,8 @@ export default function RecoveryActionsPage() {
     if (!currentMerchantId) return;
     try {
       const [pending, summaryData] = await Promise.all([
-        api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50'),
-        api.get<ReviewQueueSummaryDto>('/reviews/summary'),
+        api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50', { merchantId: currentMerchantId }),
+        api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }),
       ]);
       setReviews(pending.content || []);
       setSummary(summaryData);
@@ -122,6 +122,7 @@ export default function RecoveryActionsPage() {
       const result = await api.post<ReviewDecisionResponse>(
         `/reviews/${activeReview.id}/${decisionAction}`,
         decisionComment.trim() ? { comment: decisionComment.trim() } : {},
+        { merchantId: currentMerchantId }
       );
       setDecisionResult(result.message || `Review ${decisionAction}ed successfully.`);
       await Promise.all([fetchApprovals(), fetchIntents()]);

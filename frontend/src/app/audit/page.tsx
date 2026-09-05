@@ -37,7 +37,7 @@ export default function AuditLogsPage() {
 
     try {
       const query = `/audit?page=${page}&size=${pageSize}`;
-      const res = await api.get<PageResponse<AuditLogDto>>(query);
+      const res = await api.get<PageResponse<AuditLogDto>>(query, { merchantId: currentMerchantId });
       setLogs(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);

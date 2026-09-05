@@ -42,13 +42,13 @@ public class SecurityFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            writeErrorResponse(response, HttpStatus.UNAUTHORIZED, "Missing or invalid Authorization header");
+            writeErrorResponse(request, response, HttpStatus.UNAUTHORIZED, "Missing or invalid Authorization header");
             return;
         }
 
         String token = authHeader.substring(7).trim();
         if (!jwtService.validateToken(token)) {
-            writeErrorResponse(response, HttpStatus.UNAUTHORIZED, "Invalid or expired token");
+            writeErrorResponse(request, response, HttpStatus.UNAUTHORIZED, "Invalid or expired token");
             return;
         }
 
@@ -57,7 +57,7 @@ public class SecurityFilter extends OncePerRequestFilter {
             AuthenticatedUser authenticatedUser = userPrincipalResolver.resolveUser(userId);
 
             if (authenticatedUser == null || !"ACTIVE".equalsIgnoreCase(authenticatedUser.getStatus())) {
-                writeErrorResponse(response, HttpStatus.UNAUTHORIZED, "User account is inactive or not found");
+                writeErrorResponse(request, response, HttpStatus.UNAUTHORIZED, "User account is inactive or not found");
                 return;
             }
 
@@ -67,11 +67,11 @@ public class SecurityFilter extends OncePerRequestFilter {
                 try {
                     merchantId = UUID.fromString(merchantHeader.trim());
                     if (!authenticatedUser.isMemberOfMerchant(merchantId)) {
-                        writeErrorResponse(response, HttpStatus.FORBIDDEN, "Access denied: user is not a member of the specified merchant header");
+                        writeErrorResponse(request, response, HttpStatus.FORBIDDEN, "Access denied: user is not a member of the specified merchant header");
                         return;
                     }
                 } catch (IllegalArgumentException e) {
-                    writeErrorResponse(response, HttpStatus.BAD_REQUEST, "Invalid X-Merchant-Id header format");
+                    writeErrorResponse(request, response, HttpStatus.BAD_REQUEST, "Invalid X-Merchant-Id header format");
                     return;
                 }
             } else if (authenticatedUser.getMemberships() != null && !authenticatedUser.getMemberships().isEmpty()) {
@@ -83,7 +83,7 @@ public class SecurityFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
 
         } catch (Exception e) {
-            writeErrorResponse(response, HttpStatus.UNAUTHORIZED, "Authentication failed");
+            writeErrorResponse(request, response, HttpStatus.UNAUTHORIZED, "Authentication failed");
         } finally {
             TenantContext.clear();
         }
@@ -101,7 +101,13 @@ public class SecurityFilter extends OncePerRequestFilter {
                path.equals("/error");
     }
 
-    private void writeErrorResponse(HttpServletResponse response, HttpStatus status, String message) throws IOException {
+    private void writeErrorResponse(HttpServletRequest request, HttpServletResponse response, HttpStatus status, String message) throws IOException {
+        String origin = request.getHeader("Origin");
+        if (origin != null && !origin.isBlank()) {
+            response.setHeader("Access-Control-Allow-Origin", origin);
+            response.setHeader("Access-Control-Allow-Credentials", "true");
+            response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Merchant-Id, Idempotency-Key");
+        }
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         ErrorResponse errorResponse = new ErrorResponse(status.value(), status.getReasonPhrase(), message);
