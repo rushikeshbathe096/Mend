@@ -20,4 +20,5 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     List<AuditLog> findByCampaignId(UUID campaignId);
     List<AuditLog> findByCampaignIdOrderByCreatedAtAsc(UUID campaignId);
     List<AuditLog> findByActorId(UUID actorId);
+    boolean existsByEventType(String eventType);
 }
