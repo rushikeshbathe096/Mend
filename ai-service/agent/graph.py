@@ -15,7 +15,7 @@ from agent.state import (
     AgentNextStepEnum
 )
 from agent.mcp_tools import MendMcpToolSuite
-from agent.checkpointer import DurableMemorySaver
+from agent.checkpointer import DurableMemorySaver, get_checkpointer
 from agent.llm import get_llm
 
 logger = logging.getLogger("mend-ai-service")
@@ -28,7 +28,7 @@ _global_checkpointer = None
 def get_shared_checkpointer():
     global _global_checkpointer
     if _global_checkpointer is None:
-        _global_checkpointer = DurableMemorySaver()
+        _global_checkpointer = get_checkpointer()
     return _global_checkpointer
 
 def build_recovery_agent_graph(backend_url: str = "http://localhost:8080", checkpointer=None):

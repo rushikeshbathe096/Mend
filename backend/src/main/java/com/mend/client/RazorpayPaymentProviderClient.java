@@ -45,7 +45,7 @@ public class RazorpayPaymentProviderClient implements PaymentProviderClient {
             @Value("${razorpay.connect-timeout-ms:5000}") int connectTimeoutMs,
             @Value("${razorpay.read-timeout-ms:10000}") int readTimeoutMs,
             MerchantConfigRepository merchantConfigRepository,
-            ObjectMapper objectMapper) {
+            @Autowired(required = false) ObjectMapper objectMapper) {
         this.baseUrl = cleanBaseUrl(baseUrl);
         this.defaultKeyId = defaultKeyId != null ? defaultKeyId.trim() : "";
         this.defaultKeySecret = defaultKeySecret != null ? defaultKeySecret.trim() : "";

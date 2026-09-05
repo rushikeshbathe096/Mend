@@ -2,10 +2,12 @@ package com.mend.publisher;
 
 import tools.jackson.databind.ObjectMapper;
 import com.mend.config.RedisStreamProperties;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.event.WebhookEventEnvelope;
+import com.mend.dto.event.WebhookOutboxPayload;
 import com.mend.events.RedisEventConstants;
 import com.mend.events.WebhookEventMessage;
 import com.mend.exception.WebhookPublishException;
@@ -26,7 +28,7 @@ import java.util.Map;
 @Component
 @Primary
 @ConditionalOnProperty(name = "mend.redis.enabled", havingValue = "true", matchIfMissing = true)
-public class RedisWebhookEventPublisher implements WebhookEventPublisher {
+public class RedisWebhookEventPublisher implements WebhookEventPublisher, OutboxEventTransport {
 
     private static final Logger log = LoggerFactory.getLogger(RedisWebhookEventPublisher.class);
 
@@ -88,34 +90,16 @@ public class RedisWebhookEventPublisher implements WebhookEventPublisher {
                 event.getPayloadHash()
         );
 
-        String correlationId = org.slf4j.MDC.get("correlationId");
-        if (correlationId == null) correlationId = org.slf4j.MDC.get("traceId");
-        if (correlationId == null) correlationId = event.getId() != null ? event.getId().toString() : java.util.UUID.randomUUID().toString();
-
-        Map<String, String> fieldMap = new HashMap<>();
-        fieldMap.put("eventId", message.eventId().toString());
-        fieldMap.put("externalEventId", message.externalEventId() != null ? message.externalEventId() : "");
-        fieldMap.put("merchantId", message.merchantId() != null ? message.merchantId().toString() : "");
-        fieldMap.put("eventType", message.eventType() != null ? message.eventType() : "");
-        fieldMap.put("occurredAt", message.occurredAt().toString());
-        fieldMap.put("payloadHash", message.payloadHash() != null ? message.payloadHash() : "");
-        fieldMap.put("version", message.version());
-        fieldMap.put("correlationId", correlationId);
-        fieldMap.put("traceId", correlationId);
-
         try {
-            String jsonPayload = objectMapper.writeValueAsString(message);
-            String envelopeJson = objectMapper.writeValueAsString(envelope);
-            fieldMap.put("json", jsonPayload);
-            fieldMap.put("envelope", envelopeJson);
-        } catch (Exception e) {
-            log.warn("Could not serialize event payload to JSON: {}", e.getMessage());
-        }
+            String correlationId = firstNonBlank(
+                    org.slf4j.MDC.get("correlationId"),
+                    org.slf4j.MDC.get("traceId"),
+                    event.getId() != null ? event.getId().toString() : java.util.UUID.randomUUID().toString());
+            String traceId = firstNonBlank(org.slf4j.MDC.get("traceId"), correlationId);
+            RecordId recordId = publishRecord(null, message, envelope, traceId, correlationId);
 
-        try {
-            StringRecord record = StringRecord.of(fieldMap).withStreamKey(streamName);
-            RecordId recordId = redisTemplate.opsForStream().add(record);
-
+            // Compatibility path for callers that explicitly publish a WebhookEvent.
+            // Webhook ingestion no longer uses this method; it writes an outbox row.
             event.setPublishStatus(WebhookPublishStatus.PUBLISHED);
             event.setPublishedAt(Instant.now());
             if (webhookEventRepository != null) {
@@ -136,5 +120,76 @@ public class RedisWebhookEventPublisher implements WebhookEventPublisher {
 
             throw new WebhookPublishException("Failed to publish webhook event to Redis stream: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Publishes an already-committed outbox record. This method deliberately has
+     * no database dependency or state mutation; the caller records the outcome
+     * in a separate, short transaction after Redis I/O finishes.
+    */
+    @Override
+    public void publishOutbox(OutboxEvent outboxEvent) {
+        if (outboxEvent == null) {
+            throw new IllegalArgumentException("OutboxEvent cannot be null for publication");
+        }
+        try {
+            WebhookOutboxPayload payload = objectMapper.readValue(
+                    outboxEvent.getPayload(), WebhookOutboxPayload.class);
+            if (payload.message() == null || payload.envelope() == null) {
+                throw new IllegalArgumentException("Webhook outbox payload is incomplete");
+            }
+            publishRecord(
+                    outboxEvent.getId(),
+                    payload.message(),
+                    payload.envelope(),
+                    outboxEvent.getTraceId(),
+                    outboxEvent.getCorrelationId());
+        } catch (WebhookPublishException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new WebhookPublishException(
+                    "Failed to publish outbox event to Redis stream: " + e.getMessage(), e);
+        }
+    }
+
+    private RecordId publishRecord(java.util.UUID outboxId,
+                                   WebhookEventMessage message,
+                                   WebhookEventEnvelope envelope,
+                                   String traceId,
+                                   String correlationId) throws Exception {
+        Map<String, String> fieldMap = new HashMap<>();
+        if (outboxId != null) {
+            fieldMap.put("outboxId", outboxId.toString());
+            fieldMap.put("idempotencyKey", outboxId.toString());
+        }
+        fieldMap.put("eventId", message.eventId().toString());
+        fieldMap.put("externalEventId", message.externalEventId() != null ? message.externalEventId() : "");
+        fieldMap.put("merchantId", message.merchantId() != null ? message.merchantId().toString() : "");
+        fieldMap.put("eventType", message.eventType() != null ? message.eventType() : "");
+        fieldMap.put("occurredAt", message.occurredAt().toString());
+        fieldMap.put("payloadHash", message.payloadHash() != null ? message.payloadHash() : "");
+        fieldMap.put("version", message.version());
+        fieldMap.put("correlationId", firstNonBlank(correlationId, traceId, message.eventId().toString()));
+        fieldMap.put("traceId", firstNonBlank(traceId, correlationId, message.eventId().toString()));
+        fieldMap.put("json", objectMapper.writeValueAsString(message));
+        fieldMap.put("envelope", objectMapper.writeValueAsString(envelope));
+
+        StringRecord record = StringRecord.of(fieldMap).withStreamKey(streamName);
+        RecordId recordId = redisTemplate.opsForStream().add(record);
+        if (recordId == null) {
+            throw new IllegalStateException("Redis did not return a stream record ID");
+        }
+        log.info("Published outbox event {} for webhook {} to Redis stream '{}' with record ID {}",
+                outboxId, message.eventId(), streamName, recordId);
+        return recordId;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        throw new IllegalStateException("At least one trace identifier must be available");
     }
 }

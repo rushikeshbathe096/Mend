@@ -1,8 +1,12 @@
 package com.mend.publisher;
 
 import tools.jackson.databind.ObjectMapper;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
+import com.mend.dto.event.WebhookEventEnvelope;
+import com.mend.dto.event.WebhookOutboxPayload;
 import com.mend.events.RedisEventConstants;
+import com.mend.events.WebhookEventMessage;
 import com.mend.exception.WebhookPublishException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -98,5 +102,37 @@ class RedisWebhookEventPublisherTest {
     @Test
     void publish_NullEvent_ThrowsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> publisher.publish(null));
+    }
+
+    @Test
+    void publishOutbox_PreservesIdentityAndTraceMetadata() throws Exception {
+        UUID webhookId = UUID.randomUUID();
+        UUID merchantId = UUID.randomUUID();
+        Instant occurredAt = Instant.now();
+        WebhookEventMessage message = new WebhookEventMessage(
+                webhookId, "evt_trace_1", merchantId, "payment.failed",
+                occurredAt, "payload-hash", WebhookEventMessage.DEFAULT_VERSION, "{\"safe\":true}");
+        WebhookEventEnvelope envelope = new WebhookEventEnvelope(
+                "evt_trace_1", 1, "RAZORPAY", "evt_trace_1", "payment.failed",
+                merchantId, webhookId, occurredAt, occurredAt, "payload-hash");
+        OutboxEvent outbox = OutboxEvent.pendingWebhook(
+                webhookId, merchantId,
+                objectMapper.writeValueAsString(new WebhookOutboxPayload(message, envelope)),
+                "trace-123", "correlation-456", Instant.now());
+
+        when(streamOperations.add(any(StringRecord.class))).thenReturn(RecordId.of("1788123456790-0"));
+
+        publisher.publishOutbox(outbox);
+
+        ArgumentCaptor<StringRecord> captor = ArgumentCaptor.forClass(StringRecord.class);
+        verify(streamOperations).add(captor.capture());
+        Map<String, String> fields = captor.getValue().getValue();
+        assertEquals(outbox.getId().toString(), fields.get("outboxId"));
+        assertEquals(outbox.getId().toString(), fields.get("idempotencyKey"));
+        assertEquals(webhookId.toString(), fields.get("eventId"));
+        assertEquals(merchantId.toString(), fields.get("merchantId"));
+        assertEquals("payload-hash", fields.get("payloadHash"));
+        assertEquals("trace-123", fields.get("traceId"));
+        assertEquals("correlation-456", fields.get("correlationId"));
     }
 }

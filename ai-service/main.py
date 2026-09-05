@@ -7,15 +7,28 @@ from pydantic import BaseModel, Field
 from fastapi import FastAPI, Header, HTTPException, status
 import httpx
 
+from contextlib import asynccontextmanager
 from agent.router import router as agent_router
+from agent.checkpointer import setup_checkpointer_tables
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mend-ai-service")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Mend AI Service starting up...")
+    try:
+        setup_checkpointer_tables()
+    except Exception as e:
+        logger.warning(f"Checkpointer startup table setup encountered exception: {e}")
+    yield
+    logger.info("Mend AI Service shutting down...")
+
 app = FastAPI(
     title="Mend Bounded AI Diagnostic Service",
     version="2.0.0",
-    description="AI-powered revenue failure diagnostic and recovery strategy recommendation agent for Mend"
+    description="AI-powered revenue failure diagnostic and recovery strategy recommendation agent for Mend",
+    lifespan=lifespan
 )
 
 app.include_router(agent_router)

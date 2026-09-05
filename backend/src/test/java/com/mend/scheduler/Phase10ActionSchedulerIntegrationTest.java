@@ -14,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -22,7 +21,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Transactional
 @DisplayName("Phase 10 Action Scheduler End-to-End Integration Tests")
 public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTest {
 

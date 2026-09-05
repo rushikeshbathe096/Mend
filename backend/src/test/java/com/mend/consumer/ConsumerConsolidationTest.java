@@ -16,6 +16,7 @@ import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
 import com.mend.processor.DefaultWebhookEventProcessor;
 import com.mend.security.RazorpaySignatureVerifier;
+import com.mend.service.OutboxPublisherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -72,6 +73,9 @@ public class ConsumerConsolidationTest {
 
     @Autowired
     private RazorpayWebhookProperties webhookProperties;
+
+    @Autowired
+    private OutboxPublisherService outboxPublisherService;
 
     @MockitoBean
     private AiClassificationClient aiClassificationClient;
@@ -164,7 +168,8 @@ public class ConsumerConsolidationTest {
         // Verify only 1 row in webhook_events
         assertThat(webhookEventRepository.count()).isEqualTo(1);
 
-        // Process Redis Stream (or fallback to pending if scheduled listener already picked it up)
+        // Run the post-commit outbox publisher, then process Redis Stream.
+        assertThat(outboxPublisherService.publishDueEvents()).isEqualTo(1);
         int count = redisWebhookEventConsumer.pollAndProcessMessages();
         if (count == 0) {
             count = redisWebhookEventConsumer.processPendingMessages();
@@ -214,6 +219,7 @@ public class ConsumerConsolidationTest {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);
 
+        assertThat(outboxPublisherService.publishDueEvents()).isEqualTo(1);
         int processed = redisWebhookEventConsumer.pollAndProcessMessages();
         if (processed == 0) {
             processed = redisWebhookEventConsumer.processPendingMessages();
@@ -266,6 +272,8 @@ public class ConsumerConsolidationTest {
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);
+
+        assertThat(outboxPublisherService.publishDueEvents()).isEqualTo(1);
 
         // Simulate processor failure
         defaultWebhookEventProcessor.setSimulateFailure(true);

@@ -10,10 +10,10 @@ import com.mend.exception.ComplianceBlockedException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.integration.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -21,7 +21,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Transactional
 @DisplayName("Action Execution Service Integration Tests")
 public class ActionExecutionServiceTest extends AbstractIntegrationTest {
 
@@ -50,6 +49,19 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
     private UUID tenantBId;
     private Campaign campaign;
     private ComplianceDecisionEntity complianceDecision;
+
+    @AfterEach
+    void tearDown() {
+        if (campaign != null && campaign.getId() != null) {
+            campaignRepository.deleteById(campaign.getId());
+        }
+        if (tenantBId != null) {
+            merchantRepository.deleteById(tenantBId);
+        }
+        if (merchantId != null) {
+            merchantRepository.deleteById(merchantId);
+        }
+    }
 
     @BeforeEach
     void setUp() {
@@ -217,6 +229,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
                 actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1"));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
+        ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.FAILED, updatedIntent.getStatus());
     }
 
     @Test
@@ -287,6 +301,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
                 actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1"));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
+        ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.FAILED, updatedIntent.getStatus());
     }
 
     @Test

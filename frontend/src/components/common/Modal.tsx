@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface ModalProps {
   isOpen: boolean;
@@ -17,6 +17,8 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   maxWidth = '2xl',
 }) => {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
@@ -24,6 +26,7 @@ export const Modal: React.FC<ModalProps> = ({
       }
     };
     window.addEventListener('keydown', handleKeyDown);
+    if (isOpen) closeButtonRef.current?.focus();
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
@@ -42,23 +45,28 @@ export const Modal: React.FC<ModalProps> = ({
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity motion-safe:animate-[fadeInUp_180ms_ease-out]"
         onClick={onClose}
       />
 
       {/* Modal Container */}
       <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-6">
         <div
-          className={`w-full ${maxWidthClasses[maxWidth]} transform overflow-hidden rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-6 text-left align-middle shadow-2xl transition-all relative`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+          className={`w-full ${maxWidthClasses[maxWidth]} transform overflow-hidden rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-6 text-left align-middle shadow-2xl transition-all relative motion-safe:animate-[fadeInUp_220ms_cubic-bezier(0.22,1,0.36,1)]`}
         >
           {/* Header */}
           <div className="flex items-start justify-between border-b border-gray-100 dark:border-gray-800 pb-4 mb-4">
             <div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white tracking-tight">{title}</h3>
+              <h3 id="modal-title" className="text-lg font-bold text-gray-900 dark:text-white tracking-tight">{title}</h3>
               {subtitle && <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{subtitle}</p>}
             </div>
             <button
+              ref={closeButtonRef}
               onClick={onClose}
+              aria-label="Close dialog"
               className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

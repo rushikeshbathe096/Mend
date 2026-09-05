@@ -3,17 +3,22 @@ package com.mend.service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.mend.domain.entity.Merchant;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.MerchantRepository;
+import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
+import com.mend.dto.event.WebhookEventEnvelope;
+import com.mend.dto.event.WebhookOutboxPayload;
 import com.mend.dto.WebhookResponseDto;
+import com.mend.events.WebhookEventMessage;
 import com.mend.exception.InvalidRequestException;
 import com.mend.exception.WebhookSignatureException;
-import com.mend.publisher.WebhookEventPublisher;
 import com.mend.security.RazorpaySignatureVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,20 +37,20 @@ public class WebhookService {
 
     private final RazorpaySignatureVerifier signatureVerifier;
     private final WebhookEventRepository webhookEventRepository;
+    private final OutboxEventRepository outboxEventRepository;
     private final MerchantRepository merchantRepository;
-    private final WebhookEventPublisher webhookEventPublisher;
     private final ObjectMapper objectMapper;
 
     public WebhookService(
             RazorpaySignatureVerifier signatureVerifier,
             WebhookEventRepository webhookEventRepository,
+            OutboxEventRepository outboxEventRepository,
             MerchantRepository merchantRepository,
-            WebhookEventPublisher webhookEventPublisher,
             ObjectMapper objectMapper) {
         this.signatureVerifier = signatureVerifier;
         this.webhookEventRepository = webhookEventRepository;
+        this.outboxEventRepository = outboxEventRepository;
         this.merchantRepository = merchantRepository;
-        this.webhookEventPublisher = webhookEventPublisher;
         this.objectMapper = objectMapper;
     }
 
@@ -122,8 +127,18 @@ public class WebhookService {
             throw e;
         }
 
-        // 5. Hand off to Phase 5 event publisher abstraction
-        webhookEventPublisher.publish(webhookEvent);
+        // 5. Persist the Redis delivery intent in the same database transaction.
+        // No network I/O occurs here. The background outbox publisher only sees
+        // this row after this transaction commits.
+        Instant now = Instant.now();
+        String correlationId = firstNonBlank(
+                MDC.get("correlationId"), MDC.get("traceId"), webhookEvent.getId().toString());
+        String traceId = firstNonBlank(MDC.get("traceId"), correlationId);
+        String outboxPayload = serializeOutboxPayload(webhookEvent);
+        OutboxEvent outboxEvent = OutboxEvent.pendingWebhook(
+                webhookEvent.getId(), webhookEvent.getMerchantId(), outboxPayload,
+                traceId, correlationId, now);
+        outboxEventRepository.saveAndFlush(outboxEvent);
 
         return new WebhookResponseDto(
                 webhookEvent.getId(),
@@ -132,6 +147,51 @@ public class WebhookService {
                 "Webhook event received and verified",
                 webhookEvent.getReceivedAt()
         );
+    }
+
+    private String serializeOutboxPayload(WebhookEvent event) {
+        Instant occurredAt = event.getEventCreatedAt() != null ? event.getEventCreatedAt() : event.getReceivedAt();
+        if (occurredAt == null) {
+            occurredAt = Instant.now();
+        }
+
+        WebhookEventMessage message = new WebhookEventMessage(
+                event.getId(),
+                event.getExternalEventId(),
+                event.getMerchantId(),
+                event.getEventType(),
+                occurredAt,
+                event.getPayloadHash(),
+                WebhookEventMessage.DEFAULT_VERSION,
+                event.getRawPayload()
+        );
+        WebhookEventEnvelope envelope = new WebhookEventEnvelope(
+                event.getExternalEventId(),
+                1,
+                event.getSource() != null ? event.getSource() : "RAZORPAY",
+                event.getExternalEventId(),
+                event.getEventType(),
+                event.getMerchantId(),
+                event.getId(),
+                occurredAt,
+                event.getReceivedAt() != null ? event.getReceivedAt() : occurredAt,
+                event.getPayloadHash()
+        );
+
+        try {
+            return objectMapper.writeValueAsString(new WebhookOutboxPayload(message, envelope));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize webhook outbox payload", e);
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        throw new IllegalStateException("At least one trace identifier must be available");
     }
 
     private String extractEventType(JsonNode root) {

@@ -11,6 +11,8 @@ from agent.state import (
 )
 from agent.graph import build_recovery_agent_graph
 
+from agent.checkpointer import build_tenant_thread_id
+
 logger = logging.getLogger("mend-ai-service")
 router = APIRouter(prefix="/api/v1/agent", tags=["AI Recovery Agent"])
 
@@ -65,9 +67,10 @@ def orchestrate_agent_flow(
         }
 
         # Config with thread_id for LangGraph checkpointer persistence
+        thread_id = build_tenant_thread_id(req.merchantId, req.campaignId)
         config = {
             "configurable": {
-                "thread_id": f"campaign_{req.campaignId}"
+                "thread_id": thread_id
             }
         }
 

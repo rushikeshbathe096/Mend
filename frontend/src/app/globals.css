@@ -107,6 +107,19 @@ body {
   animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes routeEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.route-transition {
+  animation: routeEnter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-safe-enter {
+  animation: fadeInUp 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* Motion Sensitivity */
 @media (prefers-reduced-motion: reduce) {
   html {
@@ -116,5 +129,8 @@ body {
     transition: none !important;
     animation: none !important;
     transform: none !important;
+  }
+  .route-transition, .motion-safe-enter {
+    animation: none !important;
   }
 }

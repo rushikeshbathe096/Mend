@@ -1,6 +1,7 @@
 package com.mend.consumer;
 
 import tools.jackson.databind.ObjectMapper;
+import com.mend.config.RedisStreamProperties;
 import com.mend.events.RedisEventConstants;
 import com.mend.events.WebhookEventMessage;
 import com.mend.processor.WebhookEventProcessor;
@@ -36,13 +37,16 @@ public class RedisWebhookEventConsumer {
             StringRedisTemplate redisTemplate,
             WebhookEventProcessor webhookEventProcessor,
             @Autowired(required = false) RedisStreamRetryService retryService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            @Autowired(required = false) RedisStreamProperties properties) {
         this.redisTemplate = redisTemplate;
         this.webhookEventProcessor = webhookEventProcessor;
         this.retryService = retryService;
         this.objectMapper = objectMapper;
-        this.streamName = RedisEventConstants.WEBHOOK_STREAM;
-        this.consumerGroup = RedisEventConstants.CONSUMER_GROUP;
+        this.streamName = properties != null && properties.getStreamName() != null
+            ? properties.getStreamName() : RedisEventConstants.WEBHOOK_STREAM;
+        this.consumerGroup = properties != null && properties.getConsumerGroup() != null
+            ? properties.getConsumerGroup() : RedisEventConstants.CONSUMER_GROUP;
         this.consumerName = RedisEventConstants.CONSUMER_NAME;
     }
 
@@ -133,8 +137,13 @@ public class RedisWebhookEventConsumer {
         if (corrObj == null) corrObj = valueMap.get("eventId");
         String correlationId = corrObj != null ? corrObj.toString() : java.util.UUID.randomUUID().toString();
 
+        Object traceObj = valueMap.get("traceId");
+        if (traceObj == null) traceObj = valueMap.get("correlationId");
+        if (traceObj == null) traceObj = valueMap.get("eventId");
+        String traceId = traceObj != null ? traceObj.toString() : correlationId;
+
         org.slf4j.MDC.put("correlationId", correlationId);
-        org.slf4j.MDC.put("traceId", correlationId);
+        org.slf4j.MDC.put("traceId", traceId);
 
         try {
             WebhookEventMessage message = deserializeRecord(record.getId().getValue(), valueMap);

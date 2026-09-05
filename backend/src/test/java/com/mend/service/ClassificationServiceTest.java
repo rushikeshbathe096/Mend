@@ -6,11 +6,15 @@ import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.FailureClass;
 import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
+import com.mend.domain.repository.ActionIntentRepository;
+import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.ClassificationResultRepository;
+import com.mend.domain.repository.ComplianceDecisionRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.ai.ClassificationRequestDto;
 import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.exception.AiClassificationException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,11 +42,32 @@ class ClassificationServiceTest {
     @Autowired
     private ClassificationResultRepository classificationResultRepository;
 
+    @Autowired
+    private ActionIntentRepository actionIntentRepository;
+
+    @Autowired
+    private ComplianceDecisionRepository complianceDecisionRepository;
+
+    @Autowired
+    private CampaignRepository campaignRepository;
+
     @MockitoBean
     private AiClassificationClient aiClassificationClient;
 
     @BeforeEach
     void setUp() {
+        actionIntentRepository.deleteAll();
+        complianceDecisionRepository.deleteAll();
+        campaignRepository.deleteAll();
+        classificationResultRepository.deleteAll();
+        webhookEventRepository.deleteAll();
+    }
+
+    @AfterEach
+    void tearDown() {
+        actionIntentRepository.deleteAll();
+        complianceDecisionRepository.deleteAll();
+        campaignRepository.deleteAll();
         classificationResultRepository.deleteAll();
         webhookEventRepository.deleteAll();
     }

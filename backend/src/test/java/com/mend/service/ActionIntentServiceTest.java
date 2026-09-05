@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -30,6 +31,9 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
     @Autowired
     private ActionScheduler actionScheduler;
+
+    @Autowired
+    private ActionIntentClaimService actionIntentClaimService;
 
     @Autowired
     private RecoveryStrategyService recoveryStrategyService;
@@ -66,14 +70,21 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
         merchantRepository.save(merchantB);
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        actionIntentRepository.deleteAll();
+    }
+
     @Test
     @DisplayName("Task 20 Integration Flow: Webhook -> Classification -> Campaign -> Strategy -> Compliance -> Action Intent -> Scheduler")
     void testEndToEndPipelineToScheduler() {
-        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), "EVT-INTENT-1", "payment.failed");
+        String fixtureSuffix = UUID.randomUUID().toString();
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), "EVT-INTENT-1-" + fixtureSuffix, "payment.failed");
         event.setMerchantId(merchantId);
         webhookEventRepository.save(event);
 
-        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, "PAY-INTENT-1", "CUST-1", "SUB-1");
+        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(
+                merchantId, "PAY-INTENT-1-" + fixtureSuffix, "CUST-1", "SUB-1");
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "Classified", "SYSTEM", null);
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
 
@@ -99,11 +110,20 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
         assertNotNull(intent.getIdempotencyKey());
         assertEquals(ActionIntentStatus.SCHEDULED, intent.getStatus());
 
+        campaignLifecycleService.transitionState(
+                merchantId, targetCampaignId, CampaignStatus.ACTION_PENDING,
+                "Action intent ready for scheduler", "SYSTEM", null);
         intent.setScheduledAt(Instant.now().minusSeconds(10));
         actionIntentRepository.save(intent);
 
-        List<ActionIntent> claimed = actionScheduler.claimDueIntents("worker-alpha", 10);
+        // The scheduler is a separate worker. Commit the fixture transaction so
+        // its independent claim transaction observes production-like data.
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
+        List<ActionIntent> claimed = actionIntentClaimService.claimDueIntents("worker-alpha", 10);
         assertFalse(claimed.isEmpty());
+        assertEquals(intent.getId(), claimed.get(0).getId());
         assertEquals(ActionIntentStatus.CLAIMED, claimed.get(0).getStatus());
         assertEquals("worker-alpha", claimed.get(0).getWorkerId());
 

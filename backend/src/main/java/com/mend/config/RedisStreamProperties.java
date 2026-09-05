@@ -2,6 +2,7 @@ package com.mend.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import com.mend.events.RedisEventConstants;
 
 @Component
 public class RedisStreamProperties {
@@ -11,8 +12,8 @@ public class RedisStreamProperties {
     private final boolean enabled;
 
     public RedisStreamProperties(
-            @Value("${mend.redis.stream-name:mend:webhook-events}") String streamName,
-            @Value("${mend.redis.consumer-group:mend-processors}") String consumerGroup,
+            @Value("${mend.redis.stream-name:" + RedisEventConstants.WEBHOOK_STREAM + "}") String streamName,
+            @Value("${mend.redis.consumer-group:" + RedisEventConstants.CONSUMER_GROUP + "}") String consumerGroup,
             @Value("${mend.redis.enabled:true}") boolean enabled) {
         this.streamName = streamName;
         this.consumerGroup = consumerGroup;

@@ -22,7 +22,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.time.Instant;
@@ -43,7 +42,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * recovery services, merchant endpoints (payments/customers), and strict
  * tenant isolation for review items.
  */
-@Transactional
 public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired

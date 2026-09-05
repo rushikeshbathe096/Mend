@@ -84,98 +84,52 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex flex-col font-sans">
-      {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-white/90 dark:bg-gray-900/90 backdrop-blur border-b border-gray-200 dark:border-gray-800 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3">
-        <div className="flex items-center space-x-4 min-w-0">
-          <Link href="/dashboard" className="flex items-center space-x-2.5 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black tracking-wider text-lg shadow-sm">
-              M
-            </div>
-            <span className="font-bold text-xl tracking-tight text-gray-900 dark:text-white">Mend</span>
-            <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-              Console
-            </span>
-          </Link>
-
-          {user?.memberships && user.memberships.length > 1 ? (
-            <div className="flex items-center space-x-2 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700">
-              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 hidden sm:inline">Tenant:</span>
-              <select
-                value={currentMerchantId || ''}
-                onChange={(e) => selectMerchant(e.target.value)}
-                className="bg-transparent text-xs sm:text-sm font-semibold text-gray-900 dark:text-white focus:outline-none cursor-pointer max-w-[180px]"
-              >
-                {user.memberships.map((m) => (
-                  <option key={m.merchantId} value={m.merchantId} className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
-                    {m.merchantName} ({m.roleName})
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-2 bg-gray-100 dark:bg-gray-800/80 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate max-w-[180px]">
-                {currentMerchantName || 'Merchant Console'}
-              </span>
-            </div>
-          )}
+    <div className="app-shell min-h-screen text-[var(--foreground)]">
+      <aside className="app-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-white/10 lg:flex">
+        <div className="flex h-20 items-center gap-3 border-b border-white/10 px-6">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500 text-lg font-black text-white">M</div>
+          <div><div className="text-lg font-bold tracking-tight text-white">Mend</div><div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Recovery console</div></div>
         </div>
-
-        <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
-          <div className="hidden sm:flex flex-col text-right">
-            <span className="text-xs font-semibold text-gray-900 dark:text-white">{user?.displayName || user?.email}</span>
-            <span className="text-[10px] text-gray-500 dark:text-gray-400">{currentRole || 'User'}</span>
-          </div>
-          <button
-            onClick={logout}
-            className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 rounded-lg text-xs font-semibold transition-colors"
-          >
-            Sign Out
-          </button>
-        </div>
-      </header>
-
-      {/* Main Navigation Bar */}
-      <nav className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-4 sm:px-6" aria-label="Primary">
-        <div className="flex space-x-1 overflow-x-auto no-scrollbar">
-          {visibleNav.map((item) => {
-            const active = isActive(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                className={`flex items-center space-x-2 px-4 py-3 border-b-2 text-sm font-semibold whitespace-nowrap transition-colors ${
-                  active
-                    ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:border-gray-300 dark:hover:border-gray-700'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                </svg>
+        <div className="px-4 py-5">
+          <div className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Workspace</div>
+          <nav className="space-y-1" aria-label="Primary">
+            {visibleNav.map((item) => {
+              const active = isActive(item.href);
+              return <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined} className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${active ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'}`}>
+                {active && <span className="absolute left-0 h-6 w-0.5 rounded-r bg-blue-400" />}
+                <svg className={`h-4 w-4 ${active ? 'text-blue-300' : 'text-slate-500 group-hover:text-slate-300'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={item.icon} /></svg>
                 <span>{item.label}</span>
-                {item.label === 'Recovery Actions' && pendingReviews > 0 && (
-                  <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
-                    {pendingReviews}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
+                {item.label === 'Recovery Actions' && pendingReviews > 0 && <span className="ml-auto rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">{pendingReviews}</span>}
+              </Link>;
+            })}
+          </nav>
         </div>
-      </nav>
+        <div className="mt-auto border-t border-white/10 p-4">
+          <div className="mb-3 rounded-lg bg-white/5 p-3">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Merchant</div>
+            {user?.memberships && user.memberships.length > 1 ? <select value={currentMerchantId || ''} onChange={(e) => selectMerchant(e.target.value)} className="w-full bg-transparent text-sm font-semibold text-white outline-none"><option value="" disabled>Select merchant</option>{user.memberships.map((m) => <option key={m.merchantId} value={m.merchantId} className="bg-slate-900">{m.merchantName}</option>)}</select> : <div className="truncate text-sm font-semibold text-slate-200">{currentMerchantName || 'Merchant Console'}</div>}
+          </div>
+          <div className="flex items-center gap-3 px-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-200">{(user?.displayName || user?.email || 'U').slice(0, 1).toUpperCase()}</div>
+            <div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">{user?.displayName || user?.email}</div><div className="text-[10px] text-slate-500">{currentRole || 'User'}</div></div>
+            <button onClick={logout} aria-label="Sign out" title="Sign out" className="text-xs font-semibold text-slate-500 hover:text-white">Log out</button>
+          </div>
+        </div>
+      </aside>
 
-      {/* Surface Content Container */}
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 md:p-8">{children}</main>
-
-      {/* Console Footer */}
-      <footer className="border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 py-4 px-6 text-center text-xs text-gray-500 dark:text-gray-400 flex flex-col sm:flex-row items-center justify-between gap-2">
-        <div>Mend AI Payment Recovery Console &bull; Phase 19 Merchant Product</div>
-        <div className="font-mono truncate max-w-full">Merchant Context: {currentMerchantId || 'N/A'}</div>
-      </footer>
+      <div className="lg:pl-64">
+        <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-white/90 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between gap-4">
+            <div><div className="text-xs font-semibold text-[var(--ink-muted)] lg:hidden">MEND / CONSOLE</div><div className="text-sm font-semibold text-[var(--navy)]">{currentMerchantName || 'Merchant workspace'}</div></div>
+            <div className="flex items-center gap-3"><div className="hidden text-right sm:block"><div className="text-xs font-semibold text-[var(--navy)]">{user?.displayName || user?.email}</div><div className="text-[10px] text-[var(--ink-muted)]">{currentRole || 'User'}</div></div><button onClick={logout} className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-muted)] hover:border-[var(--border-strong)] hover:text-[var(--navy)] lg:hidden">Log out</button></div>
+          </div>
+          <nav className="mt-3 flex gap-1 overflow-x-auto no-scrollbar lg:hidden" aria-label="Mobile primary">
+            {visibleNav.map((item) => { const active = isActive(item.href); return <Link key={item.href} href={item.href} className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold ${active ? 'bg-blue-50 text-blue-700' : 'text-[var(--ink-muted)] hover:bg-[var(--surface-muted)]'}`}>{item.label}</Link>; })}
+          </nav>
+        </header>
+        <main className="mx-auto min-h-[calc(100vh-112px)] w-full max-w-[1440px] p-4 sm:p-6 lg:p-8">{children}</main>
+        <footer className="border-t border-[var(--border)] bg-white px-6 py-4 text-xs text-[var(--ink-muted)]"><div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3"><span>Mend recovery operations</span><span className="font-mono">{currentMerchantId || 'No merchant context'}</span></div></footer>
+      </div>
     </div>
   );
 };

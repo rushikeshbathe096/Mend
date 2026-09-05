@@ -10,6 +10,7 @@ import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.events.RedisEventConstants;
 import com.mend.security.RazorpaySignatureVerifier;
+import com.mend.service.OutboxPublisherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,9 @@ public class Phase5EndToEndIntegrationTest {
 
     @Autowired
     private RazorpayWebhookProperties webhookProperties;
+
+    @Autowired
+    private OutboxPublisherService outboxPublisherService;
 
     private HttpClient httpClient;
 
@@ -107,23 +111,28 @@ public class Phase5EndToEndIntegrationTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("ACCEPTED");
 
-        // 2. Verify PostgreSQL durable source of truth (publish status is PUBLISHED)
+        // 2. Ingestion commits before Redis publication.
         Optional<WebhookEvent> dbEventOpt = webhookEventRepository.findByExternalEventId(eventId);
         assertThat(dbEventOpt).isPresent();
         WebhookEvent dbEvent = dbEventOpt.get();
-        assertThat(dbEvent.getPublishStatus()).isEqualTo(WebhookPublishStatus.PUBLISHED);
+        assertThat(dbEvent.getPublishStatus()).isEqualTo(WebhookPublishStatus.PENDING);
         assertThat(dbEvent.getRawPayload()).isEqualTo(payload);
 
-        // 3. Poll Redis Stream and Process via Consumer
+        // 3. Publish the committed outbox record and record success in PostgreSQL.
+        assertThat(outboxPublisherService.publishDueEvents()).isEqualTo(1);
+        dbEvent = webhookEventRepository.findByExternalEventId(eventId).orElseThrow();
+        assertThat(dbEvent.getPublishStatus()).isEqualTo(WebhookPublishStatus.PUBLISHED);
+
+        // 4. Poll Redis Stream and Process via Consumer
         int processedCount = redisWebhookEventConsumer.pollAndProcessMessages();
         assertThat(processedCount).isGreaterThanOrEqualTo(1);
 
-        // 4. Verify DB Processing Status updated to PROCESSED
+        // 5. Verify DB Processing Status updated to PROCESSED
         WebhookEvent processedDbEvent = webhookEventRepository.findByExternalEventId(eventId).orElseThrow();
         assertThat(processedDbEvent.getProcessingStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
         assertThat(processedDbEvent.getProcessedAt()).isNotNull();
 
-        // 5. Verify Pending Messages in Redis Stream are ACKed
+        // 6. Verify Pending Messages in Redis Stream are ACKed
         try {
             org.springframework.data.redis.connection.stream.PendingMessagesSummary pending = redisTemplate.opsForStream().pending(
                     redisStreamProperties.getStreamName(),
@@ -135,7 +144,7 @@ public class Phase5EndToEndIntegrationTest {
         } catch (Exception ignored) {
         }
 
-        // 6. Test Idempotent Duplicate Delivery
+        // 7. Test Idempotent Duplicate Delivery
         HttpRequest duplicateRequest = HttpRequest.newBuilder()
                 .uri(new URI("http://localhost:" + port + "/api/v1/webhooks/razorpay"))
                 .header("Content-Type", "application/json")

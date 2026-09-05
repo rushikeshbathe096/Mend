@@ -18,10 +18,12 @@ describe('Home Page', () => {
   it('renders the application title and descriptor', () => {
     render(<Home />);
     
-    const heading = screen.getByRole('heading', { name: /Mend Payment Recovery Operations/i });
+    const heading = screen.getByRole('heading', { name: /Recover failed payments intelligently/i });
     expect(heading).toBeInTheDocument();
     
-    const descriptor = screen.getByText(/Failed payments are detected, classified, evaluated/i);
+    const descriptor = screen.getByText(/Mend turns payment failure into a risk-aware recovery workflow/i);
     expect(descriptor).toBeInTheDocument();
+    expect(screen.getByText('AI does not control money.')).toBeInTheDocument();
+    expect(screen.getByText('Launch interactive demo →')).toBeInTheDocument();
   });
 });

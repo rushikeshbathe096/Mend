@@ -2,9 +2,12 @@ package com.mend;
 
 import com.mend.config.RazorpayWebhookProperties;
 import com.mend.domain.entity.Merchant;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
+import com.mend.domain.enums.OutboxEventStatus;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.MerchantRepository;
+import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.security.RazorpaySignatureVerifier;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +41,9 @@ class WebhookIntegrationTest {
 
     @Autowired
     private WebhookEventRepository webhookEventRepository;
+
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
 
     @Autowired
     private MerchantRepository merchantRepository;
@@ -90,8 +96,17 @@ class WebhookIntegrationTest {
         assertEquals("RAZORPAY", event.getSource());
         assertEquals(payload, event.getRawPayload());
         assertEquals(WebhookEventStatus.VERIFIED, event.getProcessingStatus());
-        assertEquals(com.mend.domain.enums.WebhookPublishStatus.PUBLISHED, event.getPublishStatus());
+        assertEquals(com.mend.domain.enums.WebhookPublishStatus.PENDING, event.getPublishStatus());
         assertEquals(testMerchant.getId(), event.getMerchantId());
+
+        OutboxEvent outbox = outboxEventRepository
+                .findByAggregateTypeAndAggregateIdAndEventType(
+                        OutboxEvent.WEBHOOK_AGGREGATE_TYPE,
+                        event.getId(),
+                        OutboxEvent.WEBHOOK_VERIFIED_EVENT_TYPE)
+                .orElseThrow();
+        assertEquals(OutboxEventStatus.PENDING, outbox.getStatus());
+        assertEquals(event.getMerchantId(), outbox.getMerchantId());
     }
 
     @Test
@@ -110,6 +125,27 @@ class WebhookIntegrationTest {
 
         assertEquals(401, response.statusCode());
         assertEquals(0, webhookEventRepository.count());
+        assertEquals(0, outboxEventRepository.count());
+    }
+
+    @Test
+    void razorpayWebhook_MissingSignature_Returns401WithoutPersistingEvent() throws Exception {
+        String payload = String.format(
+                "{\"event_id\":\"evt_missing_sig_%s\",\"event\":\"payment.failed\",\"account_id\":\"%s\"}",
+                UUID.randomUUID().toString().substring(0, 8), testMerchant.getExternalReference()
+        );
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(new URI("http://localhost:" + port + "/api/v1/webhooks/razorpay"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(401, response.statusCode());
+        assertEquals(0, webhookEventRepository.count());
+        assertEquals(0, outboxEventRepository.count());
     }
 
     @Test
@@ -146,6 +182,7 @@ class WebhookIntegrationTest {
         List<WebhookEvent> events = webhookEventRepository.findAll();
         assertEquals(1, events.size());
         assertEquals(eventId, events.get(0).getExternalEventId());
+        assertEquals(1, outboxEventRepository.count());
     }
 
     @Test

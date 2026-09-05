@@ -45,7 +45,7 @@ class AgentToolSuite:
         """Tool 3: Inspect previous recovery attempts for this campaign"""
         try:
             resp = httpx.get(
-                f"{self.backend_url}/api/v1/campaigns/{campaignId}/attempts",
+                f"{self.backend_url}/api/v1/campaigns/{campaign_id}/attempts",
                 headers={"X-Merchant-Id": merchant_id},
                 timeout=2.0
             )

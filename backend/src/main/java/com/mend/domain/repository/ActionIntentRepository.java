@@ -2,6 +2,7 @@ package com.mend.domain.repository;
 
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.enums.ActionIntentStatus;
+import com.mend.domain.enums.CampaignStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -47,20 +48,58 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
             Pageable pageable
     );
 
+    @Query("""
+            SELECT a
+              FROM ActionIntent a
+             WHERE a.status = :status
+               AND a.scheduledAt <= :now
+               AND EXISTS (
+                   SELECT c.id
+                     FROM Campaign c
+                    WHERE c.id = a.campaignId
+                      AND c.merchantId = a.merchantId
+                      AND c.currentState = :campaignStatus
+               )
+             ORDER BY a.scheduledAt ASC
+            """)
+    List<ActionIntent> findDueClaimableIntents(
+            @Param("status") ActionIntentStatus status,
+            @Param("campaignStatus") CampaignStatus campaignStatus,
+            @Param("now") Instant now,
+            Pageable pageable
+    );
+
     @Query("SELECT a FROM ActionIntent a WHERE a.status = 'CLAIMED' AND a.claimedAt < :expiredThreshold")
     List<ActionIntent> findExpiredClaims(@Param("expiredThreshold") Instant expiredThreshold);
 
     @Query("SELECT a FROM ActionIntent a WHERE a.status IN ('SCHEDULED', 'READY', 'PENDING') AND a.expiresAt IS NOT NULL AND a.expiresAt < :now")
     List<ActionIntent> findExpiredIntents(@Param("now") Instant now);
 
-    @Modifying
-    @Query("UPDATE ActionIntent a SET a.status = :newStatus, a.claimedAt = :claimedAt, a.claimToken = :claimToken, a.workerId = :workerId WHERE a.id = :id AND a.status = :expectedStatus")
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = :newStatus,
+                   a.claimedAt = :claimedAt,
+                   a.claimToken = :claimToken,
+                   a.workerId = :workerId
+             WHERE a.id = :id
+               AND a.status = :expectedStatus
+               AND a.scheduledAt <= :claimedAt
+               AND EXISTS (
+                   SELECT c.id
+                     FROM Campaign c
+                    WHERE c.id = a.campaignId
+                      AND c.merchantId = a.merchantId
+                      AND c.currentState = :expectedCampaignStatus
+               )
+            """)
     int claimIntentAtomic(
             @Param("id") UUID id,
             @Param("expectedStatus") ActionIntentStatus expectedStatus,
             @Param("newStatus") ActionIntentStatus newStatus,
             @Param("claimedAt") Instant claimedAt,
             @Param("claimToken") String claimToken,
-            @Param("workerId") String workerId
+            @Param("workerId") String workerId,
+            @Param("expectedCampaignStatus") CampaignStatus expectedCampaignStatus
     );
 }

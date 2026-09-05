@@ -25,12 +25,12 @@ export const Toast: React.FC<ToastProps> = ({
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 animate-bounce">
+    <div className="fixed bottom-6 right-6 z-50 motion-safe:animate-[fadeInUp_220ms_cubic-bezier(0.22,1,0.36,1)]" role="status" aria-live="polite">
       <div
         className={`flex items-center space-x-3 px-4 py-3 rounded-xl border shadow-xl text-xs font-semibold backdrop-blur ${styles[type]}`}
       >
         <span>{message}</span>
-        <button onClick={onClose} className="hover:opacity-75 font-bold">
+        <button onClick={onClose} aria-label="Dismiss notification" className="hover:opacity-75 font-bold">
           &times;
         </button>
       </div>

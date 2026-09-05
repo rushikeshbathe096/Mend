@@ -14,6 +14,7 @@ class MendMcpToolSuite:
 
     def __init__(self, backend_url: str = "http://localhost:8080"):
         self.backend_url = backend_url.rstrip("/")
+        self._client = httpx.Client(timeout=httpx.Timeout(2.0, connect=0.1))
 
     # ==================== PAYMENT TOOLS ====================
 
@@ -21,11 +22,10 @@ class MendMcpToolSuite:
         """Tool: Retrieve payment attempt details and metadata securely."""
         self._validate_tenant_id(merchant_id)
         try:
-            resp = httpx.get(
+            resp = self._client.get(
                 f"{self.backend_url}/api/v1/webhooks/events",
                 headers={"X-Merchant-Id": merchant_id},
-                params={"limit": 10},
-                timeout=3.0
+                params={"limit": 10}
             )
             if resp.status_code == 200:
                 events = resp.json()
@@ -67,10 +67,9 @@ class MendMcpToolSuite:
         """Tool: Retrieve current campaign state from Spring Boot backend."""
         self._validate_tenant_id(merchant_id)
         try:
-            resp = httpx.get(
+            resp = self._client.get(
                 f"{self.backend_url}/api/v1/campaigns/{campaign_id}",
-                headers={"X-Merchant-Id": merchant_id},
-                timeout=3.0
+                headers={"X-Merchant-Id": merchant_id}
             )
             if resp.status_code == 200:
                 return resp.json()
@@ -87,10 +86,9 @@ class MendMcpToolSuite:
         """Tool: Fetch timeline audit events associated with a campaign."""
         self._validate_tenant_id(merchant_id)
         try:
-            resp = httpx.get(
+            resp = self._client.get(
                 f"{self.backend_url}/api/v1/audit/campaign/{campaign_id}",
-                headers={"X-Merchant-Id": merchant_id},
-                timeout=3.0
+                headers={"X-Merchant-Id": merchant_id}
             )
             if resp.status_code == 200:
                 return resp.json()
@@ -103,10 +101,9 @@ class MendMcpToolSuite:
         """Tool: Inspect previous execution attempts for this campaign."""
         self._validate_tenant_id(merchant_id)
         try:
-            resp = httpx.get(
+            resp = self._client.get(
                 f"{self.backend_url}/api/v1/campaigns/{campaign_id}/attempts",
-                headers={"X-Merchant-Id": merchant_id},
-                timeout=3.0
+                headers={"X-Merchant-Id": merchant_id}
             )
             if resp.status_code == 200:
                 return resp.json()
@@ -121,10 +118,9 @@ class MendMcpToolSuite:
         """Tool: Fetch merchant configuration and policy parameters."""
         self._validate_tenant_id(merchant_id)
         try:
-            resp = httpx.get(
+            resp = self._client.get(
                 f"{self.backend_url}/api/v1/merchants/config",
-                headers={"X-Merchant-Id": merchant_id},
-                timeout=3.0
+                headers={"X-Merchant-Id": merchant_id}
             )
             if resp.status_code == 200:
                 return resp.json()

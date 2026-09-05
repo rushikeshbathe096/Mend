@@ -32,21 +32,21 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   const getBadgeStyle = () => {
     switch (variant) {
       case 'emerald':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800';
+        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
       case 'rose':
-        return 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800';
+        return 'bg-rose-50 text-rose-700 border-rose-200';
       case 'indigo':
-        return 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-400 dark:border-indigo-800';
+        return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'amber':
-        return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800';
+        return 'bg-amber-50 text-amber-700 border-amber-200';
       default:
-        return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-400 dark:border-blue-800';
+        return 'bg-blue-50 text-blue-700 border-blue-200';
     }
   };
 
   if (loading) {
     return (
-      <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm animate-pulse space-y-3">
+      <div className="app-surface animate-pulse space-y-3 rounded-xl p-5">
         <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2" />
         <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded w-3/4" />
         <div className="h-3 bg-gray-200 dark:bg-gray-800 rounded w-2/3" />
@@ -55,26 +55,26 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   }
 
   return (
-    <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm relative overflow-hidden transition-all duration-200 hover:shadow-md">
+    <div className="app-surface relative overflow-hidden rounded-xl p-5 transition-all duration-200">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</span>
+        <span className="app-kicker">{title}</span>
         {icon && (
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center border ${getBadgeStyle()}`}>
+          <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${getBadgeStyle()}`}>
             {icon}
           </div>
         )}
       </div>
 
       <div className="mt-3 flex items-baseline justify-between">
-        <div className="text-3xl font-black tracking-tight text-gray-900 dark:text-white font-mono">
+        <div className="text-[1.8rem] font-black tracking-tight text-[var(--navy)] font-mono">
           {value}
         </div>
         {trend && (
           <span
             className={`text-xs font-bold px-2 py-0.5 rounded-md border ${
               trend.positive !== false
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800'
-                : 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-rose-50 text-rose-700 border-rose-200'
             }`}
           >
             {trend.value}
@@ -83,7 +83,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       </div>
 
       {subtext && (
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 font-medium">
+        <p className="mt-2 text-xs font-medium text-[var(--ink-muted)]">
           {subtext}
         </p>
       )}

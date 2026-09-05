@@ -33,10 +33,15 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
             correlationId = UUID.randomUUID().toString();
         }
 
+        String traceId = request.getHeader(TRACE_ID_HEADER);
+        if (traceId == null || traceId.isBlank()) {
+            traceId = correlationId;
+        }
+
         MDC.put(MDC_CORRELATION_ID_KEY, correlationId);
-        MDC.put(MDC_TRACE_ID_KEY, correlationId);
+        MDC.put(MDC_TRACE_ID_KEY, traceId);
         response.setHeader(CORRELATION_ID_HEADER, correlationId);
-        response.setHeader(TRACE_ID_HEADER, correlationId);
+        response.setHeader(TRACE_ID_HEADER, traceId);
 
         try {
             filterChain.doFilter(request, response);

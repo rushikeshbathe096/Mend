@@ -23,13 +23,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Service
 public class ActionExecutionService {
@@ -43,6 +46,7 @@ public class ActionExecutionService {
     private final CampaignLifecycleService campaignLifecycleService;
     private final PaymentProviderClient paymentProviderClient;
     private final AuditService auditService;
+    private final TransactionTemplate executionTransactionTemplate;
 
     public ActionExecutionService(
             ActionIntentRepository actionIntentRepository,
@@ -51,7 +55,8 @@ public class ActionExecutionService {
             ComplianceDecisionRepository complianceDecisionRepository,
             CampaignLifecycleService campaignLifecycleService,
             PaymentProviderClient paymentProviderClient,
-            AuditService auditService) {
+            AuditService auditService,
+            PlatformTransactionManager transactionManager) {
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -59,13 +64,28 @@ public class ActionExecutionService {
         this.campaignLifecycleService = campaignLifecycleService;
         this.paymentProviderClient = paymentProviderClient;
         this.auditService = auditService;
+        this.executionTransactionTemplate = new TransactionTemplate(transactionManager);
+        this.executionTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public PaymentExecutionResult executeActionIntent(UUID intentId, String workerId) {
         Objects.requireNonNull(intentId, "intentId must not be null");
 
         // Step 1: Pre-execution validation & transaction state preparation
-        ExecutionPreparation preparation = prepareExecution(intentId, workerId);
+        ExecutionPreparation preparation;
+        try {
+            preparation = inExecutionTransaction(() -> prepareExecution(intentId, workerId));
+        } catch (ComplianceBlockedException e) {
+            log.warn("ActionIntent '{}' execution blocked by compliance: {}", intentId, e.getMessage());
+            executionTransactionTemplate.executeWithoutResult(status -> {
+                actionIntentRepository.findById(intentId).ifPresent(intent -> {
+                    intent.setStatus(ActionIntentStatus.FAILED);
+                    intent.setCompletedAt(Instant.now());
+                    actionIntentRepository.save(intent);
+                });
+            });
+            throw e;
+        }
         if (!preparation.isExecutable()) {
             log.info("ActionIntent '{}' preparation halted: {}", intentId, preparation.getReason());
             return preparation.getHaltedResult();
@@ -89,7 +109,7 @@ public class ActionExecutionService {
                     "Unsupported action type: " + intent.getActionType(),
                     intent.getIdempotencyKey()
             );
-            return finalizeExecution(intent.getId(), workerId, unsupportedResult);
+            return inExecutionTransaction(() -> finalizeExecution(intent.getId(), workerId, unsupportedResult));
         }
 
         PaymentExecutionRequest request = new PaymentExecutionRequest(
@@ -114,11 +134,11 @@ public class ActionExecutionService {
         }
 
         // Step 4: Transactional persistence of result & state synchronization
-        return finalizeExecution(intent.getId(), workerId, result);
+        PaymentExecutionResult providerResult = result;
+        return inExecutionTransaction(() -> finalizeExecution(intent.getId(), workerId, providerResult));
     }
 
-    @Transactional
-    public ExecutionPreparation prepareExecution(UUID intentId, String workerId) {
+    private ExecutionPreparation prepareExecution(UUID intentId, String workerId) {
         ActionIntent intent = actionIntentRepository.findById(intentId)
                 .orElseThrow(() -> new ResourceNotFoundException("ActionIntent not found with ID: " + intentId));
 
@@ -200,8 +220,7 @@ public class ActionExecutionService {
         return ExecutionPreparation.proceed(intent, campaign);
     }
 
-    @Transactional
-    public PaymentExecutionResult finalizeExecution(UUID intentId, String workerId, PaymentExecutionResult result) {
+    private PaymentExecutionResult finalizeExecution(UUID intentId, String workerId, PaymentExecutionResult result) {
         ActionIntent intent = actionIntentRepository.findById(intentId)
                 .orElseThrow(() -> new ResourceNotFoundException("ActionIntent not found with ID: " + intentId));
 
@@ -332,6 +351,12 @@ public class ActionExecutionService {
         }
 
         return result;
+    }
+
+    private <T> T inExecutionTransaction(Supplier<T> work) {
+        return Objects.requireNonNull(
+                executionTransactionTemplate.execute(status -> work.get()),
+                "Execution transaction returned no result");
     }
 
     public static class ExecutionPreparation {

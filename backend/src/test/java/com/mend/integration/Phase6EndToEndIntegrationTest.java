@@ -11,11 +11,13 @@ import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.ClassificationResultRepository;
+import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.ai.ClassificationRequestDto;
 import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
 import com.mend.security.RazorpaySignatureVerifier;
+import com.mend.service.OutboxPublisherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -49,6 +51,9 @@ public class Phase6EndToEndIntegrationTest {
     private WebhookEventRepository webhookEventRepository;
 
     @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
     private ClassificationResultRepository classificationResultRepository;
 
     @Autowired
@@ -66,6 +71,9 @@ public class Phase6EndToEndIntegrationTest {
     @Autowired
     private RazorpayWebhookProperties webhookProperties;
 
+    @Autowired
+    private OutboxPublisherService outboxPublisherService;
+
     @MockitoBean
     private AiClassificationClient aiClassificationClient;
 
@@ -74,6 +82,7 @@ public class Phase6EndToEndIntegrationTest {
     @BeforeEach
     void setUp() {
         httpClient = HttpClient.newHttpClient();
+        outboxEventRepository.deleteAll();
         classificationResultRepository.deleteAll();
         webhookEventRepository.deleteAll();
         try {
@@ -134,22 +143,27 @@ public class Phase6EndToEndIntegrationTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("ACCEPTED");
 
-        // 2. Verify PostgreSQL durable source of truth (publish status is PUBLISHED)
+        // 2. Ingestion commits before Redis publication.
         Optional<WebhookEvent> dbEventOpt = webhookEventRepository.findByExternalEventId(externalEventId);
         assertThat(dbEventOpt).isPresent();
         WebhookEvent dbEvent = dbEventOpt.get();
+        assertThat(dbEvent.getPublishStatus()).isEqualTo(WebhookPublishStatus.PENDING);
+
+        // 3. Publish the committed outbox record and record success in PostgreSQL.
+        assertThat(outboxPublisherService.publishDueEvents()).isEqualTo(1);
+        dbEvent = webhookEventRepository.findByExternalEventId(externalEventId).orElseThrow();
         assertThat(dbEvent.getPublishStatus()).isEqualTo(WebhookPublishStatus.PUBLISHED);
 
-        // 3. Poll Redis Stream and Process via Consumer (which calls DefaultEventProcessingService -> ClassificationService)
+        // 4. Poll Redis Stream and Process via Consumer (which calls DefaultEventProcessingService -> ClassificationService)
         int processedCount = redisWebhookEventConsumer.pollAndProcessMessages();
         assertThat(processedCount).isGreaterThanOrEqualTo(1);
 
-        // 4. Verify DB Processing Status updated to PROCESSED
+        // 5. Verify DB Processing Status updated to PROCESSED
         WebhookEvent processedDbEvent = webhookEventRepository.findByExternalEventId(externalEventId).orElseThrow();
         assertThat(processedDbEvent.getProcessingStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
         assertThat(processedDbEvent.getProcessedAt()).isNotNull();
 
-        // 5. Verify Phase 6 ClassificationResult is persisted in PostgreSQL
+        // 6. Verify Phase 6 ClassificationResult is persisted in PostgreSQL
         Optional<ClassificationResult> classificationOpt = classificationResultRepository.findByEventId(dbEvent.getId());
         assertThat(classificationOpt).isPresent();
         ClassificationResult classificationResult = classificationOpt.get();
@@ -167,7 +181,7 @@ public class Phase6EndToEndIntegrationTest {
                 "Payment failed due to insufficient funds".equals(req.failureReason())
         ));
 
-        // 6. Test Duplicate Delivery Idempotency: Re-processing should not re-classify
+        // 7. Test Duplicate Delivery Idempotency: Re-processing should not re-classify
         int secondPollCount = redisWebhookEventConsumer.pollAndProcessMessages();
         assertThat(secondPollCount).isEqualTo(0);
 

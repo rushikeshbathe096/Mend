@@ -2,13 +2,14 @@ package com.mend.service;
 
 import tools.jackson.databind.ObjectMapper;
 import com.mend.domain.entity.Merchant;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.repository.MerchantRepository;
+import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.WebhookResponseDto;
 import com.mend.exception.InvalidRequestException;
 import com.mend.exception.WebhookSignatureException;
-import com.mend.publisher.WebhookEventPublisher;
 import com.mend.security.RazorpaySignatureVerifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,10 +35,10 @@ class WebhookServiceTest {
     private WebhookEventRepository webhookEventRepository;
 
     @Mock
-    private MerchantRepository merchantRepository;
+    private OutboxEventRepository outboxEventRepository;
 
     @Mock
-    private WebhookEventPublisher webhookEventPublisher;
+    private MerchantRepository merchantRepository;
 
     private ObjectMapper objectMapper;
     private WebhookService webhookService;
@@ -48,8 +49,8 @@ class WebhookServiceTest {
         webhookService = new WebhookService(
                 signatureVerifier,
                 webhookEventRepository,
+                outboxEventRepository,
                 merchantRepository,
-                webhookEventPublisher,
                 objectMapper
         );
     }
@@ -66,6 +67,7 @@ class WebhookServiceTest {
         merchant.setExternalReference("acc_merchant_1");
         when(merchantRepository.findByExternalReference("acc_merchant_1")).thenReturn(Optional.of(merchant));
         when(webhookEventRepository.saveAndFlush(any(WebhookEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(outboxEventRepository.saveAndFlush(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         WebhookResponseDto response = webhookService.processRazorpayWebhook(payload, signature);
 
@@ -74,7 +76,10 @@ class WebhookServiceTest {
         assertEquals("evt_1001", response.getExternalEventId());
 
         verify(webhookEventRepository).saveAndFlush(any(WebhookEvent.class));
-        verify(webhookEventPublisher).publish(any(WebhookEvent.class));
+        verify(outboxEventRepository).saveAndFlush(argThat(outbox ->
+                outbox.getAggregateId() != null
+                        && outbox.getMerchantId().equals(merchant.getId())
+                        && outbox.getPayload().contains("evt_1001")));
     }
 
     @Test
@@ -87,7 +92,7 @@ class WebhookServiceTest {
         assertThrows(WebhookSignatureException.class, () -> webhookService.processRazorpayWebhook(payload, signature));
 
         verifyNoInteractions(webhookEventRepository);
-        verifyNoInteractions(webhookEventPublisher);
+        verifyNoInteractions(outboxEventRepository);
     }
 
     @Test
@@ -110,7 +115,7 @@ class WebhookServiceTest {
         assertEquals("evt_1003", response.getExternalEventId());
 
         verify(webhookEventRepository, never()).saveAndFlush(any());
-        verify(webhookEventPublisher, never()).publish(any());
+        verify(outboxEventRepository, never()).saveAndFlush(any());
     }
 
     @Test

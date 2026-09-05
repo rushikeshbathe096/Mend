@@ -3,10 +3,9 @@ package com.mend.scheduler;
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
-import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.dto.payment.PaymentExecutionResult;
 import com.mend.service.ActionExecutionService;
-import com.mend.service.AuditService;
+import com.mend.service.ActionIntentClaimService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,82 +23,15 @@ import static org.mockito.Mockito.*;
 @DisplayName("Action Scheduler Unit Tests")
 public class ActionSchedulerTest {
 
-    private ActionIntentRepository repository;
+    private ActionIntentClaimService claimService;
     private ActionExecutionService actionExecutionService;
-    private AuditService auditService;
     private ActionScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        repository = Mockito.mock(ActionIntentRepository.class);
+        claimService = Mockito.mock(ActionIntentClaimService.class);
         actionExecutionService = Mockito.mock(ActionExecutionService.class);
-        auditService = Mockito.mock(AuditService.class);
-        scheduler = new ActionScheduler(repository, actionExecutionService, auditService, "test-worker", 50, 5, true);
-    }
-
-    @Test
-    @DisplayName("Promote due SCHEDULED intents to READY")
-    void testPromoteScheduledIntents() {
-        UUID campaignId = UUID.randomUUID();
-        ActionIntent intent = new ActionIntent(
-                UUID.randomUUID(), UUID.randomUUID(), campaignId, 1,
-                ActionType.RETRY_PAYMENT.name(), "RETRY_LATER", UUID.randomUUID(),
-                ActionIntentStatus.SCHEDULED, "key-1", Instant.now().minusSeconds(60)
-        );
-
-        when(repository.findDueIntents(eq(ActionIntentStatus.SCHEDULED), any(Instant.class), any()))
-                .thenReturn(List.of(intent));
-
-        List<ActionIntent> promoted = scheduler.promoteScheduledIntents();
-
-        assertEquals(1, promoted.size());
-        assertEquals(ActionIntentStatus.READY, promoted.get(0).getStatus());
-    }
-
-    @Test
-    @DisplayName("Worker atomic claim succeeds when claimIntentAtomic returns 1")
-    void testClaimDueIntentsSuccess() {
-        UUID campaignId = UUID.randomUUID();
-        ActionIntent intent = new ActionIntent(
-                UUID.randomUUID(), UUID.randomUUID(), campaignId, 1,
-                ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
-                ActionIntentStatus.READY, "key-2", Instant.now().minusSeconds(10)
-        );
-
-        when(repository.findDueIntents(eq(ActionIntentStatus.SCHEDULED), any(Instant.class), any()))
-                .thenReturn(Collections.emptyList());
-        when(repository.findDueIntents(eq(ActionIntentStatus.READY), any(Instant.class), any()))
-                .thenReturn(List.of(intent));
-        when(repository.claimIntentAtomic(any(), eq(ActionIntentStatus.READY), eq(ActionIntentStatus.CLAIMED), any(), any(), eq("worker-1")))
-                .thenReturn(1);
-
-        List<ActionIntent> claimed = scheduler.claimDueIntents("worker-1", 10);
-
-        assertEquals(1, claimed.size());
-        assertEquals(ActionIntentStatus.CLAIMED, claimed.get(0).getStatus());
-        assertEquals("worker-1", claimed.get(0).getWorkerId());
-        assertNotNull(claimed.get(0).getClaimToken());
-    }
-
-    @Test
-    @DisplayName("Worker atomic claim fails when another worker wins race (returns 0)")
-    void testClaimDueIntentsRaceCondition() {
-        ActionIntent intent = new ActionIntent(
-                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 1,
-                ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
-                ActionIntentStatus.READY, "key-3", Instant.now().minusSeconds(10)
-        );
-
-        when(repository.findDueIntents(eq(ActionIntentStatus.SCHEDULED), any(Instant.class), any()))
-                .thenReturn(Collections.emptyList());
-        when(repository.findDueIntents(eq(ActionIntentStatus.READY), any(Instant.class), any()))
-                .thenReturn(List.of(intent));
-        when(repository.claimIntentAtomic(any(), any(), any(), any(), any(), any()))
-                .thenReturn(0); // Lost race condition
-
-        List<ActionIntent> claimed = scheduler.claimDueIntents("worker-2", 10);
-
-        assertTrue(claimed.isEmpty());
+        scheduler = new ActionScheduler(claimService, actionExecutionService, "test-worker", 50, true, true);
     }
 
     @Test
@@ -112,12 +44,8 @@ public class ActionSchedulerTest {
                 ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
         );
 
-        when(repository.findDueIntents(eq(ActionIntentStatus.SCHEDULED), any(Instant.class), any()))
-                .thenReturn(Collections.emptyList());
-        when(repository.findDueIntents(eq(ActionIntentStatus.READY), any(Instant.class), any()))
+        when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
                 .thenReturn(List.of(intent));
-        when(repository.claimIntentAtomic(any(), eq(ActionIntentStatus.READY), eq(ActionIntentStatus.CLAIMED), any(), any(), any()))
-                .thenReturn(1);
 
         PaymentExecutionResult expectedResult = PaymentExecutionResult.success("ref-123", "Success message", "key-4");
         when(actionExecutionService.executeActionIntent(eq(intentId), anyString()))
@@ -128,16 +56,67 @@ public class ActionSchedulerTest {
         assertEquals(1, results.size());
         assertEquals("ref-123", results.get(0).getExternalReference());
         verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString());
+        verify(claimService, times(1)).releaseExpiredClaims();
+        verify(claimService, times(1)).processExpiredIntents();
+    }
+
+    @Test
+    @DisplayName("pollAndExecuteDueActions returns empty when no intents claimed")
+    void testPollAndExecuteDueActionsNoIntents() {
+        when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
+                .thenReturn(Collections.emptyList());
+
+        List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
+
+        assertTrue(results.isEmpty());
+        verify(actionExecutionService, never()).executeActionIntent(any(), anyString());
+        verify(claimService, times(1)).releaseExpiredClaims();
+        verify(claimService, times(1)).processExpiredIntents();
     }
 
     @Test
     @DisplayName("pollAndExecuteDueActions returns empty when disabled")
     void testPollAndExecuteDisabled() {
-        ActionScheduler disabledScheduler = new ActionScheduler(repository, actionExecutionService, auditService, "test-worker", 50, 5, false);
+        ActionScheduler disabledScheduler = new ActionScheduler(claimService, actionExecutionService, "test-worker", 50, false, true);
 
         List<PaymentExecutionResult> results = disabledScheduler.pollAndExecuteDueActions();
 
         assertTrue(results.isEmpty());
-        verifyNoInteractions(repository);
+        verifyNoInteractions(claimService);
+        verifyNoInteractions(actionExecutionService);
+    }
+
+    @Test
+    @DisplayName("scheduledPollAndExecuteDueActions returns empty when scheduled disabled")
+    void testScheduledPollDisabled() {
+        ActionScheduler disabledScheduler = new ActionScheduler(claimService, actionExecutionService, "test-worker", 50, true, false);
+
+        List<PaymentExecutionResult> results = disabledScheduler.scheduledPollAndExecuteDueActions();
+
+        assertTrue(results.isEmpty());
+        verifyNoInteractions(claimService);
+        verifyNoInteractions(actionExecutionService);
+    }
+
+    @Test
+    @DisplayName("pollAndExecuteDueActions handles execution exception gracefully")
+    void testPollAndExecuteHandlesException() {
+        UUID intentId = UUID.randomUUID();
+        ActionIntent intent = new ActionIntent(
+                intentId, UUID.randomUUID(), UUID.randomUUID(), 1,
+                ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
+                ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
+        );
+
+        when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
+                .thenReturn(List.of(intent));
+
+        when(actionExecutionService.executeActionIntent(eq(intentId), anyString()))
+                .thenThrow(new RuntimeException("Provider error"));
+
+        List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
+
+        assertTrue(results.isEmpty());
+        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString());
     }
 }

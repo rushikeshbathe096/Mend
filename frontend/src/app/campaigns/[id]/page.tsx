@@ -8,6 +8,8 @@ import { Badge } from '@/components/common/Badge';
 import { MetricCard } from '@/components/common/MetricCard';
 import { Modal } from '@/components/common/Modal';
 import { Timeline, TimelineStep } from '@/components/common/Timeline';
+import { RecoveryLifecycle } from '@/components/common/RecoveryLifecycle';
+import { AgentDecisionStack } from '@/components/common/AgentDecisionStack';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
@@ -336,6 +338,7 @@ export default function CampaignDetailPage() {
               <div className="p-6">
                 {activeTab === 'timeline' && (
                   <div className="space-y-6">
+                    <RecoveryLifecycle currentState={timeline?.currentState || campaign.currentState} hasReview={Boolean(pendingReview)} />
                     <h3 className="text-base font-bold text-gray-900 dark:text-white mb-4">
                       Deterministic Lifecycle Progression
                     </h3>
@@ -409,30 +412,7 @@ export default function CampaignDetailPage() {
                         <p className="text-sm text-gray-500 font-medium">No dedicated AI Agent decision records for this campaign.</p>
                         <p className="text-xs text-gray-400 mt-1">Rule-based or heuristic orchestrator decisions apply directly.</p>
                       </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {agentDecisions.map((ad) => (
-                          <div key={ad.id} className="p-5 rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-2">
-                                <span className="text-sm font-bold text-gray-900 dark:text-white">{ad.decision}</span>
-                                {ad.confidence !== undefined && (
-                                  <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                                    {(ad.confidence * 100).toFixed(0)}% Conf
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-xs text-gray-400 font-mono">{new Date(ad.createdAt).toLocaleString()}</span>
-                            </div>
-                            <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-700 text-xs text-gray-700 dark:text-gray-300 font-medium">
-                              <span className="font-bold text-gray-900 dark:text-white block mb-1">Reasoning Explanation:</span>
-                              {ad.reasoning}
-                            </div>
-                            {ad.nextStep && <div className="text-xs font-mono text-gray-500">Next Step: {ad.nextStep}</div>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    ) : <AgentDecisionStack decisions={agentDecisions} />}
                   </div>
                 )}
 
