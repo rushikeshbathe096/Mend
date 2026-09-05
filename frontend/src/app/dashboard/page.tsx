@@ -7,6 +7,7 @@ import { Badge } from '@/components/common/Badge';
 import { MetricCard, formatCurrency } from '@/components/common/MetricCard';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton, CardSkeleton } from '@/components/common/Skeleton';
+import { StartRecoveryModal } from '@/components/recovery/StartRecoveryModal';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { AnalyticsOverviewDto, CampaignDto, ActionIntentDto, PageResponse, ReviewQueueSummaryDto, AnalyticsFunnelDto } from '@/types';
@@ -20,6 +21,7 @@ export default function DashboardPage() {
   const [reviewSummary, setReviewSummary] = useState<ReviewQueueSummaryDto | null>(null);
   const [funnel, setFunnel] = useState<AnalyticsFunnelDto | null>(null);
 
+  const [isStartRecoveryOpen, setIsStartRecoveryOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,16 +108,27 @@ export default function DashboardPage() {
               A live view of failed-payment recovery, operational risk, and action throughput.
             </p>
           </div>
-          <button
-            onClick={fetchDashboardData}
-            disabled={isInitialLoading}
-            className="flex items-center gap-2 self-start rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-bold text-[var(--ink-muted)] shadow-sm hover:-translate-y-px hover:border-[var(--border-strong)] hover:text-[var(--navy)] sm:self-auto disabled:opacity-50"
-          >
-            <svg className={`w-4 h-4 ${isInitialLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span>Sync Live Telemetry</span>
-          </button>
+          <div className="flex items-center space-x-3 self-start sm:self-auto">
+            <button
+              onClick={() => setIsStartRecoveryOpen(true)}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 hover:-translate-y-px transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>+ Start Recovery</span>
+            </button>
+            <button
+              onClick={fetchDashboardData}
+              disabled={isInitialLoading}
+              className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-bold text-[var(--ink-muted)] shadow-sm hover:-translate-y-px hover:border-[var(--border-strong)] hover:text-[var(--navy)] disabled:opacity-50"
+            >
+              <svg className={`w-4 h-4 ${isInitialLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Sync Live Telemetry</span>
+            </button>
+          </div>
         </div>
 
         {error && <ErrorAlert message={error} onRetry={fetchDashboardData} />}
@@ -382,6 +395,12 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      <StartRecoveryModal
+        isOpen={isStartRecoveryOpen}
+        onClose={() => setIsStartRecoveryOpen(false)}
+        onRecoveryComplete={fetchDashboardData}
+      />
     </ConsoleLayout>
   );
 }

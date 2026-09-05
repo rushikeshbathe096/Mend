@@ -1,32 +1,63 @@
 package com.mend.controller;
 
+import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.enums.CampaignStatus;
-import com.mend.dto.CampaignDto;
-import com.mend.dto.CampaignTimelineDto;
-import com.mend.dto.PageResponse;
+import com.mend.domain.repository.AgentDecisionRecordRepository;
+import com.mend.domain.repository.ActionIntentRepository;
+import com.mend.domain.repository.CampaignRepository;
+import com.mend.dto.*;
+import com.mend.dto.payment.PaymentExecutionResult;
 import com.mend.exception.InvalidRequestException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
 import com.mend.security.CurrentUser;
 import com.mend.security.TenantContext;
-import com.mend.service.CampaignLifecycleService;
-import com.mend.service.CampaignQueryService;
+import com.mend.service.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/campaigns")
 public class CampaignController {
 
+    private static final Logger log = LoggerFactory.getLogger(CampaignController.class);
+
     private final CampaignQueryService campaignQueryService;
     private final CampaignLifecycleService campaignLifecycleService;
+    private final RecoveryOrchestratorService recoveryOrchestratorService;
+    private final ActionIntentService actionIntentService;
+    private final ActionExecutionService actionExecutionService;
+    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
+    private final CampaignRepository campaignRepository;
+    private final ActionIntentRepository actionIntentRepository;
+    private final AuditService auditService;
 
-    public CampaignController(CampaignQueryService campaignQueryService, CampaignLifecycleService campaignLifecycleService) {
+    public CampaignController(
+            CampaignQueryService campaignQueryService,
+            CampaignLifecycleService campaignLifecycleService,
+            RecoveryOrchestratorService recoveryOrchestratorService,
+            ActionIntentService actionIntentService,
+            ActionExecutionService actionExecutionService,
+            AgentDecisionRecordRepository agentDecisionRecordRepository,
+            CampaignRepository campaignRepository,
+            ActionIntentRepository actionIntentRepository,
+            AuditService auditService) {
         this.campaignQueryService = campaignQueryService;
         this.campaignLifecycleService = campaignLifecycleService;
+        this.recoveryOrchestratorService = recoveryOrchestratorService;
+        this.actionIntentService = actionIntentService;
+        this.actionExecutionService = actionExecutionService;
+        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
+        this.campaignRepository = campaignRepository;
+        this.actionIntentRepository = actionIntentRepository;
+        this.auditService = auditService;
     }
 
     public static class CreateCampaignRequest {
@@ -99,6 +130,89 @@ public class CampaignController {
         );
 
         return ResponseEntity.ok(CampaignDto.fromEntity(campaign));
+    }
+
+    @PostMapping("/start-recovery")
+    public ResponseEntity<StartRecoveryResponseDto> startRecovery(
+            @RequestBody StartRecoveryRequest request,
+            @RequestHeader(value = "X-Merchant-Id", required = false) String merchantHeader,
+            @CurrentUser AuthenticatedUser currentUser) {
+
+        UUID effectiveMerchantId = resolveMerchantId(merchantHeader, currentUser);
+        if (request == null || request.getPaymentId() == null || request.getPaymentId().isBlank()) {
+            throw new InvalidRequestException("paymentId is required to start recovery");
+        }
+
+        // 1. Get or create campaign in ELIGIBLE state for the authoritative merchant
+        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(
+                effectiveMerchantId, request.getPaymentId(), request.getCustomerIdHash(), request.getSubscriptionId()
+        );
+
+        // Log RECOVERY_STARTED Audit Event
+        auditService.logEvent(
+                effectiveMerchantId,
+                campaign.getId(),
+                "RECOVERY_STARTED",
+                "USER",
+                currentUser != null ? currentUser.getUserId() : null,
+                "Manual recovery initiated for payment: " + campaign.getPaymentId()
+        );
+
+        // 2. Execute 6-Agent Orchestration, Compliance, Strategy, and ActionIntent Creation
+        ActionIntent actionIntent = recoveryOrchestratorService.orchestrateRecovery(effectiveMerchantId, campaign.getId());
+
+        // 3. If an ActionIntent is created and executable, claim and execute it
+        PaymentExecutionResult executionResult = null;
+        if (actionIntent != null) {
+            String workerId = "web-recovery-worker-" + UUID.randomUUID().toString().substring(0, 8);
+            actionIntent.setStatus(com.mend.domain.enums.ActionIntentStatus.CLAIMED);
+            actionIntent.setWorkerId(workerId);
+            actionIntent.setClaimedAt(java.time.Instant.now());
+            actionIntentRepository.save(actionIntent);
+
+            try {
+                executionResult = actionExecutionService.executeActionIntent(actionIntent.getId(), workerId);
+            } catch (Exception e) {
+                log.error("Execution failed for ActionIntent '{}': {}", actionIntent.getId(), e.getMessage());
+            }
+        }
+
+        // 4. Fetch latest state and decision records for the response
+        Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElse(campaign);
+        CampaignDto campaignDto = CampaignDto.fromEntity(updatedCampaign);
+        ActionIntentDto actionIntentDto = actionIntent != null ? ActionIntentDto.fromEntity(actionIntent) : null;
+
+        List<AgentDecisionRecordDto> agentDecisions = agentDecisionRecordRepository
+                .findByCampaignIdOrderByCreatedAtDesc(campaign.getId())
+                .stream()
+                .map(AgentDecisionRecordDto::fromEntity)
+                .collect(Collectors.toList());
+
+        boolean requiresHumanApproval = agentDecisions.stream().anyMatch(AgentDecisionRecordDto::isRequiresHumanApproval);
+        String complianceStatus = agentDecisions.isEmpty() ? "COMPLIANCE_ALLOWED" : agentDecisions.get(0).getComplianceStatus();
+
+        String message = "Recovery orchestration initiated successfully.";
+        if (executionResult != null && executionResult.isSuccess()) {
+            message = "Recovery executed successfully! Payment recovered via provider.";
+        } else if (executionResult != null && executionResult.isFailure()) {
+            message = "Recovery execution failed: " + executionResult.getMessage();
+        } else if (requiresHumanApproval) {
+            message = "Recovery requires merchant human approval. Routed to review queue.";
+        } else if ("COMPLIANCE_BLOCKED".equalsIgnoreCase(complianceStatus)) {
+            message = "Recovery blocked by compliance policy rules.";
+        }
+
+        StartRecoveryResponseDto response = new StartRecoveryResponseDto(
+                campaignDto,
+                actionIntentDto,
+                executionResult,
+                agentDecisions,
+                complianceStatus,
+                requiresHumanApproval,
+                message
+        );
+
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/{id}/pause")

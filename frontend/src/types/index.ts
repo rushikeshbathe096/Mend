@@ -418,3 +418,27 @@ export interface OperationalHealthDto {
   components?: Record<string, any>;
 }
 
+export interface StartRecoveryRequest {
+  paymentId: string;
+  customerIdHash?: string;
+  subscriptionId?: string;
+}
+
+export interface PaymentExecutionResult {
+  status: string;
+  externalReference?: string;
+  message?: string;
+  executedAt?: string;
+  idempotencyKey?: string;
+}
+
+export interface StartRecoveryResponseDto {
+  campaign: CampaignDto;
+  actionIntent?: ActionIntentDto;
+  executionResult?: PaymentExecutionResult;
+  agentDecisions: AgentDecisionRecordDto[];
+  complianceStatus: string;
+  requiresHumanApproval: boolean;
+  message: string;
+}
+
