@@ -15,8 +15,17 @@ class RazorpayResponseClassifier {
     private final ObjectMapper readMapper;
 
     RazorpayResponseClassifier(ObjectMapper objectMapper) {
-        this.readMapper = objectMapper.rebuild()
+        this.readMapper = responseMapper(objectMapper);
+    }
+
+    /**
+     * Mapper for every Razorpay response body: unknown properties ignored (forward-compatible), and a
+     * fractional number is never coerced into an integer field (that would invent an amount).
+     */
+    static ObjectMapper responseMapper(ObjectMapper objectMapper) {
+        return objectMapper.rebuild()
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
                 .build();
     }
 
