@@ -33,7 +33,12 @@ public class AgentDecisionQueryController {
             merchantId = UUID.fromString(headerMerchantId);
         }
 
-        List<AgentDecisionRecord> records = agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaignId);
+        if (merchantId == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        List<AgentDecisionRecord> records =
+                agentDecisionRecordRepository.findByCampaignIdAndMerchantIdOrderByCreatedAtDesc(campaignId, merchantId);
         return ResponseEntity.ok(records);
     }
 

@@ -104,6 +104,18 @@ public class CrossTenantReadIsolationIntegrationTest {
         assertTrue(own.body().contains(reasoningMarkerB));
     }
 
+    @Test
+    @DisplayName("GET /campaigns/{otherMerchantCampaign}/decisions returns no foreign records")
+    void campaignDecisionsAreScopedToCallerMerchant() throws Exception {
+        HttpResponse<String> foreign = get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenA);
+        assertEquals(200, foreign.statusCode());
+        assertEquals("[]", foreign.body());
+
+        HttpResponse<String> own = get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenB);
+        assertEquals(200, own.statusCode());
+        assertTrue(own.body().contains(reasoningMarkerB));
+    }
+
     private HttpResponse<String> get(String path, String token) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI("http://localhost:" + port + path))
