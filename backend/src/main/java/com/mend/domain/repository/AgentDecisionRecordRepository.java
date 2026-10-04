@@ -13,6 +13,8 @@ public interface AgentDecisionRecordRepository extends JpaRepository<AgentDecisi
 
     List<AgentDecisionRecord> findByCampaignIdOrderByCreatedAtDesc(UUID campaignId);
 
+    List<AgentDecisionRecord> findByCampaignIdAndMerchantIdOrderByCreatedAtDesc(UUID campaignId, UUID merchantId);
+
     Optional<AgentDecisionRecord> findFirstByCampaignIdOrderByCreatedAtDesc(UUID campaignId);
 
     List<AgentDecisionRecord> findByMerchantIdOrderByCreatedAtDesc(UUID merchantId);
