@@ -23,6 +23,22 @@ class PaymentLinkSnapshotTest {
     }
 
     @Test
+    void rejectsNullPaymentIdElementWithIllegalArgument() {
+        List<String> ids = new ArrayList<>();
+        ids.add(null);
+        assertThrows(IllegalArgumentException.class,
+                () -> new PaymentLinkSnapshot("plink_1", null, PaymentLinkState.PAID, 100, 100, "INR", null, ids));
+    }
+
+    @Test
+    void rejectsNegativeAmounts() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new PaymentLinkSnapshot("plink_1", null, PaymentLinkState.CREATED, -1, 0, "INR", null, List.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PaymentLinkSnapshot("plink_1", null, PaymentLinkState.CREATED, 100, -1, "INR", null, List.of()));
+    }
+
+    @Test
     void requiredComponentsAreNullChecked() {
         assertThrows(IllegalArgumentException.class,
                 () -> new PaymentLinkSnapshot(null, null, PaymentLinkState.CREATED, 100, 0, "INR", null, List.of()));

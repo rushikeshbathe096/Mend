@@ -20,6 +20,9 @@ public record PaymentEvidence(
         if (status == null) {
             throw new IllegalArgumentException("status is required");
         }
+        if (amountMinor < 0) {
+            throw new IllegalArgumentException("amountMinor must not be negative");
+        }
         if (currency == null) {
             throw new IllegalArgumentException("currency is required");
         }

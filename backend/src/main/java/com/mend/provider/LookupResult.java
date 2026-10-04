@@ -14,7 +14,10 @@ public sealed interface LookupResult<T> {
     record NotFound<T>() implements LookupResult<T> {
     }
 
-    /** The provider could not be asked or did not answer. Not the same as {@link NotFound}. */
+    /**
+     * The provider could not be asked or did not answer. Not the same as {@link NotFound}.
+     * {@code cause} is a short machine code, not a raw exception message.
+     */
     record Unavailable<T>(String cause, Integer httpStatus) implements LookupResult<T> {
         public Unavailable {
             if (cause == null) {
