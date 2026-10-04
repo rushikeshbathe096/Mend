@@ -21,11 +21,18 @@ public record CreatePaymentLink(
         if (amount == null) {
             throw new IllegalArgumentException("amount is required");
         }
-        if (description == null) {
+        if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("description is required");
         }
         if (intentId == null) {
             throw new IllegalArgumentException("intentId is required");
         }
+    }
+
+    /** Omits the free-text description so a future caller cannot leak customer data through logs. */
+    @Override
+    public String toString() {
+        return "CreatePaymentLink[key=" + key.value() + ", amount=" + amount + ", descriptionLength=" + description.length()
+                + ", expireBy=" + expireBy + ", intentId=" + intentId + "]";
     }
 }

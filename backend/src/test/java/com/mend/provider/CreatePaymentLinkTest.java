@@ -20,6 +20,23 @@ class CreatePaymentLinkTest {
     }
 
     @Test
+    void toStringOmitsDescriptionText() {
+        UUID intentId = UUID.randomUUID();
+        CreatePaymentLink command = new CreatePaymentLink(ProviderAttemptKey.forIntent(intentId),
+                new MoneyMinor(100, "INR"), "free-text-that-must-not-be-logged", null, intentId);
+        String text = command.toString();
+        assertFalse(text.contains("free-text-that-must-not-be-logged"));
+        assertTrue(text.contains(intentId.toString()));
+    }
+
+    @Test
+    void rejectsBlankDescription() {
+        UUID intentId = UUID.randomUUID();
+        assertThrows(IllegalArgumentException.class, () -> new CreatePaymentLink(ProviderAttemptKey.forIntent(intentId),
+                new MoneyMinor(100, "INR"), "  ", null, intentId));
+    }
+
+    @Test
     void expireByIsOptional() {
         UUID intentId = UUID.randomUUID();
         CreatePaymentLink command = new CreatePaymentLink(ProviderAttemptKey.forIntent(intentId),

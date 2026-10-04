@@ -14,7 +14,10 @@ public sealed interface RequestResult<T> {
         }
     }
 
-    /** The provider (or a local precondition) definitively refused the command. Code, reason and status may be absent. */
+    /**
+     * The provider (or a local precondition) definitively refused the command. Code, reason and status may be absent.
+     * Adapters must resolve ambiguous refusals (e.g. a 400 on create) by lookup before returning this.
+     */
     record Rejected<T>(RejectionKind kind, String providerCode, String providerReason, Integer httpStatus)
             implements RequestResult<T> {
         public Rejected {
@@ -24,7 +27,7 @@ public sealed interface RequestResult<T> {
         }
     }
 
-    /** The request provably never left MEND, so resending it is safe. */
+    /** The request provably never left MEND, so resending it is safe. {@code cause} is a short machine code, not a raw exception message. */
     record NotSent<T>(String cause) implements RequestResult<T> {
         public NotSent {
             if (cause == null) {
@@ -33,7 +36,10 @@ public sealed interface RequestResult<T> {
         }
     }
 
-    /** The request may have reached the provider but we do not know what happened. Look up before any resend. */
+    /**
+     * The request may have reached the provider but we do not know what happened. Look up before any resend.
+     * {@code cause} is a short machine code, not a raw exception message.
+     */
     record OutcomeUnknown<T>(String cause, Integer httpStatus) implements RequestResult<T> {
         public OutcomeUnknown {
             if (cause == null) {
