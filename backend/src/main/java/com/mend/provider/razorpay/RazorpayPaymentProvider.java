@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Clock;
@@ -95,21 +96,27 @@ public class RazorpayPaymentProvider implements PaymentProvider {
     }
 
     /**
-     * Razorpay answers a GET by id for a non-existent (well-formed) id with 400 BAD_REQUEST_ERROR
-     * "The id provided does not exist" — recorded in fixture 13_fetch_payment_not_found.json.
+     * Razorpay answers a GET by id for a non-existent (well-formed) id with 400, code BAD_REQUEST_ERROR,
+     * reason input_validation_failed — recorded in fixture 13_fetch_payment_not_found.json. BAD_REQUEST_ERROR alone
+     * is generic, so both machine fields must match; any other 400 stays Unavailable (fails safe).
      */
     private static boolean isUnknownIdOnGetById(ReadClassification.Unavailable unavailable) {
         RazorpayErrorEnvelope.Error error = unavailable.error();
         return unavailable.status() != null && unavailable.status() == 400
-                && error != null && "BAD_REQUEST_ERROR".equals(error.code());
+                && error != null && "BAD_REQUEST_ERROR".equals(error.code())
+                && "input_validation_failed".equals(error.reason());
     }
 
     private LookupResult<PaymentEvidence> parsePayment(String body) {
         try {
             RazorpayPayment payment = responseMapper.readValue(body, RazorpayPayment.class);
             return new LookupResult.Found<>(mapper.toEvidence(payment, clock.instant()));
-        } catch (MalformedProviderResponse | RuntimeException e) {
-            log.warn("event=provider_malformed_response op=get_payment");
+        } catch (MalformedProviderResponse e) {
+            log.warn("event=provider_malformed_response op=get_payment reason={}", e.getMessage());
+            return new LookupResult.Unavailable<>("MALFORMED", null);
+        } catch (JacksonException e) {
+            // Exception message may echo body text; log the type only.
+            log.warn("event=provider_malformed_response op=get_payment reason={}", e.getClass().getSimpleName());
             return new LookupResult.Unavailable<>("MALFORMED", null);
         }
     }

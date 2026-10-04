@@ -8,5 +8,5 @@ public interface Sleeper {
 
     void sleep(Duration duration) throws InterruptedException;
 
-    Sleeper SYSTEM = duration -> Thread.sleep(duration.toMillis());
+    Sleeper SYSTEM = Thread::sleep;
 }

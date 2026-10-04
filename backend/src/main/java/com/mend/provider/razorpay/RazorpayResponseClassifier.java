@@ -3,6 +3,7 @@ package com.mend.provider.razorpay;
 import com.mend.provider.RejectionKind;
 import com.mend.provider.razorpay.dto.RazorpayErrorEnvelope;
 import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MapperFeature;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -19,13 +20,14 @@ class RazorpayResponseClassifier {
     }
 
     /**
-     * Mapper for every Razorpay response body: unknown properties ignored (forward-compatible), and a
-     * fractional number is never coerced into an integer field (that would invent an amount).
+     * Mapper for every Razorpay response body: unknown properties ignored (forward-compatible), and neither a
+     * fractional number nor a string is coerced into a numeric field (that would invent or reinterpret an amount).
      */
     static ObjectMapper responseMapper(ObjectMapper objectMapper) {
         return objectMapper.rebuild()
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+                .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
                 .build();
     }
 

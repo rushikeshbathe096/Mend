@@ -42,6 +42,13 @@ class RazorpayEvidenceMapperTest {
     }
 
     @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void unrecognizedStatusIsLoggedAtWarnSanitized(org.springframework.boot.test.system.CapturedOutput output) {
+        mapper.mapPaymentStatus("weird\nvalue");
+        assertTrue(output.getOut().contains("event=unrecognized_provider_status kind=payment value=weird?value"));
+    }
+
+    @Test
     void authorizedIsNotRecovery() {
         assertFalse(mapper.mapPaymentStatus("authorized").isRecovery());
         assertTrue(mapper.mapPaymentStatus("captured").isRecovery());

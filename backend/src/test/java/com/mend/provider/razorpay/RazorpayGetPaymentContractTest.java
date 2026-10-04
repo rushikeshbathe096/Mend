@@ -93,6 +93,70 @@ class RazorpayGetPaymentContractTest {
     }
 
     @Test
+    void other400WithGenericCodeStaysUnavailable() {
+        server.expect(requestTo(BASE + "/v1/payments/pay_abc")).andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"error\":{\"code\":\"BAD_REQUEST_ERROR\",\"description\":\"The requested URL was not found on the server.\",\"reason\":null}}"));
+
+        LookupResult.Unavailable<PaymentEvidence> unavailable = assertInstanceOf(LookupResult.Unavailable.class,
+                provider.getPayment(MERCHANT, "pay_abc"));
+
+        assertEquals(400, unavailable.httpStatus());
+        server.verify();
+    }
+
+    @Test
+    void rateLimitedIsRetried() {
+        server.expect(requestTo(BASE + "/v1/payments/pay_abc")).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+        server.expect(requestTo(BASE + "/v1/payments/pay_abc")).andRespond(withSuccess(
+                "{\"id\":\"pay_abc\",\"amount\":100,\"currency\":\"INR\",\"status\":\"authorized\"}", MediaType.APPLICATION_JSON));
+
+        LookupResult<PaymentEvidence> result = provider.getPayment(MERCHANT, "pay_abc");
+
+        assertInstanceOf(LookupResult.Found.class, result);
+        assertEquals(1, sleeps.size());
+        server.verify();
+    }
+
+    @Test
+    void interruptedBackoffStopsAndKeepsInterruptFlag() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer local = MockRestServiceServer.bindTo(builder).build();
+        ObjectMapper mapper = new ObjectMapper();
+        RazorpayPaymentProvider interrupted = new RazorpayPaymentProvider(new RazorpayHttp(builder, BASE, mapper),
+                merchant -> Optional.of(CREDS), mapper, Clock.fixed(NOW, ZoneOffset.UTC), d -> {
+                    throw new InterruptedException();
+                });
+        local.expect(requestTo(BASE + "/v1/payments/pay_abc")).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+        try {
+            assertInstanceOf(LookupResult.Unavailable.class, interrupted.getPayment(MERCHANT, "pay_abc"));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+        local.verify();
+    }
+
+    @Test
+    void backoffIsCappedWithFullJitter() {
+        for (int i = 0; i < 50; i++) {
+            long first = RazorpayPaymentProvider.backoff(0).toMillis();
+            assertTrue(first >= 0 && first <= 200, "retry 0: " + first);
+            assertTrue(RazorpayPaymentProvider.backoff(4).toMillis() <= 2000);
+            assertTrue(RazorpayPaymentProvider.backoff(10).toMillis() <= 2000);
+        }
+    }
+
+    @Test
+    void stringAmountIsMalformedNotCoerced() {
+        server.expect(requestTo(BASE + "/v1/payments/pay_abc")).andRespond(withSuccess(
+                "{\"id\":\"pay_abc\",\"amount\":\"100\",\"currency\":\"INR\",\"status\":\"captured\"}", MediaType.APPLICATION_JSON));
+        assertEquals(new LookupResult.Unavailable<>("MALFORMED", null), provider.getPayment(MERCHANT, "pay_abc"));
+        server.verify();
+    }
+
+    @Test
     void notFound404IsNotFound() {
         server.expect(requestTo(BASE + "/v1/payments/pay_abc")).andRespond(withStatus(HttpStatus.NOT_FOUND));
         assertInstanceOf(LookupResult.NotFound.class, provider.getPayment(MERCHANT, "pay_abc"));
@@ -157,7 +221,7 @@ class RazorpayGetPaymentContractTest {
 
     @Test
     void invalidIdsMakeZeroHttpCalls() {
-        for (String id : new String[]{null, "", "abc", "pay_", "pay_abc/../orders", "pay_abc?x=1", "PAY_abc", "pay_" + "a".repeat(41)}) {
+        for (String id : new String[]{null, "", "abc", "pay_", "pay_abc/../orders", "pay_abc?x=1", "pay_abc\n", "pay_abc%2F..", "PAY_abc", "pay_" + "a".repeat(41)}) {
             assertInstanceOf(LookupResult.NotFound.class, provider.getPayment(MERCHANT, id), String.valueOf(id));
         }
         server.verify();
