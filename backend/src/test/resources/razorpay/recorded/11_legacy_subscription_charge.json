@@ -1,0 +1,19 @@
+{
+  "fixture": "11_legacy_subscription_charge",
+  "mode": "test",
+  "recorded_at": "2026-10-04T22:11:56Z",
+  "latency_ms": 296,
+  "request": {
+    "method": "POST",
+    "path": "/v1/subscriptions/sub_M1doesnotexist/charge",
+    "body": {
+      "receipt": "rcpt_1"
+    }
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "message": "no Route matched with those values"
+    }
+  }
+}

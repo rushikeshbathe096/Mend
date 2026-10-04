@@ -1,0 +1,19 @@
+{
+  "fixture": "10_legacy_payment_retry",
+  "mode": "test",
+  "recorded_at": "2026-10-04T22:11:56Z",
+  "latency_ms": 344,
+  "request": {
+    "method": "POST",
+    "path": "/v1/payments/pay_M1doesnotexist/retry",
+    "body": {
+      "receipt": "rcpt_1"
+    }
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "message": "no Route matched with those values"
+    }
+  }
+}

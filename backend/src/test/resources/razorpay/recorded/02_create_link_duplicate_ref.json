@@ -1,0 +1,37 @@
+{
+  "fixture": "02_create_link_duplicate_ref",
+  "mode": "test",
+  "recorded_at": "2026-10-04T22:11:51Z",
+  "latency_ms": 611,
+  "request": {
+    "method": "POST",
+    "path": "/v1/payment_links",
+    "body": {
+      "amount": 100,
+      "currency": "INR",
+      "reference_id": "mnd_rec_1791151909",
+      "description": "MEND M1 contract recording",
+      "notify": {
+        "sms": false,
+        "email": false
+      },
+      "reminder_enable": false,
+      "notes": {
+        "mend_intent_id": "recording"
+      }
+    }
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "BAD_REQUEST_ERROR",
+        "description": "payment link with given reference_id: mnd_rec_1791151909 already exists. Please create a payment link with a different reference_id",
+        "metadata": [],
+        "reason": null,
+        "source": null,
+        "step": null
+      }
+    }
+  }
+}
