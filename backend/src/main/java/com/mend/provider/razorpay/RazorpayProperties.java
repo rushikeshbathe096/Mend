@@ -19,6 +19,13 @@ public record RazorpayProperties(
     public record Api(@DefaultValue("https://api.razorpay.com") String baseUrl) {
     }
 
+    /** Never prints the key secret. */
+    @Override
+    public String toString() {
+        return "RazorpayProperties[baseUrl=" + baseUrl() + ", keyId=" + keyId + ", keySecret=****, connectTimeoutMs="
+                + connectTimeoutMs + ", readTimeoutMs=" + readTimeoutMs + ", singleTenantMerchantId=" + singleTenantMerchantId + "]";
+    }
+
     public String baseUrl() {
         String url = api.baseUrl() == null || api.baseUrl().isBlank() ? "https://api.razorpay.com" : api.baseUrl().trim();
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
