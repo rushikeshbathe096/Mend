@@ -1,12 +1,14 @@
 package com.mend.integration;
 
 import com.mend.domain.entity.AgentDecisionRecord;
+import com.mend.domain.entity.AuditLog;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.MerchantUser;
 import com.mend.domain.entity.Role;
 import com.mend.domain.entity.User;
 import com.mend.domain.repository.AgentDecisionRecordRepository;
+import com.mend.domain.repository.AuditLogRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.MerchantRepository;
 import com.mend.domain.repository.MerchantUserRepository;
@@ -63,6 +65,9 @@ public class CrossTenantReadIsolationIntegrationTest {
     @Autowired
     private AgentDecisionRecordRepository agentDecisionRecordRepository;
 
+    @Autowired
+    private AuditLogRepository auditLogRepository;
+
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
     private UUID merchantAId;
@@ -90,6 +95,13 @@ public class CrossTenantReadIsolationIntegrationTest {
                 UUID.randomUUID(), campaignBId, merchantBId, campaignB.getPaymentId(),
                 "STRATEGY_SELECTION", "RETRY_IMMEDIATELY", new BigDecimal("0.5000"),
                 reasoningMarkerB, null, null, null, null, false, null, null));
+
+        AuditLog auditB = new AuditLog(UUID.randomUUID(), "PAYMENT_FAILED");
+        auditB.setMerchantId(merchantBId);
+        auditB.setCampaignId(campaignBId);
+        auditB.setActorType("SYSTEM");
+        auditB.setReason(reasoningMarkerB);
+        auditLogRepository.save(auditB);
     }
 
     @Test
@@ -112,6 +124,18 @@ public class CrossTenantReadIsolationIntegrationTest {
         assertEquals("[]", foreign.body());
 
         HttpResponse<String> own = get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenB);
+        assertEquals(200, own.statusCode());
+        assertTrue(own.body().contains(reasoningMarkerB));
+    }
+
+    @Test
+    @DisplayName("GET /audit/campaign/{otherMerchantCampaign} returns no foreign audit rows")
+    void campaignAuditLogsAreScopedToCallerMerchant() throws Exception {
+        HttpResponse<String> foreign = get("/api/v1/audit/campaign/" + campaignBId, tokenA);
+        assertEquals(200, foreign.statusCode());
+        assertEquals("[]", foreign.body());
+
+        HttpResponse<String> own = get("/api/v1/audit/campaign/" + campaignBId, tokenB);
         assertEquals(200, own.statusCode());
         assertTrue(own.body().contains(reasoningMarkerB));
     }

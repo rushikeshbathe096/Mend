@@ -114,7 +114,7 @@ public class AuditService {
     @Transactional(readOnly = true)
     public List<AuditLog> getCampaignAuditLogs(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
         validateTenantAccess(merchantId, currentUser);
-        return auditLogRepository.findByCampaignIdOrderByCreatedAtAsc(campaignId);
+        return auditLogRepository.findByMerchantIdAndCampaignIdOrderByCreatedAtAsc(merchantId, campaignId);
     }
 
     @Transactional(readOnly = true)
