@@ -17,6 +17,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -74,8 +75,10 @@ class RazorpayHttpSocketTest {
     @Test
     void readTimeoutIsSentNoResponseNeverNotSent() throws Exception {
         AtomicInteger requests = new AtomicInteger();
+        CountDownLatch received = new CountDownLatch(1);
         start().createContext("/", exchange -> {
             requests.incrementAndGet();
+            received.countDown();
             try {
                 Thread.sleep(2000);
             } catch (InterruptedException ignored) {
@@ -90,6 +93,7 @@ class RazorpayHttpSocketTest {
         RawResponse.TransportFailure failure = assertInstanceOf(RawResponse.TransportFailure.class, response);
         assertEquals(TransportFailureKind.SENT_NO_RESPONSE, failure.kind());
         assertEquals("READ_TIMEOUT", failure.cause());
+        assertTrue(received.await(2, TimeUnit.SECONDS));
         assertEquals(1, requests.get(), "POST must not be retried");
     }
 
@@ -161,6 +165,40 @@ class RazorpayHttpSocketTest {
         assertFalse(headers.containsKey("x-razorpay-idempotency-header"));
         assertFalse(headers.containsKey("x-idempotency-key"));
         assertEquals("{\"amount\":100}", bodies.get(0), "null fields must be omitted");
+    }
+
+    @Test
+    void oversizedBodyIsSentNoResponseNeverTruncated() throws Exception {
+        start().createContext("/", exchange -> {
+            byte[] body = new byte[RazorpayHttp.MAX_BODY_BYTES + 1];
+            java.util.Arrays.fill(body, (byte) 'a');
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+
+        RawResponse response = transport(server.getAddress().getPort()).post(CREDS, "/v1/payment_links", Map.of("amount", 100));
+
+        RawResponse.TransportFailure failure = assertInstanceOf(RawResponse.TransportFailure.class, response);
+        assertEquals(TransportFailureKind.SENT_NO_RESPONSE, failure.kind());
+        assertEquals("BODY_TOO_LARGE", failure.cause());
+    }
+
+    @Test
+    void pathAndQueryAreSentVerbatimWithoutTemplateExpansionOrReEncoding() throws Exception {
+        List<String> uris = new CopyOnWriteArrayList<>();
+        start().createContext("/", exchange -> {
+            uris.add(exchange.getRequestURI().getRawPath() + "?" + exchange.getRequestURI().getRawQuery());
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        server.start();
+
+        transport(server.getAddress().getPort()).get(CREDS, "/v1/payment_links?reference_id=mnd_a%2Bb");
+
+        assertEquals(List.of("/v1/payment_links?reference_id=mnd_a%2Bb"), uris);
     }
 
     record Body(long amount, String description) {

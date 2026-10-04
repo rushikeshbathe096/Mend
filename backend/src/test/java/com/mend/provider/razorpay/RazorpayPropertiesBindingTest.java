@@ -37,6 +37,13 @@ class RazorpayPropertiesBindingTest {
     }
 
     @Test
+    void toStringMasksKeySecret() {
+        String text = new RazorpayProperties(new RazorpayProperties.Api(null), "rzp_test_k", "very_secret", 1, 1, null).toString();
+        assertFalse(text.contains("very_secret"));
+        assertTrue(text.contains("rzp_test_k"));
+    }
+
+    @Test
     void defaultsMatchApplicationProperties() {
         runner.run(context -> {
             RazorpayProperties props = context.getBean(RazorpayProperties.class);

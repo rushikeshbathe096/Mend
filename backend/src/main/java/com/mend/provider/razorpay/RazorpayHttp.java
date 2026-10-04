@@ -15,6 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.ConnectException;
+import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
@@ -26,6 +27,11 @@ import java.util.Base64;
 /**
  * Razorpay transport: Basic auth, JSON, timeouts, and exception → {@link TransportFailureKind}.
  * Never throws and never retries: every call returns exactly one {@link RawResponse}.
+ * <p>
+ * Paths are used verbatim (no URI-template expansion, no re-encoding): callers must validate ids and
+ * URL-encode query values before calling. Note the JDK client itself may resend a GET once when a pooled
+ * connection turns out to be stale; it never resends a POST unless {@code jdk.httpclient.enableAllMethodRetry}
+ * is set, which this class refuses to run with.
  */
 @Component
 @ConditionalOnProperty(name = "mend.payment.provider", havingValue = "razorpay")
@@ -33,7 +39,10 @@ public class RazorpayHttp {
 
     private static final Logger log = LoggerFactory.getLogger(RazorpayHttp.class);
 
+    static final int MAX_BODY_BYTES = 1024 * 1024;
+
     private final RestClient restClient;
+    private final String baseUrl;
     private final ObjectMapper requestMapper;
 
     @Autowired
@@ -42,8 +51,12 @@ public class RazorpayHttp {
     }
 
     /** For tests: the builder may be bound to {@code MockRestServiceServer}. */
-    public RazorpayHttp(RestClient.Builder builder, String baseUrl, ObjectMapper objectMapper) {
-        this.restClient = builder.baseUrl(baseUrl).build();
+    RazorpayHttp(RestClient.Builder builder, String baseUrl, ObjectMapper objectMapper) {
+        if (Boolean.getBoolean("jdk.httpclient.enableAllMethodRetry")) {
+            throw new IllegalStateException("jdk.httpclient.enableAllMethodRetry would let the JDK resend provider POSTs");
+        }
+        this.restClient = builder.build();
+        this.baseUrl = baseUrl;
         this.requestMapper = objectMapper.rebuild()
                 .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(JsonInclude.Include.NON_NULL))
                 .build();
@@ -64,7 +77,7 @@ public class RazorpayHttp {
         try {
             String json = requestMapper.writeValueAsString(body);
             response = restClient.post()
-                    .uri(path)
+                    .uri(URI.create(baseUrl + path))
                     .header(HttpHeaders.AUTHORIZATION, basicAuth(credentials))
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
@@ -83,7 +96,7 @@ public class RazorpayHttp {
         RawResponse response;
         try {
             response = restClient.get()
-                    .uri(pathWithQuery)
+                    .uri(URI.create(baseUrl + pathWithQuery))
                     .header(HttpHeaders.AUTHORIZATION, basicAuth(credentials))
                     .accept(MediaType.APPLICATION_JSON)
                     .exchange((request, reply) -> new RawResponse.HttpReply(
@@ -91,14 +104,21 @@ public class RazorpayHttp {
         } catch (Exception e) {
             response = failure(e, start);
         }
-        logCall("GET", pathWithQuery, response);
+        logCall("GET", withoutQuery(pathWithQuery), response);
         return response;
+    }
+
+    /** Thrown inside the exchange when the body exceeds {@link #MAX_BODY_BYTES}; never truncate silently. */
+    private static final class BodyTooLargeException extends IOException {
     }
 
     /** Walks the cause chain. Only failures that prove nothing was sent are NOT_SENT; everything else is conservative. */
     static RawResponse.TransportFailure failure(Throwable error, long startNanos) {
         int depth = 0;
         for (Throwable t = error; t != null && depth < 20; t = t.getCause() == t ? null : t.getCause(), depth++) {
+            if (t instanceof BodyTooLargeException) {
+                return new RawResponse.TransportFailure(TransportFailureKind.SENT_NO_RESPONSE, "BODY_TOO_LARGE", elapsedMs(startNanos));
+            }
             if (t instanceof HttpConnectTimeoutException) {
                 return new RawResponse.TransportFailure(TransportFailureKind.NOT_SENT, "CONNECT_TIMEOUT", elapsedMs(startNanos));
             }
@@ -127,7 +147,19 @@ public class RazorpayHttp {
     }
 
     private static String readBody(InputStream body) throws IOException {
-        return body == null ? "" : new String(body.readAllBytes(), StandardCharsets.UTF_8);
+        if (body == null) {
+            return "";
+        }
+        byte[] bytes = body.readNBytes(MAX_BODY_BYTES + 1);
+        if (bytes.length > MAX_BODY_BYTES) {
+            throw new BodyTooLargeException();
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static String withoutQuery(String pathWithQuery) {
+        int query = pathWithQuery.indexOf('?');
+        return query < 0 ? pathWithQuery : pathWithQuery.substring(0, query);
     }
 
     private static long elapsedMs(long startNanos) {
