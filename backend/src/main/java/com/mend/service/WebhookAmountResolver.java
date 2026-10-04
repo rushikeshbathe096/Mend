@@ -89,7 +89,12 @@ public class WebhookAmountResolver {
                 log.debug("event=amount_unresolved reason=CURRENCY_MISSING webhookEventId={}", event.getId());
                 return Optional.empty();
             }
-            return Optional.of(new MoneyMinor(amount.longValue(), currency.stringValue()));
+            try {
+                return Optional.of(new MoneyMinor(amount.longValue(), currency.stringValue()));
+            } catch (IllegalArgumentException unsupported) {
+                log.debug("event=amount_unresolved reason=CURRENCY_UNSUPPORTED webhookEventId={}", event.getId());
+                return Optional.empty();
+            }
         } catch (Exception e) {
             log.debug("event=amount_unresolved reason=PARSE_ERROR webhookEventId={}", event.getId());
             return Optional.empty();
