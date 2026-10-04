@@ -1,0 +1,19 @@
+{
+  "fixture": "09_fetch_order_payments",
+  "mode": "test",
+  "recorded_at": "2026-10-04T22:11:56Z",
+  "latency_ms": 985,
+  "request": {
+    "method": "GET",
+    "path": "/v1/orders/order_TjzX814QhgEKI2/payments",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "entity": "collection",
+      "count": 0,
+      "items": []
+    }
+  }
+}

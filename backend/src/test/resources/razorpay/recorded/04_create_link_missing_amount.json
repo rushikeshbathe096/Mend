@@ -1,0 +1,27 @@
+{
+  "fixture": "04_create_link_missing_amount",
+  "mode": "test",
+  "recorded_at": "2026-10-04T22:11:53Z",
+  "latency_ms": 762,
+  "request": {
+    "method": "POST",
+    "path": "/v1/payment_links",
+    "body": {
+      "currency": "INR",
+      "reference_id": "mnd_rec_1791151909_y"
+    }
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "BAD_REQUEST_ERROR",
+        "description": "amount: cannot be blank.",
+        "metadata": [],
+        "reason": null,
+        "source": null,
+        "step": null
+      }
+    }
+  }
+}
