@@ -50,6 +50,22 @@ class WebhookAmountResolverTest {
     void zeroOrNegativeAmountIsEmpty() {
         stored("{\"amount\":0,\"currency\":\"INR\"}");
         assertTrue(resolver.resolveOriginalAmount(MERCHANT, PAYMENT_ID).isEmpty());
+        stored("{\"amount\":-100,\"currency\":\"INR\"}");
+        assertTrue(resolver.resolveOriginalAmount(MERCHANT, PAYMENT_ID).isEmpty());
+    }
+
+    @Test
+    void amountBeyondLongRangeIsEmpty() {
+        stored("{\"amount\":99999999999999999999,\"currency\":\"INR\"}");
+        assertTrue(resolver.resolveOriginalAmount(MERCHANT, PAYMENT_ID).isEmpty());
+    }
+
+    @Test
+    void blankOrNonTextCurrencyIsEmpty() {
+        stored("{\"amount\":100,\"currency\":\"\"}");
+        assertTrue(resolver.resolveOriginalAmount(MERCHANT, PAYMENT_ID).isEmpty());
+        stored("{\"amount\":100,\"currency\":356}");
+        assertTrue(resolver.resolveOriginalAmount(MERCHANT, PAYMENT_ID).isEmpty());
     }
 
     @Test
@@ -74,10 +90,11 @@ class WebhookAmountResolverTest {
     @Test
     void otherMerchantsEventIsNotVisible() {
         stored("{\"amount\":49900,\"currency\":\"INR\"}");
-        when(repository.findByMerchantIdAndExternalEventId(OTHER_MERCHANT, PAYMENT_ID)).thenReturn(Optional.empty());
 
         assertTrue(resolver.resolveOriginalAmount(OTHER_MERCHANT, PAYMENT_ID).isEmpty());
-        verify(repository, never()).findByExternalEventId(any());
+        // Only the tenant-scoped lookup may be used.
+        verify(repository).findByMerchantIdAndExternalEventId(OTHER_MERCHANT, PAYMENT_ID);
+        verifyNoMoreInteractions(repository);
     }
 
     @Test
@@ -90,5 +107,17 @@ class WebhookAmountResolverTest {
 
         stored("{\"currency\":\"INR\"}");
         assertTrue(resolver.resolveAmount(MERCHANT, PAYMENT_ID).isEmpty());
+
+        stored("{\"amount\":100.5}");
+        assertEquals(Optional.of(new BigDecimal("1.00")), resolver.resolveAmount(MERCHANT, PAYMENT_ID));
+    }
+
+    @Test
+    void existingResolveAmountStillEmptyForMalformedOrBlankPayload() {
+        for (String payload : new String[]{"{not json", "", "   "}) {
+            WebhookEvent event = new WebhookEvent(UUID.randomUUID(), PAYMENT_ID, "payment.failed", "razorpay", payload);
+            when(repository.findByMerchantIdAndExternalEventId(MERCHANT, PAYMENT_ID)).thenReturn(Optional.of(event));
+            assertTrue(resolver.resolveAmount(MERCHANT, PAYMENT_ID).isEmpty(), payload);
+        }
     }
 }
