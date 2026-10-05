@@ -803,4 +803,39 @@ class PaymentReconciliationTest {
         assertEquals(ActionIntentStatus.SUCCEEDED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
         assertEquals(CampaignStatus.RECOVERED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
     }
+
+    /** Payment entity from recording 21 with the given id, status and notes.mend_intent_id (notes shape from recording 21). */
+    private static String paymentEntityFromRecording21(String paymentId, String status, UUID mendIntentId) throws Exception {
+        tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+        try (var in = PaymentReconciliationTest.class.getResourceAsStream("/razorpay/recorded/21_fetch_payment_captured.json")) {
+            tools.jackson.databind.node.ObjectNode entity = (tools.jackson.databind.node.ObjectNode) mapper.readTree(in).path("response").path("body");
+            entity.put("id", paymentId);
+            entity.put("status", status);
+            entity.put("captured", "captured".equals(status));
+            ((tools.jackson.databind.node.ObjectNode) entity.get("notes")).put("mend_intent_id", mendIntentId.toString());
+            return mapper.writeValueAsString(entity);
+        }
+    }
+
+    @Test
+    @DisplayName("D1 regression, notes shape from recording 21: failed attempt is a no-op, then the captured payment recovers")
+    void d1WithRecording21NotesShape() throws Exception {
+        // Notes shape from recording 21: Razorpay copied the link's notes.mend_intent_id onto the link payment.
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_rec21_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, "plink_Tk6TAI6WoeOTDh");
+
+        WebhookEvent failed = stored("payment.failed", "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":"
+                + paymentEntityFromRecording21("pay_m1rec21Failed", "failed", intent.getId()) + "}}}");
+        assertEquals(ReconciliationResult.Status.SKIPPED_UNSUPPORTED_EVENT, reconciliationService.reconcileWebhookEvent(failed).getStatus());
+        assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertNotEquals(CampaignStatus.EXHAUSTED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+
+        WebhookEvent captured = stored("payment.captured", "{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":"
+                + paymentEntityFromRecording21("pay_Tk6YGMVnG6oWIq", "captured", intent.getId()) + "}}}");
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(captured);
+
+        assertEquals(ReconciliationResult.Status.RECONCILED_SUCCESS, result.getStatus());
+        assertEquals(ActionIntentStatus.SUCCEEDED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.RECOVERED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
 }

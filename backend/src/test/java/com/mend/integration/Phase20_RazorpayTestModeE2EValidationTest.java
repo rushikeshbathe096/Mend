@@ -360,15 +360,15 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         // Fixture 01 replayed with reference_id echoed from the request: the recorded reference belongs to the recording run.
         String fixture01 = recordedBody("01_create_link_ok");
         RAZORPAY_STUB.stub("POST", "/v1/payment_links", 200, requestBody ->
-                fixture01.replace("mnd_rec_1791151909", readJson(requestBody).get("reference_id").asString()));
+                fixture01.replace("mnd_rec_1791176340", readJson(requestBody).get("reference_id").asString()));
 
         var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20");
 
         assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
-        assertEquals("plink_TjzX37EuRv8krS", report.getExternalReference());
+        assertEquals("plink_Tk6TAI6WoeOTDh", report.getExternalReference());
         ActionIntent storedIntent = actionIntentRepository.findById(fixture.intent().getId()).orElseThrow();
         assertEquals(ActionIntentStatus.EXECUTING, storedIntent.getStatus());
-        assertEquals("plink_TjzX37EuRv8krS", storedIntent.getResponseReference());
+        assertEquals("plink_Tk6TAI6WoeOTDh", storedIntent.getResponseReference());
         Campaign storedCampaign = campaignRepository.findById(fixture.campaign().getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, storedCampaign.getCurrentState());
         assertEquals(CampaignStatus.EXECUTING, storedCampaign.getCurrentState());

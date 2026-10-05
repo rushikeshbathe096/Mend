@@ -233,4 +233,25 @@ class RazorpayGetPaymentContractTest {
                 provider.getPayment(new MerchantRef(UUID.randomUUID()), "pay_abc"));
         server.verify();
     }
+
+    @Test
+    void capturedPaymentIsCapturedEvidence_fixture21() {
+        RazorpayFixture fixture = RazorpayFixture.recorded("21_fetch_payment_captured");
+        expect(fixture);
+
+        LookupResult<PaymentEvidence> result = provider.getPayment(MERCHANT, "pay_Tk6YGMVnG6oWIq");
+
+        if (!(result instanceof LookupResult.Found<PaymentEvidence> found)) {
+            fail("expected Found, got " + result);
+            return;
+        }
+        PaymentEvidence evidence = found.value();
+        assertEquals(PaymentEvidenceStatus.CAPTURED, evidence.status());
+        assertTrue(evidence.status().isRecovery());
+        assertEquals(100L, evidence.amountMinor());
+        assertEquals("INR", evidence.currency());
+        assertNotNull(evidence.orderId());
+        assertTrue(evidence.orderId().startsWith("order_"));
+        server.verify();
+    }
 }

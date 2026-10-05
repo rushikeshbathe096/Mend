@@ -32,7 +32,7 @@ Ticked at U9 (2026-10-05). Commits are on branch `m1/u1-domain-port`; "+fix" = t
 | 5 | Provider errors classified correctly | U2 `41b1ff7` (+fix `9a0f832`); every §9 row tested in U2/U4/U5 | ☑ |
 | 6 | Ambiguous outcomes represented safely | U2 `41b1ff7` (`OutcomeUnknown`), U6 `fcfd481` (EXECUTING, not FAILED) | ☑ |
 | 7 | Contract tests exist | U4 `769a2af`, U5 `cfb8b4e` (U8 skipped: no recurring fixtures) | ☑ (links + evidence reads) |
-| 8 | Recorded/test-mode responses used where possible | U0 `8166d0f` (14 fixtures) + U4/U5 replay | ☑ (paid-link/webhook fixtures 20–24 not recorded: open evidence item) |
+| 8 | Recorded/test-mode responses used where possible | U0 `8166d0f` (14 fixtures) + U4/U5 replay | ☑ (paid link `20` + captured payment `21` recorded; webhook fixtures `22`–`24` still open) |
 | 9 | Existing tests still pass | U9: `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1` ≥ 320 baseline | ☑ |
 | 10 | New tests cover failure cases | U2 socket tests, U6 mapping tests (`ActionExecutionServiceProviderOutcomeTest`) | ☑ |
 | 11 | No provider behaviour from memory | DOC/RECORDED cited in code comments and fixtures; doc-derived fixtures carry `_source`; `payment_link.paid` stays AMBIGUOUS | ☑ |
@@ -43,6 +43,6 @@ M1-specific extra gates:
 - ☑ `RETRY_PAYMENT` in Razorpay mode makes zero HTTP calls (test): Phase20 scenario 3 and RazorpayTestModeEndToEndIntegrationTest step F (U6 `fcfd481`).
 - ☑ No code path sets campaign `RECOVERED` from a request outcome (grep + test): only reconciliation on captured evidence (U7 `1fff235`) and the labelled mock-only synthetic path set it; Phase20 scenario 4 asserts a created link leaves the campaign EXECUTING.
 - ☑ `authorized` webhook does not recover a campaign (regression test): `PaymentReconciliationTest.authorizedPaymentDoesNotRecover` (U7 `1fff235`).
-- ☑ Fixture count in `src/test/resources/razorpay/recorded/` ≥ 10: 14.
+- ☑ Fixture count in `src/test/resources/razorpay/recorded/` ≥ 10: 16.
 
 Accepted deviations (owner decisions D2/D3): U6 grep gate applies to `backend/src/main` only; `PaymentExecutionResult` kept as the executor report type; MANUAL_REVIEW → NotSupported in razorpay mode.

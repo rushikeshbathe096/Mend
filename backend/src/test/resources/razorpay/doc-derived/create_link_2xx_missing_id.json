@@ -9,7 +9,7 @@
     "body": {
       "amount": 100,
       "currency": "INR",
-      "reference_id": "mnd_rec_1791151909",
+      "reference_id": "mnd_rec_1791176340",
       "description": "MEND M1 contract recording",
       "notify": {
         "sms": false,
@@ -29,7 +29,7 @@
       "amount": 100,
       "amount_paid": 0,
       "cancelled_at": 0,
-      "created_at": 1791151910,
+      "created_at": 1791176341,
       "currency": "INR",
       "customer": [],
       "description": "MEND M1 contract recording",
@@ -46,12 +46,12 @@
       },
       "payment_plan": false,
       "payments": null,
-      "reference_id": "mnd_rec_1791151909",
+      "reference_id": "mnd_rec_1791176340",
       "reminder_enable": false,
       "reminders": [],
-      "short_url": "https://rzp.io/rzp/D0Zue5fx",
+      "short_url": "https://rzp.io/rzp/uyPewzr",
       "status": "created",
-      "updated_at": 1791151910,
+      "updated_at": 1791176341,
       "upi_link": false,
       "user_id": "",
       "whatsapp_link": false

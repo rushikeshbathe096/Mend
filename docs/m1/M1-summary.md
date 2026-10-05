@@ -4,11 +4,11 @@
 2. Every provider call returns a typed result (`Accepted | Rejected | NotSent | OutcomeUnknown`, `Found | NotFound | Unavailable`); a timeout, 5xx or 409 is `OutcomeUnknown`, never failed, and no POST is ever retried.
 3. `REQUEST_CUSTOMER_ACTION` creates a payment link with exactly the documented body (integer paise, attempt key as `reference_id`, no customer data); a 400 is resolved by lookup-by-reference, so one intent gets at most one link.
 4. A created link leaves the intent EXECUTING; a campaign becomes RECOVERED only on `captured` evidence (link `paid` + payment `captured`), never on a 2xx, an `authorized` or an `active` status; a failed attempt on a link changes nothing (D1).
-5. Evidence: 14 recorded Razorpay test-mode fixtures plus labelled doc-derived fixtures; tests 320 → 516 (`Failures: 0`, `Skipped: 1` = M2 tracking test); see `M1-provider-correctness.md` §12 and ADR-001 (Accepted).
+5. Evidence: 16 recorded Razorpay test-mode fixtures plus labelled doc-derived fixtures; tests 320 → 516 (`Failures: 0`, `Skipped: 1` = M2 tracking test); see `M1-provider-correctness.md` §12 and ADR-001 (Accepted).
 6. NOT done: merchant-initiated debits (`RETRY_PAYMENT` is NotSupported in Razorpay mode; U8 skipped for lack of recurring recordings).
 7. NOT done: claim fencing / lease safety during provider calls, a reconciler for EXECUTING intents with unknown outcomes, and link expiry/cancel handling (M2).
 8. NOT done: per-merchant Razorpay credentials (single-tenant, fail-closed resolver until M5) and customer delivery of the link URL.
-9. Open evidence: paid-link and link-webhook recordings (`20`–`24`); the `payment_link.paid` shape stays AMBIGUOUS.
+9. Evidence added at close-out: `20` (paid link) and `21` (captured payment, carrying the link's notes — verifies D1); still open: link-webhook recordings `22`–`24`, so the `payment_link.paid` shape stays AMBIGUOUS.
 10. M2 must start with a failing test for lease expiry during an in-flight provider call (claim released while the call is still running), then the backlog below.
 
 ## M2 backlog from M1
@@ -29,3 +29,4 @@ Every out-of-scope finding recorded in `docs/m1/m1-progress.md`, plus the items 
 12. **Recurring debit adapter (U8) not built.** No test-mode recurring recordings (`30`–`33`); `RETRY_PAYMENT` stays NotSupported in razorpay mode.
 13. **Customer delivery of the payment link.** M1 sends `notify:false` and no customer object; MEND has no channel to deliver `short_url` yet (DPDP review in M5 if contact data is passed).
 14. **Per-merchant credentials** (M5): M1's resolver is single-tenant and fails closed for every other merchant.
+15. **Link payments carry an `order_id`** (recording `21`). M2 reconciliation can use `GET /v1/orders/{order_id}/payments` (already a §6 operation) for link intents too, not only for debits — e.g. to resolve EXECUTING link intents without waiting for webhooks.

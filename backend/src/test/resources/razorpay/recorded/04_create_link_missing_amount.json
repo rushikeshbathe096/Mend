@@ -1,14 +1,14 @@
 {
   "fixture": "04_create_link_missing_amount",
   "mode": "test",
-  "recorded_at": "2026-10-04T22:11:53Z",
-  "latency_ms": 762,
+  "recorded_at": "2026-10-05T04:59:03Z",
+  "latency_ms": 920,
   "request": {
     "method": "POST",
     "path": "/v1/payment_links",
     "body": {
       "currency": "INR",
-      "reference_id": "mnd_rec_1791151909_y"
+      "reference_id": "mnd_rec_1791176340_y"
     }
   },
   "response": {

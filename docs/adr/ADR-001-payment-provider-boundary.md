@@ -57,7 +57,9 @@ Option 2.
 ## Evidence
 
 - DOC: see `docs/m1/M1-provider-correctness.md` §4 (URLs, fetched 2026-10-05); create-link page re-checked at U9 the same day, unchanged (§12).
-- RECORDED (Razorpay test mode, 2026-10-05, `backend/src/test/resources/razorpay/recorded/`): `01_create_link_ok`, `02_create_link_duplicate_ref`, `03_create_link_extra_fields`, `04_create_link_missing_amount`, `05_fetch_link_by_id`, `06_fetch_link_by_reference`, `07_create_order_ok`, `08_create_order_same_receipt`, `09_fetch_order_payments`, `10_legacy_payment_retry`, `11_legacy_subscription_charge`, `12_legacy_payments_retry`, `13_fetch_payment_not_found`, `14_bad_auth`.
+- RECORDED (Razorpay test mode, 2026-10-05, `backend/src/test/resources/razorpay/recorded/`): `01_create_link_ok`, `02_create_link_duplicate_ref`, `03_create_link_extra_fields`, `04_create_link_missing_amount`, `05_fetch_link_by_id`, `06_fetch_link_by_reference`, `07_create_order_ok`, `08_create_order_same_receipt`, `09_fetch_order_payments`, `10_legacy_payment_retry`, `11_legacy_subscription_charge`, `12_legacy_payments_retry`, `13_fetch_payment_not_found`, `14_bad_auth` (re-recorded 2026-10-05 with the rotated key: identical statuses and error texts, new ids), `20_fetch_link_paid`, `21_fetch_payment_captured`.
+  - `20` shows the link from `01` as `paid` with one `captured` payment — the recovery evidence U7 relies on.
+  - `21` shows the captured payment carries the link's `notes.mend_intent_id` and an `order_id`. **This verifies D1's premise**: a failed attempt's payment would correlate to the link intent, so treating FAILED as a no-op for link intents is required.
   - `02` confirms `reference_id` uniqueness is enforced (the "at most one link per intent" guarantee holds). Its error text differs from the documented text; classification never relies on the text.
   - `08` shows order `receipt` is **not** unique (revisit condition below; affects debits only).
   - `10`–`12` show the three legacy endpoints do not exist (404 "no Route matched with those values").
@@ -71,7 +73,7 @@ Option 2.
 - Owner decisions during M1 (2026-10-05): D1 a failed payment on a link intent is a no-op (a link accepts several attempts); D2 the U6 grep gate applies to `backend/src/main` only; D3 `PaymentExecutionResult` kept as the executor report type and MANUAL_REVIEW → NotSupported in Razorpay mode; D4 U8 skipped, paid-link/webhook fixtures not recorded; D5 `docs/` tracked except raw logs.
 
 **Open evidence items**
-- Record paid-link + webhook fixtures (`20` paid link, `21` captured payment, `22`–`24` link/payment webhooks). Until then the `payment_link.paid` webhook name/shape stays AMBIGUOUS (§5), and D1's premise (whether a link attempt's payment carries the link's notes) is unverified.
+- Record link/payment webhook fixtures (`22`–`24`). Until then the `payment_link.paid` webhook name/shape stays AMBIGUOUS (§5). (`20` paid link and `21` captured payment are recorded; D1's premise is verified by `21`.)
 - Recurring debit recordings (`30`–`33`) if debits are ever wired.
 
 ## Revisit conditions
@@ -100,3 +102,4 @@ Every out-of-scope finding recorded in `docs/m1/m1-progress.md`, plus the items 
 12. **Recurring debit adapter (U8) not built.** No test-mode recurring recordings (`30`–`33`); `RETRY_PAYMENT` stays NotSupported in razorpay mode.
 13. **Customer delivery of the payment link.** M1 sends `notify:false` and no customer object; MEND has no channel to deliver `short_url` yet (DPDP review in M5 if contact data is passed).
 14. **Per-merchant credentials** (M5): M1's resolver is single-tenant and fails closed for every other merchant.
+15. **Link payments carry an `order_id`** (recording `21`). M2 reconciliation can use `GET /v1/orders/{order_id}/payments` (already a §6 operation) for link intents too, not only for debits — e.g. to resolve EXECUTING link intents without waiting for webhooks.
