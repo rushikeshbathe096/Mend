@@ -1,6 +1,7 @@
 package com.mend.scheduler;
 
-import com.mend.client.MockPaymentProviderClient;
+import com.mend.provider.ProviderAttemptKey;
+import com.mend.provider.mock.MockPaymentProvider;
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.*;
 import com.mend.domain.repository.*;
@@ -46,7 +47,7 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
     private MerchantRepository merchantRepository;
 
     @Autowired
-    private MockPaymentProviderClient mockPaymentProviderClient;
+    private MockPaymentProvider mockPaymentProviderClient;
 
     private UUID merchantId;
     private UUID tenantBId;
@@ -185,17 +186,22 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
         List<PaymentExecutionResult> results = actionScheduler.pollAndExecuteDueActions();
 
         assertEquals(1, results.size());
-        assertTrue(results.get(0).isError());
+        // M1 behaviour change: a provider error/5xx is an unknown outcome, not a failure (invariant 4), see ADR-001
+        assertEquals(PaymentExecutionStatus.PENDING, results.get(0).getStatus());
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
-        assertEquals(ActionIntentStatus.FAILED, updatedIntent.getStatus());
+        // M1 behaviour change: unknown outcome leaves the intent EXECUTING for reconciliation, see ADR-001
+        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
 
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
-        assertEquals(CampaignStatus.FAILED, updatedCampaign.getCurrentState());
+        assertNotEquals(CampaignStatus.RECOVERED, updatedCampaign.getCurrentState());
+        // M1 behaviour change: campaign stays EXECUTING (not FAILED) while the outcome is unknown, see ADR-001
+        assertEquals(CampaignStatus.EXECUTING, updatedCampaign.getCurrentState());
 
         List<CampaignAttempt> attempts = campaignAttemptRepository.findByCampaignId(campaign.getId());
         assertEquals(1, attempts.size());
-        assertEquals("ERROR", attempts.get(0).getStatus());
+        // M1 behaviour change: attempt recorded as UNKNOWN, see ADR-001
+        assertEquals("UNKNOWN", attempts.get(0).getStatus());
     }
 
     @Test
@@ -208,13 +214,16 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
         List<PaymentExecutionResult> results = actionScheduler.pollAndExecuteDueActions();
 
         assertEquals(1, results.size());
-        assertTrue(results.get(0).isError());
+        // M1 behaviour change: a provider exception/timeout is an unknown outcome, not a failure (invariant 4), see ADR-001
+        assertEquals(PaymentExecutionStatus.PENDING, results.get(0).getStatus());
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
-        assertEquals(ActionIntentStatus.FAILED, updatedIntent.getStatus());
+        // M1 behaviour change: unknown outcome leaves the intent EXECUTING, never blindly retried, see ADR-001
+        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
 
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
-        assertEquals(CampaignStatus.FAILED, updatedCampaign.getCurrentState());
+        // M1 behaviour change: campaign stays EXECUTING (not FAILED) while the outcome is unknown, see ADR-001
+        assertEquals(CampaignStatus.EXECUTING, updatedCampaign.getCurrentState());
     }
 
     @Test
@@ -240,7 +249,8 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         assertEquals(1, results.size());
         assertEquals(intent.getIdempotencyKey(), results.get(0).getIdempotencyKey());
-        assertEquals(intent.getIdempotencyKey(), mockPaymentProviderClient.getLastRequest().getIdempotencyKey());
+        // M1 behaviour change: the provider receives the deterministic attempt key derived from the intent id, see ADR-001
+        assertEquals(ProviderAttemptKey.forIntent(intent.getId()), mockPaymentProviderClient.getLastRequest().attemptKey());
     }
 
     @Test
@@ -284,7 +294,8 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
         List<PaymentExecutionResult> results = actionScheduler.pollAndExecuteDueActions();
 
         assertEquals(1, results.size());
-        assertTrue(results.get(0).isError());
+        // M1 behaviour change: an unsupported action type is a local NotSupported failure (was ERROR), still no provider call, see ADR-001
+        assertTrue(results.get(0).isFailure());
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();

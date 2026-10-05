@@ -49,6 +49,18 @@ public class PaymentExecutionResult {
         );
     }
 
+    /** Not recovered money: a link was issued, or the provider outcome is unknown. */
+    public static PaymentExecutionResult pending(String externalReference, String message, String idempotencyKey) {
+        return new PaymentExecutionResult(
+                PaymentExecutionStatus.PENDING,
+                externalReference,
+                "PENDING_EVIDENCE",
+                message,
+                idempotencyKey,
+                Instant.now()
+        );
+    }
+
     public static PaymentExecutionResult error(String errorMessage, String idempotencyKey) {
         return new PaymentExecutionResult(
                 PaymentExecutionStatus.ERROR,

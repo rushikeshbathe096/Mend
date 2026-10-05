@@ -1,202 +1,184 @@
 package com.mend.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mend.domain.entity.ActionIntent;
+import com.mend.domain.entity.Campaign;
+import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
-import com.mend.domain.repository.MerchantConfigRepository;
-import com.mend.dto.payment.PaymentExecutionRequest;
-import com.mend.dto.payment.PaymentExecutionResult;
-import com.mend.dto.payment.PaymentExecutionStatus;
+import com.mend.provider.CreatePaymentLink;
+import com.mend.provider.MerchantRef;
+import com.mend.provider.MoneyMinor;
+import com.mend.provider.PaymentLinkSnapshot;
+import com.mend.provider.PaymentProvider;
+import com.mend.provider.ProviderAttemptKey;
+import com.mend.provider.RejectionKind;
+import com.mend.provider.RequestResult;
+import com.mend.provider.razorpay.RazorpayCredentials;
+import com.mend.provider.razorpay.RazorpayHttp;
+import com.mend.provider.razorpay.RazorpayPaymentProvider;
+import com.mend.provider.razorpay.RazorpayProperties;
+import com.mend.provider.razorpay.RazorpayProviderCapabilities;
+import com.mend.provider.razorpay.RazorpayStubServer;
+import com.mend.service.ProviderActionDispatcher;
+import com.mend.service.ProviderActionOutcome;
+import com.mend.service.WebhookAmountResolver;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.http.*;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
+/**
+ * M1 behaviour change: RazorpayPaymentProviderClient (invented retry endpoints, SUCCESS/FAILURE/ERROR collapse) was
+ * replaced by RazorpayPaymentProvider. The same seven cases now run against it over real HTTP to a local stub replaying
+ * recorded fixtures. See ADR-001 and M1-provider-correctness.md §9.
+ */
 @DisplayName("Razorpay Payment Provider Client Unit Tests")
 public class RazorpayPaymentProviderClientTest {
 
-    private RestTemplate restTemplate;
-    private MerchantConfigRepository merchantConfigRepository;
-    private ObjectMapper objectMapper;
-    private RazorpayPaymentProviderClient client;
+    private static final MerchantRef MERCHANT = new MerchantRef(UUID.randomUUID());
+    private static final ProviderAttemptKey RECORDED_KEY = new ProviderAttemptKey("mnd_rec_1791151909");
 
-    private final String testBaseUrl = "https://api.razorpay.com";
-    private final String testKeyId = "rzp_test_12345678";
-    private final String testKeySecret = "secret_1234567890abcdef";
+    private final ObjectMapper json = new ObjectMapper();
+    private RazorpayStubServer stub;
+    private RazorpayPaymentProvider provider;
 
     @BeforeEach
     void setUp() {
-        restTemplate = mock(RestTemplate.class);
-        merchantConfigRepository = mock(MerchantConfigRepository.class);
-        objectMapper = new ObjectMapper();
-
-        client = new RazorpayPaymentProviderClient(
-                testBaseUrl,
-                testKeyId,
-                testKeySecret,
-                restTemplate,
-                merchantConfigRepository,
-                objectMapper
-        );
+        stub = RazorpayStubServer.start();
+        RazorpayProperties properties = new RazorpayProperties(new RazorpayProperties.Api(stub.baseUrl()),
+                "rzp_test_key", "rzp_test_secret", 1000, 300, MERCHANT.merchantId().toString());
+        provider = new RazorpayPaymentProvider(new RazorpayHttp(properties, json),
+                merchant -> merchant.equals(MERCHANT) ? Optional.of(new RazorpayCredentials("rzp_test_key", "rzp_test_secret")) : Optional.empty(),
+                json);
     }
 
-    private PaymentExecutionRequest createRequest(ActionType actionType, String idempotencyKey) {
-        return new PaymentExecutionRequest(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                "pay_test_orig_100",
-                "sub_test_orig_200",
-                actionType,
-                1,
-                idempotencyKey
-        );
+    @AfterEach
+    void tearDown() {
+        stub.close();
+    }
+
+    private static CreatePaymentLink command(ProviderAttemptKey key) {
+        return new CreatePaymentLink(key, new MoneyMinor(100, "INR"), "MEND M1 contract recording", null, UUID.randomUUID());
+    }
+
+    private static String fixtureBody(String name) throws Exception {
+        try (var in = RazorpayPaymentProviderClientTest.class.getResourceAsStream("/razorpay/recorded/" + name + ".json")) {
+            JsonNode root = new ObjectMapper().readTree(in);
+            return new ObjectMapper().writeValueAsString(root.path("response").path("body"));
+        }
     }
 
     @Test
     @DisplayName("Should return ERROR when required Razorpay credentials are missing")
     void testMissingCredentials() {
-        RazorpayPaymentProviderClient unconfiguredClient = new RazorpayPaymentProviderClient(
-                testBaseUrl, "", "", restTemplate, merchantConfigRepository, objectMapper
-        );
+        RequestResult<PaymentLinkSnapshot> result = provider.createPaymentLink(new MerchantRef(UUID.randomUUID()), command(RECORDED_KEY));
 
-        PaymentExecutionRequest req = createRequest(ActionType.RETRY_PAYMENT, "key_test_missing_creds");
-        PaymentExecutionResult result = unconfiguredClient.executeAction(req);
-
-        assertNotNull(result);
-        assertEquals(PaymentExecutionStatus.ERROR, result.getStatus());
-        assertTrue(result.getMessage().contains("Missing required Razorpay credentials"));
-        verifyNoInteractions(restTemplate);
+        // M1 behaviour change: missing credentials are a local AUTHENTICATION rejection with zero HTTP calls, see ADR-001
+        RequestResult.Rejected<PaymentLinkSnapshot> rejected = assertInstanceOf(RequestResult.Rejected.class, result);
+        assertEquals(RejectionKind.AUTHENTICATION, rejected.kind());
+        assertEquals("NO_CREDENTIALS_FOR_MERCHANT", rejected.providerCode());
+        assertTrue(stub.requests().isEmpty());
     }
 
     @Test
     @DisplayName("Should successfully execute payment retry and map 200 OK provider response")
-    void testSuccessfulRazorpayExecution() {
-        PaymentExecutionRequest req = createRequest(ActionType.RETRY_PAYMENT, "intent:camp_100:attempt_1");
+    void testSuccessfulRazorpayExecution() throws Exception {
+        stub.stub("POST", "/v1/payment_links", 200, fixtureBody("01_create_link_ok"));
 
-        String mockResponseBody = "{\"id\": \"pay_rzp_success_999\", \"status\": \"captured\", \"amount\": 5000}";
-        ResponseEntity<String> mockResponse = new ResponseEntity<>(mockResponseBody, HttpStatus.OK);
+        RequestResult<PaymentLinkSnapshot> result = provider.createPaymentLink(MERCHANT, command(RECORDED_KEY));
 
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class)))
-                .thenReturn(mockResponse);
-
-        PaymentExecutionResult result = client.executeAction(req);
-
-        assertNotNull(result);
-        assertTrue(result.isSuccess());
-        assertEquals("pay_rzp_success_999", result.getExternalReference());
-        assertEquals("intent:camp_100:attempt_1", result.getIdempotencyKey());
-        assertTrue(result.getMessage().contains("Status: captured"));
-
-        verify(restTemplate, times(1)).postForEntity(
-                eq("https://api.razorpay.com/v1/payments/pay_test_orig_100/retry"),
-                any(HttpEntity.class),
-                eq(String.class)
-        );
+        // M1 behaviour change: there is no retry API; a 2xx link creation is Accepted and is NOT recovered money, see ADR-001
+        RequestResult.Accepted<PaymentLinkSnapshot> accepted = assertInstanceOf(RequestResult.Accepted.class, result);
+        assertEquals("plink_TjzX37EuRv8krS", accepted.value().providerLinkId());
+        assertEquals(0L, accepted.value().amountPaidMinor());
+        assertTrue(accepted.value().capturedPaymentIds().isEmpty());
+        assertEquals("/v1/payment_links", stub.requests().get(0).pathWithQuery());
     }
 
     @Test
     @DisplayName("Should propagate Mend idempotencyKey in request headers")
-    void testIdempotencyKeyPropagation() {
-        String key = "intent:camp_200:attempt_1:RETRY";
-        PaymentExecutionRequest req = createRequest(ActionType.RETRY_PAYMENT, key);
+    void testIdempotencyKeyPropagation() throws Exception {
+        stub.stub("POST", "/v1/payment_links", 200, fixtureBody("01_create_link_ok"));
 
-        String mockResponseBody = "{\"id\": \"pay_rzp_777\", \"status\": \"captured\"}";
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class)))
-                .thenReturn(new ResponseEntity<>(mockResponseBody, HttpStatus.OK));
+        provider.createPaymentLink(MERCHANT, command(RECORDED_KEY));
 
-        client.executeAction(req);
-
-        ArgumentCaptor<HttpEntity> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
-        verify(restTemplate).postForEntity(anyString(), entityCaptor.capture(), eq(String.class));
-
-        HttpHeaders headers = entityCaptor.getValue().getHeaders();
-        assertEquals(key, headers.getFirst("X-Razorpay-Idempotency-Header"));
-        assertEquals(key, headers.getFirst("X-Idempotency-Key"));
-        assertNotNull(headers.getFirst("Authorization"));
-        assertTrue(headers.getFirst("Authorization").startsWith("Basic "));
+        RazorpayStubServer.Request request = stub.requests().get(0);
+        // M1 behaviour change: Razorpay documents no idempotency header for links; the attempt key travels as reference_id, see ADR-001
+        assertEquals("mnd_rec_1791151909", json.readTree(request.body()).get("reference_id").asString());
+        assertTrue(request.headers().keySet().stream().noneMatch(h -> h.equalsIgnoreCase("X-Razorpay-Idempotency-Header")));
+        assertTrue(request.headers().keySet().stream().noneMatch(h -> h.equalsIgnoreCase("X-Idempotency-Key")));
     }
 
     @Test
     @DisplayName("Should handle 4xx payment decline cleanly and return FAILURE status")
-    void testProviderDecline() {
-        PaymentExecutionRequest req = createRequest(ActionType.RETRY_PAYMENT, "intent:camp_300:attempt_1");
+    void testProviderDecline() throws Exception {
+        stub.stub("POST", "/v1/payment_links", 400, fixtureBody("03_create_link_extra_fields"));
+        stub.stub("GET", "/v1/payment_links?reference_id=mnd_rec_1791151909", 200, "{\"payment_links\":[]}");
 
-        String errorJson = "{\"error\": {\"code\": \"BAD_REQUEST_ERROR\", \"description\": \"Card has expired\"}}";
-        HttpClientErrorException declineException = HttpClientErrorException.create(
-                HttpStatus.BAD_REQUEST, "Bad Request", new HttpHeaders(), errorJson.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8
-        );
+        RequestResult<PaymentLinkSnapshot> result = provider.createPaymentLink(MERCHANT, command(RECORDED_KEY));
 
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(declineException);
-
-        PaymentExecutionResult result = client.executeAction(req);
-
-        assertNotNull(result);
-        assertTrue(result.isFailure());
-        assertEquals("BAD_REQUEST_ERROR", result.getResponseCode());
-        assertEquals("Card has expired", result.getMessage());
-        assertEquals("intent:camp_300:attempt_1", result.getIdempotencyKey());
+        // M1 behaviour change: a 400 is resolved by lookup-by-reference first; no existing link -> Rejected(VALIDATION), see ADR-001
+        RequestResult.Rejected<PaymentLinkSnapshot> rejected = assertInstanceOf(RequestResult.Rejected.class, result);
+        assertEquals(RejectionKind.VALIDATION, rejected.kind());
+        assertEquals("BAD_REQUEST_ERROR", rejected.providerCode());
+        assertEquals(2, stub.requests().size());
     }
 
     @Test
     @DisplayName("Should handle gateway connection timeout and return ERROR status")
     void testProviderTimeout() {
-        PaymentExecutionRequest req = createRequest(ActionType.RETRY_PAYMENT, "intent:camp_400:attempt_1");
+        stub.stall("POST", "/v1/payment_links", 2000);
 
-        ResourceAccessException timeoutException = new ResourceAccessException("Read timed out executing POST https://api.razorpay.com");
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(timeoutException);
+        RequestResult<PaymentLinkSnapshot> result = provider.createPaymentLink(MERCHANT, command(RECORDED_KEY));
 
-        PaymentExecutionResult result = client.executeAction(req);
-
-        assertNotNull(result);
-        assertTrue(result.isError());
-        assertTrue(result.getMessage().contains("Razorpay gateway connection error/timeout"));
-        assertEquals("intent:camp_400:attempt_1", result.getIdempotencyKey());
+        // M1 behaviour change: a read timeout after sending is OutcomeUnknown, never ERROR/FAILED (invariant 4), see ADR-001
+        RequestResult.OutcomeUnknown<PaymentLinkSnapshot> unknown = assertInstanceOf(RequestResult.OutcomeUnknown.class, result);
+        assertEquals("READ_TIMEOUT", unknown.cause());
+        assertEquals(1, stub.requests().size(), "POST must not be retried");
     }
 
     @Test
     @DisplayName("Should handle 5xx server error and return ERROR status (not FAILURE)")
     void testServerError() {
-        PaymentExecutionRequest req = createRequest(ActionType.RETRY_PAYMENT, "intent:camp_500:attempt_1");
+        stub.stub("POST", "/v1/payment_links", 503, "");
 
-        HttpServerErrorException serverException = HttpServerErrorException.create(
-                HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", new HttpHeaders(), new byte[0], StandardCharsets.UTF_8
-        );
+        RequestResult<PaymentLinkSnapshot> result = provider.createPaymentLink(MERCHANT, command(RECORDED_KEY));
 
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(serverException);
-
-        PaymentExecutionResult result = client.executeAction(req);
-
-        assertNotNull(result);
-        assertTrue(result.isError());
-        assertTrue(result.getMessage().contains("HTTP 500"));
+        // M1 behaviour change: 5xx is OutcomeUnknown (the provider may have acted), never ERROR/FAILURE, see ADR-001
+        assertEquals(new RequestResult.OutcomeUnknown<>("HTTP_503", 503), result);
+        assertEquals(1, stub.requests().size(), "POST must not be retried");
     }
 
     @Test
     @DisplayName("Should reject unsupported action type (MANUAL_REVIEW) without calling Razorpay API")
     void testUnsupportedActionType() {
-        PaymentExecutionRequest req = createRequest(ActionType.MANUAL_REVIEW, "intent:camp_600:attempt_1");
+        PaymentProvider recordingProvider = mock(PaymentProvider.class);
+        StaticListableBeanFactory noSimulator = new StaticListableBeanFactory();
+        ProviderActionDispatcher dispatcher = new ProviderActionDispatcher(recordingProvider, new RazorpayProviderCapabilities(),
+                mock(WebhookAmountResolver.class), noSimulator.getBeanProvider(com.mend.provider.mock.SyntheticDebitSimulator.class));
+        Campaign campaign = new Campaign(UUID.randomUUID(), MERCHANT.merchantId());
+        campaign.setPaymentId("pay_rzp_unsupported");
 
-        PaymentExecutionResult result = client.executeAction(req);
+        for (ActionType type : new ActionType[]{ActionType.MANUAL_REVIEW, ActionType.RETRY_PAYMENT}) {
+            ActionIntent intent = new ActionIntent(UUID.randomUUID(), MERCHANT.merchantId(), campaign.getId(), 1, type.name(),
+                    "MANUAL_REVIEW", null, ActionIntentStatus.CLAIMED, "intent:x:attempt_1:" + type.name(), Instant.now());
 
-        assertNotNull(result);
-        assertTrue(result.isError());
-        assertTrue(result.getMessage().contains("is not supported for automated Razorpay API execution"));
-        verifyNoInteractions(restTemplate);
+            ProviderActionOutcome outcome = dispatcher.dispatch(intent, campaign);
+
+            // M1 behaviour change: in razorpay mode both are NotSupported locally (RETRY_PAYMENT endpoints do not exist), see ADR-001
+            assertInstanceOf(ProviderActionOutcome.NotSupported.class, outcome, type.name());
+        }
+        verifyNoInteractions(recordingProvider);
+        assertTrue(stub.requests().isEmpty());
     }
 }
