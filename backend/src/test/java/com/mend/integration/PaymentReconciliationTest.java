@@ -760,6 +760,7 @@ class PaymentReconciliationTest {
         reconciliationService.reconcileWebhookEvent(event);
 
         assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertNotEquals(CampaignStatus.EXHAUSTED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
     }
 
     @Test
@@ -769,7 +770,7 @@ class PaymentReconciliationTest {
         Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_d1_alone_orig");
         ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, "plink_M1d1alone01");
         WebhookEvent failed = stored("payment.failed", String.format(
-                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_d1_try1\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_d1_alone_try1\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
                 intent.getId()));
 
         ReconciliationResult result = reconciliationService.reconcileWebhookEvent(failed);
