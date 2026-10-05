@@ -46,7 +46,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 public class RazorpayPaymentProviderClientTest {
 
     private static final MerchantRef MERCHANT = new MerchantRef(UUID.randomUUID());
-    private static final ProviderAttemptKey RECORDED_KEY = new ProviderAttemptKey("mnd_rec_1791151909");
+    private static final ProviderAttemptKey RECORDED_KEY = new ProviderAttemptKey("mnd_rec_1791176340");
 
     private final ObjectMapper json = new ObjectMapper();
     private RazorpayStubServer stub;
@@ -99,7 +99,7 @@ public class RazorpayPaymentProviderClientTest {
 
         // M1 behaviour change: there is no retry API; a 2xx link creation is Accepted and is NOT recovered money, see ADR-001
         RequestResult.Accepted<PaymentLinkSnapshot> accepted = assertInstanceOf(RequestResult.Accepted.class, result);
-        assertEquals("plink_TjzX37EuRv8krS", accepted.value().providerLinkId());
+        assertEquals("plink_Tk6TAI6WoeOTDh", accepted.value().providerLinkId());
         assertEquals(0L, accepted.value().amountPaidMinor());
         assertTrue(accepted.value().capturedPaymentIds().isEmpty());
         assertEquals("/v1/payment_links", stub.requests().get(0).pathWithQuery());
@@ -114,7 +114,7 @@ public class RazorpayPaymentProviderClientTest {
 
         RazorpayStubServer.Request request = stub.requests().get(0);
         // M1 behaviour change: Razorpay documents no idempotency header for links; the attempt key travels as reference_id, see ADR-001
-        assertEquals("mnd_rec_1791151909", json.readTree(request.body()).get("reference_id").asString());
+        assertEquals("mnd_rec_1791176340", json.readTree(request.body()).get("reference_id").asString());
         assertTrue(request.headers().keySet().stream().noneMatch(h -> h.equalsIgnoreCase("X-Razorpay-Idempotency-Header")));
         assertTrue(request.headers().keySet().stream().noneMatch(h -> h.equalsIgnoreCase("X-Idempotency-Key")));
     }
@@ -123,7 +123,7 @@ public class RazorpayPaymentProviderClientTest {
     @DisplayName("Should handle 4xx payment decline cleanly and return FAILURE status")
     void testProviderDecline() throws Exception {
         stub.stub("POST", "/v1/payment_links", 400, fixtureBody("03_create_link_extra_fields"));
-        stub.stub("GET", "/v1/payment_links?reference_id=mnd_rec_1791151909", 200, "{\"payment_links\":[]}");
+        stub.stub("GET", "/v1/payment_links?reference_id=mnd_rec_1791176340", 200, "{\"payment_links\":[]}");
 
         RequestResult<PaymentLinkSnapshot> result = provider.createPaymentLink(MERCHANT, command(RECORDED_KEY));
 

@@ -1,8 +1,8 @@
 {
   "fixture": "12_legacy_payments_retry",
   "mode": "test",
-  "recorded_at": "2026-10-04T22:11:57Z",
-  "latency_ms": 385,
+  "recorded_at": "2026-10-05T04:59:07Z",
+  "latency_ms": 184,
   "request": {
     "method": "POST",
     "path": "/v1/payments/retry",

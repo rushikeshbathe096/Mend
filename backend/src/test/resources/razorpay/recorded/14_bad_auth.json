@@ -1,19 +1,19 @@
 {
   "fixture": "14_bad_auth",
   "mode": "test",
-  "recorded_at": "2026-10-04T22:11:58Z",
-  "latency_ms": 272,
+  "recorded_at": "2026-10-05T04:59:08Z",
+  "latency_ms": 205,
   "request": {
     "method": "GET",
-    "path": "/v1/payment_links/plink_TjzX37EuRv8krS",
+    "path": "/v1/payment_links/plink_Tk6TAI6WoeOTDh",
     "body": null
   },
   "response": {
     "status": 401,
     "body": {
       "error": {
-        "description": "Authentication failed",
-        "code": "BAD_REQUEST_ERROR"
+        "code": "BAD_REQUEST_ERROR",
+        "description": "Authentication failed"
       }
     }
   }

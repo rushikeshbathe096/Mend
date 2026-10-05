@@ -50,8 +50,8 @@ class RazorpayPaymentLinkContractTest {
     private static final UUID INTENT = UUID.fromString("3f575aeb-94c4-42d4-aca0-3a0f0641064c");
     private static final RazorpayCredentials CREDS = new RazorpayCredentials("rzp_test_key", "secret");
     /** The reference the recordings were made with, so replayed responses carry the same reference_id. */
-    private static final ProviderAttemptKey RECORDED_KEY = new ProviderAttemptKey("mnd_rec_1791151909");
-    private static final String LOOKUP_PATH = "/v1/payment_links?reference_id=mnd_rec_1791151909";
+    private static final ProviderAttemptKey RECORDED_KEY = new ProviderAttemptKey("mnd_rec_1791176340");
+    private static final String LOOKUP_PATH = "/v1/payment_links?reference_id=mnd_rec_1791176340";
 
     private final ObjectMapper json = new ObjectMapper();
     private final List<Duration> sleeps = new ArrayList<>();
@@ -106,12 +106,12 @@ class RazorpayPaymentLinkContractTest {
 
         PaymentLinkSnapshot link = accepted(provider.createPaymentLink(MERCHANT, command(100)));
 
-        assertEquals("plink_TjzX37EuRv8krS", link.providerLinkId());
+        assertEquals("plink_Tk6TAI6WoeOTDh", link.providerLinkId());
         assertEquals(RECORDED_KEY, link.referenceId());
         assertEquals(PaymentLinkState.CREATED, link.state());
         assertEquals(100L, link.amountMinor());
         assertEquals(0L, link.amountPaidMinor());
-        assertEquals("https://rzp.io/rzp/D0Zue5fx", link.shortUrl());
+        assertEquals("https://rzp.io/rzp/uyPewzr", link.shortUrl());
         assertTrue(link.capturedPaymentIds().isEmpty(), "Accepted never implies money");
         server.verify();
     }
@@ -133,7 +133,7 @@ class RazorpayPaymentLinkContractTest {
         assertTrue(sent.get("amount").isIntegralNumber());
         assertEquals(100L, sent.get("amount").longValue());
         assertEquals("INR", sent.get("currency").asString());
-        assertEquals("mnd_rec_1791151909", sent.get("reference_id").asString());
+        assertEquals("mnd_rec_1791176340", sent.get("reference_id").asString());
         assertEquals(Set.of("sms", "email"), keys(sent.get("notify")));
         assertFalse(sent.get("notify").get("sms").booleanValue());
         assertFalse(sent.get("notify").get("email").booleanValue());
@@ -190,7 +190,7 @@ class RazorpayPaymentLinkContractTest {
 
     @Test
     void twoXxWithNonLinkShapedIdIsOutcomeUnknown() {
-        String body = RazorpayFixture.recorded("01_create_link_ok").responseBody().replace("plink_TjzX37EuRv8krS", "../orders/x");
+        String body = RazorpayFixture.recorded("01_create_link_ok").responseBody().replace("plink_Tk6TAI6WoeOTDh", "../orders/x");
         server.expect(requestTo(BASE + "/v1/payment_links")).andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
         assertEquals(new RequestResult.OutcomeUnknown<>("MALFORMED_2XX", 200), provider.createPaymentLink(MERCHANT, command(100)));
         server.verify();
@@ -212,7 +212,7 @@ class RazorpayPaymentLinkContractTest {
 
         PaymentLinkSnapshot link = accepted(provider.createPaymentLink(MERCHANT, command(100)));
 
-        assertEquals("plink_TjzX37EuRv8krS", link.providerLinkId());
+        assertEquals("plink_Tk6TAI6WoeOTDh", link.providerLinkId());
         assertEquals(PaymentLinkState.CREATED, link.state());
         server.verify();
     }
@@ -225,7 +225,7 @@ class RazorpayPaymentLinkContractTest {
 
         provider.createPaymentLink(MERCHANT, command(100));
 
-        assertTrue(output.getOut().contains("result=Accepted provider_link_id=plink_TjzX37EuRv8krS dedup=true"));
+        assertTrue(output.getOut().contains("result=Accepted provider_link_id=plink_Tk6TAI6WoeOTDh dedup=true"));
         server.verify();
     }
 
@@ -410,8 +410,8 @@ class RazorpayPaymentLinkContractTest {
 
     @Test
     void getPaymentLinkFound_fixture05() {
-        respond("/v1/payment_links/plink_TjzX37EuRv8krS", HttpMethod.GET, RazorpayFixture.recorded("05_fetch_link_by_id"));
-        LookupResult<PaymentLinkSnapshot> result = provider.getPaymentLink(MERCHANT, "plink_TjzX37EuRv8krS");
+        respond("/v1/payment_links/plink_Tk6TAI6WoeOTDh", HttpMethod.GET, RazorpayFixture.recorded("05_fetch_link_by_id"));
+        LookupResult<PaymentLinkSnapshot> result = provider.getPaymentLink(MERCHANT, "plink_Tk6TAI6WoeOTDh");
         if (!(result instanceof LookupResult.Found<PaymentLinkSnapshot> found)) {
             fail("expected Found, got " + result);
             return;
@@ -484,5 +484,22 @@ class RazorpayPaymentLinkContractTest {
         Set<String> keys = new TreeSet<>();
         node.propertyNames().forEach(keys::add);
         return keys;
+    }
+
+    @Test
+    void paidLinkExposesTheCapturedPaymentOfRecording21_fixture20() throws IOException {
+        respond("/v1/payment_links/plink_Tk6TAI6WoeOTDh", HttpMethod.GET, RazorpayFixture.recorded("20_fetch_link_paid"));
+        String capturedPaymentId = json.readTree(RazorpayFixture.recorded("21_fetch_payment_captured").responseBody()).get("id").asString();
+
+        LookupResult<PaymentLinkSnapshot> result = provider.getPaymentLink(MERCHANT, "plink_Tk6TAI6WoeOTDh");
+
+        if (!(result instanceof LookupResult.Found<PaymentLinkSnapshot> found)) {
+            fail("expected Found, got " + result);
+            return;
+        }
+        assertEquals(PaymentLinkState.PAID, found.value().state());
+        assertEquals(100L, found.value().amountPaidMinor());
+        assertTrue(found.value().capturedPaymentIds().contains(capturedPaymentId));
+        server.verify();
     }
 }
