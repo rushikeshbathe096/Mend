@@ -73,6 +73,24 @@ public class ActionIntent {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    /** M2: set by the CLAIMED→EXECUTING dispatch transition, before the provider call. */
+    @Column(name = "dispatched_at")
+    private Instant dispatchedAt;
+
+    /** M2: when the reconciler may next look at this intent. */
+    @Column(name = "reconcile_after")
+    private Instant reconcileAfter;
+
+    @Column(name = "reconcile_attempts", nullable = false)
+    private int reconcileAttempts;
+
+    @Column(name = "execution_attempts", nullable = false)
+    private int executionAttempts;
+
+    /** M2: copied from the campaign (U6); nullable until then. */
+    @Column(name = "invoice_key", length = 120)
+    private String invoiceKey;
+
     public ActionIntent() {
     }
 
@@ -252,5 +270,45 @@ public class ActionIntent {
 
     public void setCompletedAt(Instant completedAt) {
         this.completedAt = completedAt;
+    }
+
+    public Instant getDispatchedAt() {
+        return dispatchedAt;
+    }
+
+    public void setDispatchedAt(Instant dispatchedAt) {
+        this.dispatchedAt = dispatchedAt;
+    }
+
+    public Instant getReconcileAfter() {
+        return reconcileAfter;
+    }
+
+    public void setReconcileAfter(Instant reconcileAfter) {
+        this.reconcileAfter = reconcileAfter;
+    }
+
+    public int getReconcileAttempts() {
+        return reconcileAttempts;
+    }
+
+    public void setReconcileAttempts(int reconcileAttempts) {
+        this.reconcileAttempts = reconcileAttempts;
+    }
+
+    public int getExecutionAttempts() {
+        return executionAttempts;
+    }
+
+    public void setExecutionAttempts(int executionAttempts) {
+        this.executionAttempts = executionAttempts;
+    }
+
+    public String getInvoiceKey() {
+        return invoiceKey;
+    }
+
+    public void setInvoiceKey(String invoiceKey) {
+        this.invoiceKey = invoiceKey;
     }
 }
