@@ -46,6 +46,16 @@ Results against current code (force-run, failure line observed):
 RED tests are `@Disabled("M2-RED: S<n> ...")`. Full suite: `Tests run: 526, Failures: 0, Errors: 0, Skipped: 7` (519 + 7; skipped = M1 tracking test + 6 RED). Each test < 1 s.
 Notes: S1 also logs a `campaign_attempts` unique-key violation from the second finalize (the existing constraint catches the duplicate attempt row, not the duplicate provider call).
 
+Review (fresh subagent): 0 blockers. Fixed in `M2 U1: review fixes` (test-only):
+- MAJOR S7 could pass vacuously once the index exists (a rolled-back claim batch leaves 0 in flight) → now `assertEquals(1, inFlight)` and the other intent must still be READY.
+- MAJOR S7 fixture bypasses U6's invoice_key derivation → recorded in the `@Disabled` reason and as a U6 adaptation (the fixture must get `invoice_key` via the production derivation).
+- MAJOR S6b depended on unspecified token behaviour → records the status right after release; only if release produced READY must A's later write be absent (status still READY, response reference unchanged).
+- MAJOR S3 could be red for the wrong reason → precondition `responseReference == null` proves the outcome was Unknown, not LinkIssued.
+- MINOR release worker A in `finally`; counts captured before joining A; A's exceptions ignored on join; fixtures scheduled near EPOCH so leftovers from other classes can never push them out of the 50-intent batch.
+- NIT latch read race in `BlockingPaymentProvider`; teardown now shuts the pool down before resetting the mock.
+Re-verified by force-running: all six RED tests still fail on their target assertions (S3 passes its new precondition); S6a passes.
+Noted, not changed: S2 asserts "not orphaned" only; the eventual-resolution assertion (stuck EXECUTING → NEEDS_RECONCILIATION) is added in U5 (adaptation). S2 releases A after capturing the orphan state instead of "never finalizing" (deviation; A's later finalize does not affect the assertion). Scheduled polling is off in the test profile (`mend.scheduler.scheduled-enabled=false`), so no background poll races these tests.
+
 ### Adaptations for U2 (written before applying)
 1. New columns use `TIMESTAMP WITH TIME ZONE` (V8 convention for scheduler columns; JPA `Instant`).
 2. `version BIGINT NOT NULL DEFAULT 0` is added in V12 but NOT mapped in Java until U4 (`ddl-auto=validate` ignores unmapped columns).

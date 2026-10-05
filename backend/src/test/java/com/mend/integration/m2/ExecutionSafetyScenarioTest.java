@@ -105,9 +105,18 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     @AfterEach
     void tearDown() throws InterruptedException {
         provider.reset();
-        mockPaymentProvider.reset();
         threads.shutdownNow();
         threads.awaitTermination(10, TimeUnit.SECONDS);
+        mockPaymentProvider.reset();
+    }
+
+    /** Joins worker A; its own outcome is not what these tests assert, so an exception inside A is ignored. */
+    private static void join(Future<?> worker) throws InterruptedException {
+        try {
+            worker.get(10, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
+            // worker A's result is irrelevant to the scenario assertion
+        }
     }
 
     private record Fixture(Campaign campaign, ActionIntent intent, ProviderAttemptKey key) {
@@ -132,10 +141,12 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         ComplianceDecisionEntity compliance = complianceDecisionRepository.save(new ComplianceDecisionEntity(UUID.randomUUID(),
                 campaign.getId(), merchantId, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED,
                 ComplianceReason.ALLOWED, "Compliant action", "v1.0.0"));
+        // Scheduled long ago so the scheduler's batch (ordered by scheduled_at, max 50) always includes it, whatever
+        // other test classes left behind in the shared database.
         ActionIntent intent = actionIntentRepository.save(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
                 ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(),
                 ActionIntentStatus.READY, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION",
-                Instant.now().minusSeconds(5)));
+                Instant.EPOCH.plusSeconds(Math.floorMod(campaign.getId().getMostSignificantBits(), 1_000_000L))));
         return new Fixture(campaign, intent, ProviderAttemptKey.forIntent(intent.getId()));
     }
 
@@ -169,15 +180,24 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         Future<?> a = workerABlockedInProviderCall(f.key());
         when(recoveryOrchestratorService.orchestrateRecovery(any(), any())).thenReturn(reload(f.intent()));
 
-        // When: the manual start-recovery path runs for the same campaign.
-        StartRecoveryRequest request = new StartRecoveryRequest();
-        request.setPaymentId(f.campaign().getPaymentId());
-        campaignController.startRecovery(request, merchantId.toString(), null);
-        provider.release(f.key());
-        a.get(10, TimeUnit.SECONDS);
+        // When: the manual start-recovery path runs for the same campaign (a rejection/conflict is an acceptable answer).
+        int calls;
+        try {
+            StartRecoveryRequest request = new StartRecoveryRequest();
+            request.setPaymentId(f.campaign().getPaymentId());
+            try {
+                campaignController.startRecovery(request, merchantId.toString(), null);
+            } catch (RuntimeException rejected) {
+                // the manual path may refuse to execute an intent it could not claim
+            }
+            calls = provider.createCalls(f.key());
+        } finally {
+            provider.release(f.key());
+        }
+        join(a);
 
         // Then: the provider saw one create call for the attempt key.
-        assertEquals(1, provider.createCalls(f.key()));
+        assertEquals(1, calls);
     }
 
     @Test
@@ -193,10 +213,15 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         actionIntentClaimService.releaseExpiredClaims();
 
         // Then: the intent is not READY behind an EXECUTING campaign (unclaimable forever, never reconciled).
-        ActionIntent intent = reload(f.intent());
-        boolean orphan = intent.getStatus() == ActionIntentStatus.READY && campaignState(f.campaign()) == CampaignStatus.EXECUTING;
-        provider.release(f.key());
-        a.get(10, TimeUnit.SECONDS);
+        // (Eventual resolution via the stuck sweep is asserted once U5 adds the reconciler.)
+        boolean orphan;
+        try {
+            ActionIntent intent = reload(f.intent());
+            orphan = intent.getStatus() == ActionIntentStatus.READY && campaignState(f.campaign()) == CampaignStatus.EXECUTING;
+        } finally {
+            provider.release(f.key());
+        }
+        join(a);
         assertFalse(orphan, "intent orphaned: READY with campaign EXECUTING");
     }
 
@@ -212,7 +237,9 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         actionScheduler.pollAndExecuteDueActions();
 
         // Then: the intent waits for reconciliation instead of sitting in EXECUTING with nothing to resolve it.
-        assertEquals("NEEDS_RECONCILIATION", reload(f.intent()).getStatus().name());
+        ActionIntent intent = reload(f.intent());
+        assertNull(intent.getResponseReference(), "precondition: the outcome was Unknown (a LinkIssued outcome would store a plink id)");
+        assertEquals("NEEDS_RECONCILIATION", intent.getStatus().name());
     }
 
     @Test
@@ -228,10 +255,14 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         // When: the campaign re-enters ACTION_PENDING through allowed transitions and worker B polls.
         campaignLifecycleService.transitionState(merchantId, f.campaign().getId(), CampaignStatus.FAILED, "test: drive to retry", "SYSTEM", null);
         campaignLifecycleService.transitionState(merchantId, f.campaign().getId(), CampaignStatus.ACTION_PENDING, "test: retry", "SYSTEM", null);
-        threads.submit(() -> actionScheduler.pollAndExecuteDueActions()).get(10, TimeUnit.SECONDS);
-        int callsAfterB = provider.createCalls(f.key());
-        provider.release(f.key());
-        a.get(10, TimeUnit.SECONDS);
+        int callsAfterB;
+        try {
+            join(threads.submit(() -> actionScheduler.pollAndExecuteDueActions()));
+            callsAfterB = provider.createCalls(f.key());
+        } finally {
+            provider.release(f.key());
+        }
+        join(a);
 
         // Then: worker B made no second create call for the same attempt key.
         assertEquals(1, callsAfterB);
@@ -239,6 +270,8 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("S6a webhook finalizes the intent while worker A is mid-call -> A's later result is discarded")
+    // Regression guard: relies on a captured webhook resolving an intent that is still mid-execution. If a later unit
+    // restricts webhook finalization by intent state, changing this is a design decision, not a test edit.
     void s6aWebhookWinsOverStaleWorkerResult() throws Exception {
         // Given: worker A is inside the provider call.
         Fixture f = linkIntent(null);
@@ -249,9 +282,12 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
                 "{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2s6aCaptured\",\"status\":\"captured\","
                         + "\"notes\":{\"mend_intent_id\":\"" + f.intent().getId() + "\"}}}}}");
         captured.setMerchantId(merchantId);
-        reconciliationService.reconcileWebhookEvent(webhookEventRepository.save(captured));
-        provider.release(f.key());
-        a.get(10, TimeUnit.SECONDS);
+        try {
+            reconciliationService.reconcileWebhookEvent(webhookEventRepository.save(captured));
+        } finally {
+            provider.release(f.key());
+        }
+        join(a);
 
         // Then: the webhook's evidence stands; A's link result did not overwrite it.
         ActionIntent intent = reload(f.intent());
@@ -269,19 +305,27 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         Future<?> a = workerABlockedInProviderCall(f.key());
 
         // When: the lease expires, the release job runs, then A finishes and finalizes.
-        expireLease(f.intent());
-        actionIntentClaimService.releaseExpiredClaims();
-        provider.release(f.key());
-        a.get(10, TimeUnit.SECONDS);
+        ActionIntent afterRelease;
+        try {
+            expireLease(f.intent());
+            actionIntentClaimService.releaseExpiredClaims();
+            afterRelease = reload(f.intent());
+        } finally {
+            provider.release(f.key());
+        }
+        join(a);
 
-        // Then: either the release did not apply (A still owns it and finalized), or A's write was discarded (still READY).
+        // Then: if the release took A's claim away (READY), A's later result must not be written onto the intent.
         ActionIntent intent = reload(f.intent());
-        boolean staleWriteApplied = intent.getClaimToken() == null && intent.getStatus() != ActionIntentStatus.READY;
-        assertFalse(staleWriteApplied, "stale worker wrote " + intent.getStatus() + " to an intent whose claim had been released");
+        if (afterRelease.getStatus() == ActionIntentStatus.READY) {
+            assertEquals(ActionIntentStatus.READY, intent.getStatus(),
+                    "stale worker wrote " + intent.getStatus() + " to an intent whose claim had been released");
+            assertEquals(afterRelease.getResponseReference(), intent.getResponseReference());
+        }
     }
 
     @Test
-    @Disabled("M2-RED: S7 two intents for one order are both in flight (2 > 1)")
+    @Disabled("M2-RED: S7 two intents for one order are both in flight (2 > 1). U6: fixture must get invoice_key via the production derivation")
     @DisplayName("S7 two campaigns for the same order (not a recording) -> at most one intent in flight")
     void s7AtMostOneInFlightPerInvoice() {
         // Given: two campaigns whose original failure payloads share an order_id (hand-built, not a recording).
@@ -292,10 +336,11 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         // When: the scheduler runs.
         actionScheduler.pollAndExecuteDueActions();
 
-        // Then: at most one of the two intents is in flight.
-        long inFlight = List.of(reload(first.intent()), reload(second.intent())).stream()
-                .filter(intent -> IN_FLIGHT.contains(intent.getStatus().name()))
-                .count();
-        assertTrue(inFlight <= 1, "in-flight intents for one invoice: " + inFlight);
+        // Then: exactly one of the two intents is in flight and the other is still waiting (not failed, not lost).
+        List<ActionIntent> intents = List.of(reload(first.intent()), reload(second.intent()));
+        long inFlight = intents.stream().filter(intent -> IN_FLIGHT.contains(intent.getStatus().name())).count();
+        assertEquals(1, inFlight, "in-flight intents for one invoice: " + inFlight);
+        assertTrue(intents.stream().anyMatch(intent -> intent.getStatus() == ActionIntentStatus.READY),
+                "the blocked intent must stay READY, got " + intents.stream().map(i -> i.getStatus().name()).toList());
     }
 }
