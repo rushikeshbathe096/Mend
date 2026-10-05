@@ -107,6 +107,15 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             return ReconciliationResult.unsupported("Event type '" + event.getEventType() + "' carries no captured or failed payment evidence");
         }
 
+        // Owner decision D1 (M1): a payment link accepts several attempts, so one failed attempt does not end it.
+        // For an intent that issued a link, a FAILED payment changes nothing; the intent stays EXECUTING.
+        if (Boolean.FALSE.equals(isSuccessEvent) && isPaymentLinkReference(intent.getResponseReference())) {
+            log.info("event=link_attempt_failed intent_id={} campaign_id={} webhook_event_id={}",
+                    intent.getId(), campaign.getId(), event.getId());
+            return ReconciliationResult.unsupported("Failed attempt on payment link " + intent.getResponseReference()
+                    + "; link remains payable");
+        }
+
         // Check if Campaign or Intent is already terminal/finalized (Late Webhook Protection)
         if (campaignStateMachine.isTerminal(campaign.getCurrentState())) {
             log.info("Late webhook received for campaign '{}' which is already in terminal state '{}'. Ignoring reconciliation.",
@@ -441,6 +450,10 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         String intentIdForCorrelation = mendIntentId != null ? mendIntentId : actionIntentId;
         return new PayloadDetails(paymentId, subscriptionId, idempotencyKey, intentIdForCorrelation, status, failureReason,
                 paymentLinkPresent, paymentLinkId, paymentLinkStatus);
+    }
+
+    private static boolean isPaymentLinkReference(String responseReference) {
+        return responseReference != null && responseReference.startsWith("plink_");
     }
 
     /** Untrusted payload: only a non-blank string value counts; null, numbers or objects are ignored. */
