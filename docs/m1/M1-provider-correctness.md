@@ -335,7 +335,7 @@ Numbers copied from the summary files (raw Maven logs are local-only; see owner 
 |---|---|---|---|
 | Baseline (before M1) | `839f049` | `Tests run: 320, Failures: 0, Errors: 0, Skipped: 0` · BUILD SUCCESS · 58 classes | `docs/m1/baseline-test-run-summary.txt` |
 | Pre-M1 health check (after 3 tenant-isolation fixes) | `5052719` | `Tests run: 323, Failures: 0, Errors: 0, Skipped: 0` · BUILD SUCCESS · 59 classes | `docs/health-check-after-summary.txt` |
-| M1 final (U9) | `b5077c9` | `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1` · BUILD SUCCESS · 78 classes | `docs/m1/m1-final-test-run-summary.txt` |
+| M1 final (U9, refreshed after re-recording) | `9948324` | `Tests run: 519, Failures: 0, Errors: 0, Skipped: 1` · BUILD SUCCESS · 78 classes | `docs/m1/m1-final-test-run-summary.txt` |
 
 Skipped 1 = `PaymentReconciliationTest.originalPaymentFailureMustNotFailNonLinkIntent`, the `@Disabled("M2: correlation of original-payment failures")` test required by U7 (verified to fail when force-enabled).
 

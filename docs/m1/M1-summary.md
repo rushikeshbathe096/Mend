@@ -4,7 +4,7 @@
 2. Every provider call returns a typed result (`Accepted | Rejected | NotSent | OutcomeUnknown`, `Found | NotFound | Unavailable`); a timeout, 5xx or 409 is `OutcomeUnknown`, never failed, and no POST is ever retried.
 3. `REQUEST_CUSTOMER_ACTION` creates a payment link with exactly the documented body (integer paise, attempt key as `reference_id`, no customer data); a 400 is resolved by lookup-by-reference, so one intent gets at most one link.
 4. A created link leaves the intent EXECUTING; a campaign becomes RECOVERED only on `captured` evidence (link `paid` + payment `captured`), never on a 2xx, an `authorized` or an `active` status; a failed attempt on a link changes nothing (D1).
-5. Evidence: 16 recorded Razorpay test-mode fixtures plus labelled doc-derived fixtures; tests 320 → 516 (`Failures: 0`, `Skipped: 1` = M2 tracking test); see `M1-provider-correctness.md` §12 and ADR-001 (Accepted).
+5. Evidence: 16 recorded Razorpay test-mode fixtures plus labelled doc-derived fixtures; tests 320 → 519 (`Failures: 0`, `Skipped: 1` = M2 tracking test); see `M1-provider-correctness.md` §12 and ADR-001 (Accepted).
 6. NOT done: merchant-initiated debits (`RETRY_PAYMENT` is NotSupported in Razorpay mode; U8 skipped for lack of recurring recordings).
 7. NOT done: claim fencing / lease safety during provider calls, a reconciler for EXECUTING intents with unknown outcomes, and link expiry/cancel handling (M2).
 8. NOT done: per-merchant Razorpay credentials (single-tenant, fail-closed resolver until M5) and customer delivery of the link URL.

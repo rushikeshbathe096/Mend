@@ -1,10 +1,10 @@
 # Summary of m1-final-test-run.txt (raw log is local-only, not tracked in git)
 command: cd backend && ./mvnw test 2>&1 | tee ../docs/m1/m1-final-test-run.txt
-date: 2026-10-05 09:54 (local time, file mtime)
-commit: b5077c9
-note: M1 close-out (U9); run on a working tree identical to this commit; Skipped 1 = spec-mandated @Disabled M2 test
+date: 2026-10-05 10:39 (local time, file mtime)
+commit: 9948324
+note: M1 close-out (U9, refreshed after re-recording); Skipped 1 = spec-mandated @Disabled M2 test
 
-total: [INFO] Tests run: 516, Failures: 0, Errors: 0, Skipped: 1
+total: [INFO] Tests run: 519, Failures: 0, Errors: 0, Skipped: 1
 build: [INFO] BUILD SUCCESS
 
 per-class surefire totals (78 classes):
@@ -16,11 +16,11 @@ Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.RazorpaySi
 Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.PasswordSecurityTest
 Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.JwtServiceTest
 Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayResponseClassifierTest
-Tests run: 37, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPaymentLinkContractTest
+Tests run: 38, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPaymentLinkContractTest
 Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayHttpFailureKindTest
 Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.SingleTenantEnvCredentialsResolverTest
 Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPropertiesBindingTest
-Tests run: 15, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayGetPaymentContractTest
+Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayGetPaymentContractTest
 Tests run: 30, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayEvidenceMapperTest
 Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayHttpSocketTest
 Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.RequestResultTest
@@ -48,7 +48,7 @@ Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase5E
 Tests run: 20, Failures: 0, Errors: 0, Skipped: 0 -- Database Integration Tests
 Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase19_5_FullMockE2EValidationTest
 Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.CrossTenantReadIsolationIntegrationTest
-Tests run: 28, Failures: 0, Errors: 0, Skipped: 1 -- com.mend.integration.PaymentReconciliationTest
+Tests run: 29, Failures: 0, Errors: 0, Skipped: 1 -- com.mend.integration.PaymentReconciliationTest
 Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase18ReliabilityAndFailureInjectionTest
 Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase20_RazorpayTestModeE2EValidationTest
 Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AiAgentIntegrationTest
