@@ -169,4 +169,12 @@ public class CampaignStateMachineTest {
         assertFalse(stateMachine.isTerminal(CampaignStatus.EXECUTING));
         assertFalse(stateMachine.isTerminal(CampaignStatus.FAILED));
     }
+
+    @Test
+    @DisplayName("M2: EXECUTING -> ACTION_PENDING is allowed (reconciler SAFE_RETRY, RETRY_DEFERRED)")
+    void testExecutingToActionPendingForSafeRetry() {
+        assertTrue(stateMachine.isValidTransition(CampaignStatus.EXECUTING, CampaignStatus.ACTION_PENDING));
+        assertDoesNotThrow(() -> stateMachine.validateTransition(CampaignStatus.EXECUTING, CampaignStatus.ACTION_PENDING));
+        assertFalse(stateMachine.isValidTransition(CampaignStatus.RECOVERED, CampaignStatus.ACTION_PENDING));
+    }
 }

@@ -204,4 +204,92 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                                 com.mend.domain.enums.ActionIntentStatus.READY)
             """)
     int cancelIfExecutable(@Param("id") UUID id, @Param("now") Instant now);
+
+    // ---- M2 U5 reconciler (only ActionIntentTransitions / ExecutionReconciler call these) ----
+
+    /** EXECUTING rows whose dispatch is older than the threshold (worker presumed dead). Legacy NULL dispatch → claimed/created. */
+    @Query("""
+            SELECT a.id FROM ActionIntent a
+             WHERE a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING
+               AND COALESCE(a.dispatchedAt, a.claimedAt, a.createdAt) < :threshold
+            """)
+    List<UUID> findStuckExecutingIds(@Param("threshold") Instant threshold);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1,
+                   a.status = com.mend.domain.enums.ActionIntentStatus.NEEDS_RECONCILIATION,
+                   a.reconcileAfter = :now
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING
+               AND COALESCE(a.dispatchedAt, a.claimedAt, a.createdAt) < :threshold
+            """)
+    int markStuck(@Param("id") UUID id, @Param("threshold") Instant threshold, @Param("now") Instant now);
+
+    /** Due reconciliation rows, locked; rows locked by another reconciler are skipped (SKIP LOCKED). Caller must be in a tx. */
+    @Query(value = """
+            SELECT id FROM action_intents
+             WHERE status IN ('NEEDS_RECONCILIATION', 'AWAITING_PAYMENT')
+               AND (reconcile_after IS NULL OR reconcile_after <= :now)
+             ORDER BY reconcile_after NULLS FIRST
+             LIMIT :limit
+               FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+    List<UUID> lockDueForReconciliation(@Param("now") Instant now, @Param("limit") int limit);
+
+    /** Reconcile lease: pushes the picked rows' next due time so no other reconciler takes them meanwhile. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1, a.reconcileAfter = :leaseUntil
+             WHERE a.id IN :ids
+               AND a.status IN (com.mend.domain.enums.ActionIntentStatus.NEEDS_RECONCILIATION,
+                                com.mend.domain.enums.ActionIntentStatus.AWAITING_PAYMENT)
+            """)
+    int leaseForReconciliation(@Param("ids") java.util.Collection<UUID> ids, @Param("leaseUntil") Instant leaseUntil);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1,
+                   a.status = :newStatus,
+                   a.responseReference = COALESCE(:responseReference, a.responseReference),
+                   a.completedAt = :completedAt,
+                   a.reconcileAfter = :reconcileAfter,
+                   a.reconcileAttempts = a.reconcileAttempts + 1
+             WHERE a.id = :id
+               AND a.status = :expected
+            """)
+    int reconcileTo(@Param("id") UUID id, @Param("expected") ActionIntentStatus expected, @Param("newStatus") ActionIntentStatus newStatus,
+                    @Param("responseReference") String responseReference, @Param("completedAt") Instant completedAt,
+                    @Param("reconcileAfter") Instant reconcileAfter);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1,
+                   a.reconcileAfter = :reconcileAfter,
+                   a.reconcileAttempts = a.reconcileAttempts + 1
+             WHERE a.id = :id
+               AND a.status = :expected
+            """)
+    int deferReconcile(@Param("id") UUID id, @Param("expected") ActionIntentStatus expected, @Param("reconcileAfter") Instant reconcileAfter);
+
+    /** SAFE_RETRY: same intent (same attempt key) back to READY; only for resend-safe action types; ownership cleared. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1,
+                   a.status = com.mend.domain.enums.ActionIntentStatus.READY,
+                   a.claimToken = NULL, a.workerId = NULL, a.claimedAt = NULL, a.dispatchedAt = NULL,
+                   a.reconcileAfter = NULL,
+                   a.reconcileAttempts = a.reconcileAttempts + 1
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.NEEDS_RECONCILIATION
+               AND a.actionType IN :resendSafeTypes
+               AND a.executionAttempts < :maxExecutionAttempts
+            """)
+    int safeRetry(@Param("id") UUID id, @Param("resendSafeTypes") java.util.Collection<String> resendSafeTypes,
+                  @Param("maxExecutionAttempts") int maxExecutionAttempts);
 }

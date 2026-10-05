@@ -87,6 +87,9 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private MockPaymentProvider mockPaymentProvider;
     @Autowired private BlockingPaymentProvider provider;
+    @Autowired private com.mend.service.ExecutionReconciler executionReconciler;
+    @Autowired private com.mend.service.ActionExecutionService executor;
+    @Autowired private com.mend.domain.repository.AuditLogRepository auditLogRepository;
 
     @MockitoBean private RecoveryOrchestratorService recoveryOrchestratorService;
 
@@ -221,6 +224,46 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         }
         join(a);
         assertFalse(orphan, "intent orphaned: READY with campaign EXECUTING");
+    }
+
+    @Test
+    @DisplayName("S2 (U5) worker dies after dispatch -> reconciler resolves it; the late worker result is discarded; one link only")
+    void s2CrashAfterDispatchIsResolvedByTheReconciler() throws Exception {
+        // Given: worker A dispatched and is stuck inside the provider call (the request has not reached the provider yet).
+        jdbcTemplate.update("UPDATE action_intents SET reconcile_after = now() + interval '30 days' "
+                + "WHERE status IN ('NEEDS_RECONCILIATION', 'AWAITING_PAYMENT')");
+        Fixture f = linkIntent(null);
+        Future<?> a = workerABlockedInProviderCall(f.key());
+        try {
+            // When: T_stuck passes and the reconciler runs.
+            jdbcTemplate.update("UPDATE action_intents SET dispatched_at = dispatched_at - interval '10 minutes', "
+                    + "claimed_at = claimed_at - interval '10 minutes' WHERE id = ?", f.intent().getId());
+            executionReconciler.runCycle();
+
+            // Then: stuck -> NEEDS_RECONCILIATION -> nothing at the provider -> SAFE_RETRY (same intent, same key).
+            assertEquals(ActionIntentStatus.READY, reload(f.intent()).getStatus());
+            assertEquals(CampaignStatus.ACTION_PENDING, campaignState(f.campaign()));
+        } finally {
+            provider.release(f.key());
+        }
+        join(a);
+
+        // Worker A's late result cannot touch the intent it no longer owns.
+        assertEquals(ActionIntentStatus.READY, reload(f.intent()).getStatus());
+        assertTrue(auditLogRepository.findByCampaignIdOrderByCreatedAtAsc(f.campaign().getId()).stream()
+                .anyMatch(log -> "STALE_WORKER_RESULT_DISCARDED".equals(log.getEventType())));
+
+        // The resend carries the same reference: the provider returns A's link, it never creates a second one.
+        String linkFromA = mockPaymentProvider.findPaymentLinkByReference(new com.mend.provider.MerchantRef(merchantId), f.key()).isFound()
+                ? "plink_mock_" + f.key().value().replace("mnd_", "") : null;
+        assertNotNull(linkFromA, "worker A's request landed after it was released");
+        ActionIntent reclaimed = actionIntentClaimService.claimSpecificIntent(f.intent().getId(), "worker-b").orElseThrow();
+        executor.executeActionIntent(f.intent().getId(), "worker-b", reclaimed.getClaimToken());
+
+        ActionIntent after = reload(f.intent());
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, after.getStatus());
+        assertEquals(linkFromA, after.getResponseReference());
+        assertEquals(2, provider.createCalls(f.key()), "two sends, one link (reference_id uniqueness)");
     }
 
     @Test

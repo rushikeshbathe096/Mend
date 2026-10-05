@@ -276,12 +276,11 @@ public class ActionExecutionService {
         campaign = campaignRepository.findById(intent.getCampaignId())
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + intent.getCampaignId()));
 
-        // Step 1: Create & Persist CampaignAttempt (Enforcing UK uk_campaign_attempt_number)
-        CampaignAttempt attempt = new CampaignAttempt(
-                UUID.randomUUID(),
-                campaign.getId(),
-                intent.getAttemptNumber()
-        );
+        // Step 1: Create & Persist CampaignAttempt (Enforcing UK uk_campaign_attempt_number).
+        // M2: a SAFE_RETRY re-executes the same intent (same attempt number), so the row may already exist: update it.
+        UUID campaignId = campaign.getId();
+        CampaignAttempt attempt = campaignAttemptRepository.findByCampaignIdAndAttemptNumber(campaignId, intent.getAttemptNumber())
+                .orElseGet(() -> new CampaignAttempt(UUID.randomUUID(), campaignId, intent.getAttemptNumber()));
         attempt.setActionType(intent.getActionType());
         attempt.setScheduledAt(intent.getScheduledAt());
         attempt.setStartedAt(intent.getClaimedAt() != null ? intent.getClaimedAt() : now);
