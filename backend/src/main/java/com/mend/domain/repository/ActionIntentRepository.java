@@ -260,10 +260,11 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                    a.reconcileAttempts = a.reconcileAttempts + 1
              WHERE a.id = :id
                AND a.status = :expected
+               AND a.version = :seenVersion
             """)
     int reconcileTo(@Param("id") UUID id, @Param("expected") ActionIntentStatus expected, @Param("newStatus") ActionIntentStatus newStatus,
                     @Param("responseReference") String responseReference, @Param("completedAt") Instant completedAt,
-                    @Param("reconcileAfter") Instant reconcileAfter);
+                    @Param("reconcileAfter") Instant reconcileAfter, @Param("seenVersion") long seenVersion);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -273,8 +274,10 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                    a.reconcileAttempts = a.reconcileAttempts + 1
              WHERE a.id = :id
                AND a.status = :expected
+               AND a.version = :seenVersion
             """)
-    int deferReconcile(@Param("id") UUID id, @Param("expected") ActionIntentStatus expected, @Param("reconcileAfter") Instant reconcileAfter);
+    int deferReconcile(@Param("id") UUID id, @Param("expected") ActionIntentStatus expected, @Param("reconcileAfter") Instant reconcileAfter,
+                       @Param("seenVersion") long seenVersion);
 
     /** SAFE_RETRY: same intent (same attempt key) back to READY; only for resend-safe action types; ownership cleared. */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -289,7 +292,8 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                AND a.status = com.mend.domain.enums.ActionIntentStatus.NEEDS_RECONCILIATION
                AND a.actionType IN :resendSafeTypes
                AND a.executionAttempts < :maxExecutionAttempts
+               AND a.version = :seenVersion
             """)
     int safeRetry(@Param("id") UUID id, @Param("resendSafeTypes") java.util.Collection<String> resendSafeTypes,
-                  @Param("maxExecutionAttempts") int maxExecutionAttempts);
+                  @Param("maxExecutionAttempts") int maxExecutionAttempts, @Param("seenVersion") long seenVersion);
 }

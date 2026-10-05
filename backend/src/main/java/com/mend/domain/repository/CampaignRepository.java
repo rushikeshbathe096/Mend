@@ -51,4 +51,9 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
                                            @Param("failureClass") String failureClass,
                                            @Param("search") String search,
                                            Pageable pageable);
+
+    /** Row lock for read-decide-transition sequences (M2 reconciler). */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("SELECT c FROM Campaign c WHERE c.id = :id")
+    Optional<Campaign> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") UUID id);
 }

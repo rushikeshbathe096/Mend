@@ -72,6 +72,13 @@ public class ExecutionReconciler {
     /** Tunables (ADR-002 OD-3). */
     public record Settings(boolean enabled, boolean scheduledEnabled, int batchSize, Duration lease, Duration stuckAfter,
                            Duration notFoundGrace, int maxExecutionAttempts, int deferralCap) {
+        public Settings {
+            if (batchSize < 1 || !lease.isPositive() || !stuckAfter.isPositive() || notFoundGrace.isNegative()
+                    || maxExecutionAttempts < 1 || deferralCap < 0) {
+                throw new IllegalStateException("invalid mend.reconciler settings: batch=" + batchSize + " lease=" + lease + " stuck="
+                        + stuckAfter + " grace=" + notFoundGrace + " maxExecutionAttempts=" + maxExecutionAttempts + " deferralCap=" + deferralCap);
+            }
+        }
     }
 
     @Autowired
@@ -136,9 +143,9 @@ public class ExecutionReconciler {
             try {
                 reconcile(id);
             } catch (RuntimeException e) {
-                // The row keeps its lease as reconcile_after, so it is retried after the lease, not in a hot loop.
                 log.error("event=reconcile_error intent_id={} exception={}", id, e.getClass().getSimpleName());
                 log.debug("reconcile_error detail intent_id={}", id, e);
+                deferAfterError(id, e);
             }
         }
         return new Cycle(stuck, picked);
@@ -151,13 +158,18 @@ public class ExecutionReconciler {
         Instant threshold = now.minus(settings.stuckAfter());
         int marked = 0;
         for (UUID id : intents.findStuckExecutingIds(threshold)) {
-            if (transitions.markStuck(id, threshold, now)) {
+            Boolean applied = tx.execute(status -> {
+                if (!transitions.markStuck(id, threshold, now)) {
+                    return false;
+                }
+                intents.findById(id).ifPresent(intent -> auditService.logEvent(intent.getMerchantId(), intent.getCampaignId(),
+                        "EXECUTION_STUCK", "SYSTEM", null,
+                        "intent=" + id + " EXECUTING->NEEDS_RECONCILIATION stuck_after_s=" + settings.stuckAfter().toSeconds()));
+                return true;
+            });
+            if (Boolean.TRUE.equals(applied)) {
                 marked++;
-                intents.findById(id).ifPresent(intent -> {
-                    auditService.logEvent(intent.getMerchantId(), intent.getCampaignId(), "EXECUTION_STUCK", "SYSTEM", null,
-                            "intent=" + id + " EXECUTING->NEEDS_RECONCILIATION stuck_after_s=" + settings.stuckAfter().toSeconds());
-                    log.warn("event=execution_stuck intent_id={}", id);
-                });
+                log.warn("event=execution_stuck intent_id={}", id);
             }
         }
         return marked;
@@ -227,7 +239,7 @@ public class ExecutionReconciler {
                 log.warn("event=awaiting_payment_link_not_found intent_id={}", intent.getId());
                 inTx(() -> {
                     if (transitions.reconcileTo(intent.getId(), ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.NEEDS_RECONCILIATION,
-                            null, clock.instant(), nextDue(intent))) {
+                            null, clock.instant(), nextDue(intent), intent.getVersion())) {
                         audit(intent, "RECONCILE_LINK_NOT_FOUND", "AWAITING_PAYMENT->NEEDS_RECONCILIATION");
                     }
                 });
@@ -245,7 +257,7 @@ public class ExecutionReconciler {
                 if (from == ActionIntentStatus.NEEDS_RECONCILIATION) {
                     inTx(() -> {
                         if (transitions.reconcileTo(intent.getId(), from, ActionIntentStatus.AWAITING_PAYMENT, link.providerLinkId(),
-                                clock.instant(), nextDue(intent))) {
+                                clock.instant(), nextDue(intent), intent.getVersion())) {
                             updateAttempt(intent, "ISSUED", link.providerLinkId(), null);
                             audit(intent, "RECONCILED_AWAITING_PAYMENT", "NEEDS_RECONCILIATION->AWAITING_PAYMENT link=" + link.providerLinkId());
                         }
@@ -288,7 +300,7 @@ public class ExecutionReconciler {
             return;
         }
         if (intent.getExecutionAttempts() >= settings.maxExecutionAttempts()) {
-            escalate(intent, RECONCILIATION_ESCALATED);
+            escalate(intent, RECONCILIATION_ESCALATED);   // a terminal campaign is handled inside, same policy as SAFE_RETRY's
             return;
         }
         safeRetry(intent);
@@ -298,21 +310,18 @@ public class ExecutionReconciler {
 
     private void safeRetry(ActionIntent intent) {
         inTx(() -> {
-            Campaign campaign = campaigns.findById(intent.getCampaignId()).orElseThrow();
+            Campaign campaign = campaigns.findByIdForUpdate(intent.getCampaignId()).orElseThrow();
             CampaignStatus state = campaign.getCurrentState();
             if (campaignStateMachine.isTerminal(state)) {
                 // Nothing exists at the provider and the campaign is over: do not resend.
-                if (transitions.reconcileTo(intent.getId(), ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.FAILED, null,
-                        clock.instant(), null)) {
-                    audit(intent, "RECONCILER_FAILED", "NOT_FOUND_CAMPAIGN_" + state);
-                }
+                failLinkOnTerminalCampaign(intent, state);
                 return;
             }
             if (state != CampaignStatus.EXECUTING && state != CampaignStatus.ACTION_PENDING) {
                 escalateInTx(intent, RECONCILIATION_ESCALATED);
                 return;
             }
-            if (!transitions.safeRetry(intent.getId(), settings.maxExecutionAttempts())) {
+            if (!transitions.safeRetry(intent.getId(), settings.maxExecutionAttempts(), intent.getVersion())) {
                 return;
             }
             if (state == CampaignStatus.EXECUTING) {
@@ -331,12 +340,17 @@ public class ExecutionReconciler {
 
     /** Intent → FAILED, campaign back to ELIGIBLE (approval requires it), review item with the reason code. */
     private void escalateInTx(ActionIntent intent, String reasonCode) {
-        if (!transitions.reconcileTo(intent.getId(), ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.FAILED, null,
-                clock.instant(), null)) {
+        CampaignStatus state = campaigns.findByIdForUpdate(intent.getCampaignId()).orElseThrow().getCurrentState();
+        if (campaignStateMachine.isTerminal(state) && RECONCILIATION_ESCALATED.equals(reasonCode)) {
+            // A link the provider does not know, on a campaign that is over: nothing for a human to decide.
+            failLinkOnTerminalCampaign(intent, state);
             return;
         }
-        Campaign campaign = campaigns.findById(intent.getCampaignId()).orElseThrow();
-        CampaignStatus state = campaign.getCurrentState();
+        // AMBIGUOUS_DEBIT always gets a review, whatever the campaign state: money may have moved.
+        if (!transitions.reconcileTo(intent.getId(), ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.FAILED, null,
+                clock.instant(), null, intent.getVersion())) {
+            return;
+        }
         if (state == CampaignStatus.EXECUTING) {
             transition(intent, CampaignStatus.FAILED, reasonCode + ": outcome of intent " + intent.getId() + " unresolved");
             state = CampaignStatus.FAILED;
@@ -352,19 +366,31 @@ public class ExecutionReconciler {
         log.warn("event=reconcile_escalated intent_id={} reason={}", intent.getId(), reasonCode);
     }
 
+    private void failLinkOnTerminalCampaign(ActionIntent intent, CampaignStatus campaignState) {
+        if (transitions.reconcileTo(intent.getId(), ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.FAILED, null,
+                clock.instant(), null, intent.getVersion())) {
+            updateAttempt(intent, "FAILED", null, "NOT_FOUND_CAMPAIGN_" + campaignState);
+            audit(intent, "RECONCILER_FAILED", "NEEDS_RECONCILIATION->FAILED NOT_FOUND_CAMPAIGN_" + campaignState);
+        }
+    }
+
     // ---- e. terminal outcomes ----
 
     private void succeed(ActionIntent intent, ActionIntentStatus from, String paymentId) {
         inTx(() -> {
-            if (!transitions.reconcileTo(intent.getId(), from, ActionIntentStatus.SUCCEEDED, paymentId, clock.instant(), null)) {
+            if (!transitions.reconcileTo(intent.getId(), from, ActionIntentStatus.SUCCEEDED, paymentId, clock.instant(), null, intent.getVersion())) {
                 return;
             }
             updateAttempt(intent, "SUCCESS", paymentId, null);
-            CampaignStatus state = campaigns.findById(intent.getCampaignId()).orElseThrow().getCurrentState();
+            CampaignStatus state = campaigns.findByIdForUpdate(intent.getCampaignId()).orElseThrow().getCurrentState();
             if (campaignStateMachine.isValidTransition(state, CampaignStatus.RECOVERED)) {
                 transition(intent, CampaignStatus.RECOVERED, "Captured payment " + paymentId + " confirmed by reconciler");
             } else {
-                log.warn("event=reconciler_success_campaign_not_recoverable intent_id={} campaign_state={}", intent.getId(), state);
+                // Real money on a campaign that cannot be RECOVERED (e.g. cancelled while the link was payable): surface it.
+                log.warn("event=captured_on_terminal_campaign intent_id={} campaign_state={}", intent.getId(), state);
+                audit(intent, "CAPTURED_ON_TERMINAL_CAMPAIGN", "payment=" + paymentId + " campaign_state=" + state);
+                humanApprovalService.createReview(intent.getMerchantId(), intent.getCampaignId(), "CAPTURED_ON_TERMINAL_CAMPAIGN: intent "
+                        + intent.getId() + " payment " + paymentId + " captured while campaign is " + state + "; human decision required");
             }
             audit(intent, "RECONCILER_SUCCEEDED", from + "->SUCCEEDED payment=" + paymentId);
         });
@@ -372,12 +398,12 @@ public class ExecutionReconciler {
 
     private void fail(ActionIntent intent, ActionIntentStatus from, String code) {
         inTx(() -> {
-            if (!transitions.reconcileTo(intent.getId(), from, ActionIntentStatus.FAILED, null, clock.instant(), null)) {
+            if (!transitions.reconcileTo(intent.getId(), from, ActionIntentStatus.FAILED, null, clock.instant(), null, intent.getVersion())) {
                 return;
             }
             updateAttempt(intent, "FAILED", null, code);
             // Existing failure path: EXECUTING -> FAILED -> EXHAUSTED.
-            CampaignStatus state = campaigns.findById(intent.getCampaignId()).orElseThrow().getCurrentState();
+            CampaignStatus state = campaigns.findByIdForUpdate(intent.getCampaignId()).orElseThrow().getCurrentState();
             if (state == CampaignStatus.ACTION_PENDING) {
                 transition(intent, CampaignStatus.EXECUTING, "Reconciler resolving intent " + intent.getId());
                 state = CampaignStatus.EXECUTING;
@@ -395,8 +421,25 @@ public class ExecutionReconciler {
 
     // ---- helpers ----
 
+    /** An error while reconciling a row: back off from a fresh read (no hot loop) and leave an audit trace. */
+    private void deferAfterError(UUID id, RuntimeException error) {
+        try {
+            inTx(() -> intents.findById(id)
+                    .filter(intent -> intent.getStatus() == ActionIntentStatus.NEEDS_RECONCILIATION
+                            || intent.getStatus() == ActionIntentStatus.AWAITING_PAYMENT)
+                    .ifPresent(intent -> {
+                        if (transitions.deferReconcile(id, intent.getStatus(), nextDue(intent), intent.getVersion())) {
+                            audit(intent, "RECONCILE_ERROR", "status=" + intent.getStatus() + " error=" + error.getClass().getSimpleName());
+                        }
+                    }));
+        } catch (RuntimeException deferFailed) {
+            // The row keeps its lease as reconcile_after: retried after the lease, never in a tight loop.
+            log.error("event=reconcile_error_defer_failed intent_id={} exception={}", id, deferFailed.getClass().getSimpleName());
+        }
+    }
+
     private void defer(ActionIntent intent, ActionIntentStatus from) {
-        transitions.deferReconcile(intent.getId(), from, nextDue(intent));
+        transitions.deferReconcile(intent.getId(), from, nextDue(intent), intent.getVersion());
     }
 
     private Instant nextDue(ActionIntent intent) {

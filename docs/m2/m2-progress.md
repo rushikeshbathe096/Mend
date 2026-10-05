@@ -190,7 +190,24 @@ Tests:
 - S2/S3/S5 were already enabled in U3. The S2 resolution the U3 comment deferred is now asserted.
 
 Full suite: `Tests run: 585, Failures: 0, Errors: 0, Skipped: 2` (551 + 34).
-Review: (pending)
+Review (fresh subagent): 0 blockers. Fixed in `M2 U5: review fixes`:
+- MAJOR inconsistent escalation on terminal campaigns (verified: `createReview` accepts any campaign state, so no stuck row, but the policy differed between attempts < max and ≥ max) → one policy in `escalateInTx`: a link NotFound on a terminal campaign → FAILED + audit `RECONCILER_FAILED NOT_FOUND_CAMPAIGN_<state>`, no review, for both attempt counts; an `AMBIGUOUS_DEBIT` always gets a review, whatever the campaign state (money may have moved). Tests `linkNotFoundOnTerminalCampaignFailsWithoutReview`, `ambiguousDebitOnTerminalCampaignStillGetsReview`, `escalationFromActionPendingCampaign`.
+- MINOR exception path had no backoff → `deferAfterError` re-reads the row, defers with backoff (attempts +1) and audits `RECONCILE_ERROR`; if even that fails, the row keeps its lease. Test `errorWhileReconcilingBacksOff`.
+- MINOR stuck sweep audit not atomic → `markStuck` and its `EXECUTION_STUCK` audit run in one transaction.
+- MINOR capture on a non-recoverable campaign was only a WARN → audit `CAPTURED_ON_TERMINAL_CAMPAIGN` + review item. Test `capturedOnTerminalCampaignIsSurfaced`.
+- MINOR unlocked campaign read-decide-transition → reconciler transactions read the campaign with `findByIdForUpdate` (PESSIMISTIC_WRITE; `Campaign` already has `@Version`, so a racing write fails loudly). Residual: a SAFE_RETRY that leaves an ACTION_PENDING campaign untouched can still race a cancellation that commits afterwards. The READY intent is then on a CANCELLED campaign; it is not in flight and can never be claimed (claim requires ACTION_PENDING).
+- MINOR reconciler writes fenced on status only → `reconcileTo`, `deferReconcile`, `safeRetry` also require `version = :seenVersion` (read after the lease bumped it), so a slow reconciler can never apply a decision made on a stale lookup after another actor changed the row. Test `reconcilerWritesRequireTheSeenVersion`.
+- MINOR settings not validated → `Settings` rejects batch < 1, lease/stuck ≤ 0, negative grace, maxExecutionAttempts < 1, negative deferral cap. Test `invalidSettingsAreRejected`.
+- MINOR concurrency test could not tell SKIP LOCKED from plain FOR UPDATE → new `lockedRowsAreSkippedNotWaitedFor`: another transaction holds row locks on 3 of 6 due rows, and a reconciler must return within 10 s having processed exactly the other 3.
+- MINOR S2 scenario's `runCycle` could act on other classes' leftover EXECUTING rows → they are pushed to `dispatched_at = now()` first. The link id is read from the lookup instead of being built.
+- MINOR coverage → added NR found PARTIALLY_PAID / CANCELLED, AWAITING EXPIRED, terminal-campaign NotFound, dead-worker finalize refused after the stuck sweep (`deadWorkerCannotFinalizeAfterStuckSweep`), and a `reconcile_after` assertion on paid-without-evidence.
+Rejected / explained:
+- "S2/S3/S5 un-disable not in the diff". They were enabled in U3 (see the U3 entry). The second skip is S7 (`@Disabled("M2-RED: … U6")`), the only remaining RED test; the M1 tracking test is the first.
+- "Debit budget counts attempts, not time". ADR-002 OD-3 defines the MEND-side deferral cap as a count (5). Changing it to a time window would change an owner decision. Escalating early only routes to a human, which is the safe direction. Recorded for the owner.
+- "`stuckAfter` > provider HTTP timeout". Valid concern, but the Razorpay timeouts are not visible to the reconciler in mock mode. Recorded for U10/ADR evidence: T_stuck 120 s must stay above Razorpay connect+read timeout. If it does not, a live worker's result is discarded (`STALE_WORKER_RESULT_DISCARDED`) and the reconciler resolves the row from evidence, so this is safe but noisy.
+- "fail() invents ACTION_PENDING → EXECUTING". Same shape as the existing webhook failure path (`transitionCampaignToFailure`); the state machine has no ACTION_PENDING → FAILED edge. Kept for consistency.
+- Nits not changed: dispatcher `Instant.now()`; lease via repository (not a status write); `findStuckExecutingIds` unbounded; `default` branch in `reconcile`; mock `duplicate` log flag. `reconcile_after` is `TIMESTAMPTZ` (V12), so the Instant binding is time-zone safe.
+Tests after fixes: `Tests run: 597, Failures: 0, Errors: 0, Skipped: 2`.
 
 ### Adaptations for U6 (written before applying)
 1. V13 (new migration, never edit V12):
