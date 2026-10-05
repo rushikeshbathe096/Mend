@@ -69,6 +69,8 @@ class V12MigrationTest extends AbstractIntegrationTest {
         UUID linkIssued = seedIntent(campaign, "EXECUTING", "plink_V12legacy001");
         UUID unknown = seedIntent(campaign, "EXECUTING", null);
         UUID payRef = seedIntent(campaign, "EXECUTING", "pay_V12legacy002");
+        // LIKE 'plink\_%' must match the underscore literally: "plinkX..." is not a link reference.
+        UUID notALink = seedIntent(campaign, "EXECUTING", "plinkXV12legacy03");
         UUID ready = seedIntent(campaign, "READY", null);
         UUID succeeded = seedIntent(campaign, "SUCCEEDED", "plink_V12done00001");
 
@@ -77,9 +79,12 @@ class V12MigrationTest extends AbstractIntegrationTest {
         assertEquals("AWAITING_PAYMENT", statusOf(linkIssued));
         assertEquals("NEEDS_RECONCILIATION", statusOf(unknown));
         assertEquals("NEEDS_RECONCILIATION", statusOf(payRef));
+        assertEquals("NEEDS_RECONCILIATION", statusOf(notALink));
         assertEquals("READY", statusOf(ready));
         assertEquals("SUCCEEDED", statusOf(succeeded));
-        assertNotNull(jdbc.queryForObject("SELECT reconcile_after FROM " + schema + ".action_intents WHERE id = ?", Object.class, linkIssued));
+        for (UUID remapped : new UUID[]{linkIssued, unknown, payRef, notALink}) {
+            assertNotNull(jdbc.queryForObject("SELECT reconcile_after FROM " + schema + ".action_intents WHERE id = ?", Object.class, remapped));
+        }
         assertNull(jdbc.queryForObject("SELECT reconcile_after FROM " + schema + ".action_intents WHERE id = ?", Object.class, ready));
         assertEquals(0, jdbc.queryForObject("SELECT version FROM " + schema + ".action_intents WHERE id = ?", Long.class, ready));
         assertEquals(0, jdbc.queryForObject("SELECT execution_attempts + reconcile_attempts FROM " + schema + ".action_intents WHERE id = ?", Integer.class, ready));
