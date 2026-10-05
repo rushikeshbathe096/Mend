@@ -13,6 +13,9 @@ import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.WebhookEventRepository;
+import com.mend.provider.PaymentEvidenceStatus;
+import com.mend.provider.PaymentLinkState;
+import com.mend.provider.razorpay.RazorpayEvidenceMapper;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +39,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
     private final CampaignStateMachine campaignStateMachine;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    /** Single interpreter of provider status strings (M1 U5): only captured is money. */
+    private final RazorpayEvidenceMapper evidenceMapper = new RazorpayEvidenceMapper();
 
     public DefaultPaymentReconciliationService(
             ActionIntentRepository actionIntentRepository,
@@ -94,11 +99,12 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             return ReconciliationResult.tenantMismatch("Webhook merchantId does not match Campaign merchantId");
         }
 
-        // Determine if event represents SUCCESS or FAILURE
-        Boolean isSuccessEvent = isSuccessOutcome(event.getEventType(), payloadDetails);
+        // Determine if the payload evidences SUCCESS (captured) or FAILURE (failed); anything else changes nothing
+        Boolean isSuccessEvent = evidencedOutcome(payloadDetails);
         if (isSuccessEvent == null) {
-            log.info("Webhook event type '{}' is not an outcome reconciliation event", event.getEventType());
-            return ReconciliationResult.unsupported("Event type '" + event.getEventType() + "' is not a reconciliation event");
+            log.info("Webhook event '{}' carries no captured/failed payment evidence; no state change [eventType={}]",
+                    event.getId(), event.getEventType());
+            return ReconciliationResult.unsupported("Event type '" + event.getEventType() + "' carries no captured or failed payment evidence");
         }
 
         // Check if Campaign or Intent is already terminal/finalized (Late Webhook Protection)
@@ -228,6 +234,15 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             }
         }
 
+        // Strategy 3b: Payment link id (ActionExecutionService stores the issued link id as responseReference)
+        if (payload.paymentLinkId() != null && !payload.paymentLinkId().isBlank()) {
+            Optional<ActionIntent> byLink = actionIntentRepository.findByResponseReference(payload.paymentLinkId());
+            if (byLink.isPresent()) {
+                log.info("Correlated ActionIntent '{}' by payment link id '{}'", byLink.get().getId(), payload.paymentLinkId());
+                return byLink.get();
+            }
+        }
+
         // Strategy 4: Campaign ID & Payment ID Correlation
         String paymentIdToMatch = payload.paymentId() != null ? payload.paymentId() : event.getExternalEventId();
         if (paymentIdToMatch != null && !paymentIdToMatch.isBlank() && event.getMerchantId() != null) {
@@ -260,26 +275,24 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         return null;
     }
 
-    private Boolean isSuccessOutcome(String eventType, PayloadDetails payload) {
-        if (eventType != null) {
-            String type = eventType.toLowerCase();
-            if (type.contains("captured") || type.contains("authorized") || type.contains("order.paid") || type.contains("charged")) {
-                return true;
-            }
-            if (type.contains("failed") || type.contains("cancelled") || type.contains("halted")) {
-                return false;
-            }
+    /**
+     * TRUE only on captured evidence (for link events: link PAID and its payment CAPTURED); FALSE only on a FAILED
+     * payment; null (no state change) for authorized, created, refunded, unrecognised or missing statuses.
+     * The event type is not a success signal.
+     */
+    private Boolean evidencedOutcome(PayloadDetails payload) {
+        PaymentEvidenceStatus paymentStatus = payload.status() == null ? null : evidenceMapper.mapPaymentStatus(payload.status());
+        if (paymentStatus == PaymentEvidenceStatus.FAILED) {
+            return false;
         }
-        if (payload.status() != null) {
-            String st = payload.status().toLowerCase();
-            if (st.equals("captured") || st.equals("authorized") || st.equals("paid") || st.equals("active")) {
-                return true;
-            }
-            if (st.equals("failed") || st.equals("cancelled")) {
-                return false;
-            }
+        if (paymentStatus != PaymentEvidenceStatus.CAPTURED) {
+            return null;
         }
-        return null;
+        if (payload.paymentLinkPresent()) {
+            PaymentLinkState linkState = evidenceMapper.mapLinkStatus(payload.paymentLinkStatus());
+            return linkState == PaymentLinkState.PAID ? true : null;
+        }
+        return true;
     }
 
     private void transitionCampaignToSuccess(Campaign campaign, ActionIntent intent, String providerRef) {
@@ -344,6 +357,10 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         String actionIntentId = null;
         String status = null;
         String failureReason = null;
+        boolean paymentLinkPresent = false;
+        String paymentLinkId = null;
+        String paymentLinkStatus = null;
+        String mendIntentId = null;
 
         if (event.getRawPayload() != null && !event.getRawPayload().isBlank()) {
             try {
@@ -354,6 +371,19 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                     JsonNode payload = root.get("payload");
                     if (payload.has("payment") && payload.get("payment").has("entity")) {
                         paymentEntity = payload.get("payment").get("entity");
+                    }
+                    if (payload.has("payment_link") && payload.get("payment_link").has("entity")) {
+                        JsonNode linkEntity = payload.get("payment_link").get("entity");
+                        paymentLinkPresent = true;
+                        if (linkEntity.has("id") && !linkEntity.get("id").isNull()) {
+                            paymentLinkId = linkEntity.get("id").asText();
+                        }
+                        if (linkEntity.has("status") && !linkEntity.get("status").isNull()) {
+                            paymentLinkStatus = linkEntity.get("status").asText();
+                        }
+                        if (linkEntity.has("notes") && linkEntity.get("notes").isObject() && linkEntity.get("notes").has("mend_intent_id")) {
+                            mendIntentId = linkEntity.get("notes").get("mend_intent_id").asText();
+                        }
                     }
                     if (payload.has("subscription") && payload.get("subscription").has("entity")) {
                         JsonNode subEntity = payload.get("subscription").get("entity");
@@ -378,11 +408,12 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                     if (paymentEntity.has("notes") && paymentEntity.get("notes").isObject()) {
                         JsonNode notes = paymentEntity.get("notes");
                         if (notes.has("idempotency_key")) idempotencyKey = notes.get("idempotency_key").asText();
+                        if (notes.has("mend_intent_id")) mendIntentId = notes.get("mend_intent_id").asText();
+                        // Legacy key, kept for intents created before M1.
                         if (notes.has("action_intent_id")) actionIntentId = notes.get("action_intent_id").asText();
                     }
-                    if (paymentEntity.has("receipt") && !paymentEntity.get("receipt").isNull()) {
-                        if (idempotencyKey == null) idempotencyKey = paymentEntity.get("receipt").asText();
-                    }
+                    // M1: `receipt` is no longer an idempotency-key fallback (payment links send no receipt; the
+                    // legacy rcpt_<n> value could never match an intent).
                     if (paymentEntity.has("error_description") && !paymentEntity.get("error_description").isNull()) {
                         failureReason = paymentEntity.get("error_description").asText();
                     }
@@ -397,7 +428,10 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             }
         }
 
-        return new PayloadDetails(paymentId, subscriptionId, idempotencyKey, actionIntentId, status, failureReason);
+        // notes.mend_intent_id (what M1 sends) takes precedence over the legacy notes.action_intent_id.
+        String intentIdForCorrelation = mendIntentId != null ? mendIntentId : actionIntentId;
+        return new PayloadDetails(paymentId, subscriptionId, idempotencyKey, intentIdForCorrelation, status, failureReason,
+                paymentLinkPresent, paymentLinkId, paymentLinkStatus);
     }
 
     private record PayloadDetails(
@@ -406,6 +440,9 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             String idempotencyKey,
             String actionIntentId,
             String status,
-            String failureReason
+            String failureReason,
+            boolean paymentLinkPresent,
+            String paymentLinkId,
+            String paymentLinkStatus
     ) {}
 }
