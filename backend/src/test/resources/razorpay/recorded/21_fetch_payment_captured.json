@@ -1,0 +1,49 @@
+{
+  "fixture": "21_fetch_payment_captured",
+  "mode": "test",
+  "recorded_at": "2026-10-05T05:04:25Z",
+  "latency_ms": 617,
+  "request": {
+    "method": "GET",
+    "path": "/v1/payments/pay_Tk6YGMVnG6oWIq",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "pay_Tk6YGMVnG6oWIq",
+      "entity": "payment",
+      "amount": 100,
+      "currency": "INR",
+      "status": "captured",
+      "order_id": "order_Tk6XLmzgSWNi1r",
+      "invoice_id": null,
+      "international": false,
+      "method": "netbanking",
+      "amount_refunded": 0,
+      "refund_status": null,
+      "captured": true,
+      "description": "#Tk6TAI6WoeOTDh",
+      "card_id": null,
+      "bank": "YESB",
+      "wallet": null,
+      "vpa": null,
+      "email": "<redacted>",
+      "contact": "<redacted>",
+      "notes": {
+        "mend_intent_id": "recording"
+      },
+      "fee": 3,
+      "tax": 0,
+      "error_code": null,
+      "error_description": null,
+      "error_source": null,
+      "error_step": null,
+      "error_reason": null,
+      "acquirer_data": {
+        "bank_transaction_id": "9434081"
+      },
+      "created_at": 1791176630
+    }
+  }
+}

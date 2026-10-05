@@ -1,0 +1,8 @@
+{
+  "fixture": "fetch_links_empty",
+  "mode": "doc-derived",
+  "_source": "https://razorpay-881012b3.mintlify.app/docs/api/payments/payment-links/fetch-all-standard.md",
+  "_note": "Documented list shape {\"payment_links\":[...]} with zero items: what a reference_id with no link returns. No recorded no-match lookup exists.",
+  "request": {"method": "GET", "path": "/v1/payment_links?reference_id=mnd_rec_1791176340", "body": null},
+  "response": {"status": 200, "body": {"payment_links": []}}
+}

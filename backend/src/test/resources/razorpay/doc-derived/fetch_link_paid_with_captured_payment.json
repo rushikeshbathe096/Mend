@@ -1,0 +1,53 @@
+{
+  "fixture": "fetch_link_paid_with_captured_payment",
+  "mode": "doc-derived",
+  "_source": "https://razorpay-881012b3.mintlify.app/docs/api/payments/payment-links/fetch-all-standard.md",
+  "_note": "Shape of the documented paid-link example; payments[] items use the documented item fields (payment_id, plink_id, amount, method, status, created_at, updated_at). Recorded fixture 20 (paid link) does not exist yet. Replace with fixture 20 when recorded. reference_id replaced with a MEND-shaped value (the documented example uses \"111\"); amounts, ids and statuses as in the documented example, payments[] item added with the documented item fields.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/payment_links/plink_KBnb7I424Rc1R9",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "accept_partial": false,
+      "amount": 10000,
+      "amount_paid": 10000,
+      "cancelled_at": 0,
+      "created_at": 1661852539,
+      "currency": "INR",
+      "customer": [],
+      "description": "Grocery",
+      "expire_by": 0,
+      "expired_at": 0,
+      "first_min_partial_amount": 0,
+      "id": "plink_KBnb7I424Rc1R9",
+      "notes": [],
+      "notify": {
+        "email": false,
+        "sms": false
+      },
+      "order_id": "order_KBneAVhT2zbzsU",
+      "payments": [
+        {
+          "amount": 10000,
+          "created_at": 1661852741,
+          "method": "upi",
+          "payment_id": "pay_KBneB6U4tBMjVm",
+          "plink_id": "plink_KBnb7I424Rc1R9",
+          "status": "captured",
+          "updated_at": 1661852741
+        }
+      ],
+      "reference_id": "mnd_rec_1791176340",
+      "reminder_enable": false,
+      "reminders": [],
+      "short_url": "https://rzp.io/i/alaBxs0i",
+      "status": "paid",
+      "updated_at": 1661852741,
+      "upi_link": false,
+      "user_id": ""
+    }
+  }
+}
