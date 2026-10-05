@@ -2,6 +2,7 @@ package com.mend.controller;
 
 import com.mend.domain.entity.AgentDecisionRecord;
 import com.mend.domain.repository.AgentDecisionRecordRepository;
+import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
 import com.mend.security.CurrentUser;
 import com.mend.security.TenantContext;
@@ -32,7 +33,12 @@ public class AgentDecisionQueryController {
             merchantId = UUID.fromString(headerMerchantId);
         }
 
-        List<AgentDecisionRecord> records = agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaignId);
+        if (merchantId == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        List<AgentDecisionRecord> records =
+                agentDecisionRecordRepository.findByCampaignIdAndMerchantIdOrderByCreatedAtDesc(campaignId, merchantId);
         return ResponseEntity.ok(records);
     }
 
@@ -41,6 +47,11 @@ public class AgentDecisionQueryController {
             @RequestParam(required = false) UUID merchantId,
             @RequestHeader(value = "X-Merchant-Id", required = false) String headerMerchantId,
             @CurrentUser AuthenticatedUser currentUser) {
+
+        // The merchantId query param bypasses SecurityFilter's X-Merchant-Id membership check.
+        if (merchantId != null && (currentUser == null || !currentUser.isMemberOfMerchant(merchantId))) {
+            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
+        }
 
         UUID effectiveMerchantId = merchantId;
         if (effectiveMerchantId == null) {

@@ -19,6 +19,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     Page<AuditLog> findByMerchantIdAndCampaignId(UUID merchantId, UUID campaignId, Pageable pageable);
     List<AuditLog> findByCampaignId(UUID campaignId);
     List<AuditLog> findByCampaignIdOrderByCreatedAtAsc(UUID campaignId);
+    List<AuditLog> findByMerchantIdAndCampaignIdOrderByCreatedAtAsc(UUID merchantId, UUID campaignId);
     List<AuditLog> findByActorId(UUID actorId);
     boolean existsByEventType(String eventType);
 }
