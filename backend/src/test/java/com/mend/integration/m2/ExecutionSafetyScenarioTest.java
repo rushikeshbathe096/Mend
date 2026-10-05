@@ -232,6 +232,7 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         // Given: worker A dispatched and is stuck inside the provider call (the request has not reached the provider yet).
         jdbcTemplate.update("UPDATE action_intents SET reconcile_after = now() + interval '30 days' "
                 + "WHERE status IN ('NEEDS_RECONCILIATION', 'AWAITING_PAYMENT')");
+        jdbcTemplate.update("UPDATE action_intents SET dispatched_at = now() WHERE status = 'EXECUTING'");
         Fixture f = linkIntent(null);
         Future<?> a = workerABlockedInProviderCall(f.key());
         try {
@@ -254,9 +255,9 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
                 .anyMatch(log -> "STALE_WORKER_RESULT_DISCARDED".equals(log.getEventType())));
 
         // The resend carries the same reference: the provider returns A's link, it never creates a second one.
-        String linkFromA = mockPaymentProvider.findPaymentLinkByReference(new com.mend.provider.MerchantRef(merchantId), f.key()).isFound()
-                ? "plink_mock_" + f.key().value().replace("mnd_", "") : null;
-        assertNotNull(linkFromA, "worker A's request landed after it was released");
+        var lookup = mockPaymentProvider.findPaymentLinkByReference(new com.mend.provider.MerchantRef(merchantId), f.key());
+        assertTrue(lookup.isFound(), "worker A's request landed after it was released");
+        String linkFromA = ((com.mend.provider.LookupResult.Found<com.mend.provider.PaymentLinkSnapshot>) lookup).value().providerLinkId();
         ActionIntent reclaimed = actionIntentClaimService.claimSpecificIntent(f.intent().getId(), "worker-b").orElseThrow();
         executor.executeActionIntent(f.intent().getId(), "worker-b", reclaimed.getClaimToken());
 

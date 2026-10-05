@@ -135,9 +135,10 @@ public class ActionIntentTransitions {
     }
 
     /** NEEDS_RECONCILIATION / AWAITING_PAYMENT → another reconcile state or a terminal one, counting the reconcile attempt. */
+    /** {@code seenVersion}: the version the reconciler read after leasing the row; a concurrent change makes this a no-op. */
     @Transactional
     public boolean reconcileTo(UUID id, ActionIntentStatus expected, ActionIntentStatus newStatus, String responseReference,
-                               Instant now, Instant reconcileAfter) {
+                               Instant now, Instant reconcileAfter, long seenVersion) {
         if (!RECONCILE_FROM.contains(expected) || !RECONCILE_TARGETS.contains(newStatus) || expected == newStatus) {
             throw new IllegalArgumentException("reconcileTo not allowed: " + expected + " -> " + newStatus);
         }
@@ -146,16 +147,16 @@ public class ActionIntentTransitions {
             throw new IllegalArgumentException("a non-terminal reconcile state needs reconcileAfter");
         }
         return repository.reconcileTo(id, expected, newStatus, responseReference, terminal ? now : null,
-                terminal ? null : reconcileAfter) == 1;
+                terminal ? null : reconcileAfter, seenVersion) == 1;
     }
 
     /** Stay in {@code expected}, try again at {@code reconcileAfter} (backoff). */
     @Transactional
-    public boolean deferReconcile(UUID id, ActionIntentStatus expected, Instant reconcileAfter) {
+    public boolean deferReconcile(UUID id, ActionIntentStatus expected, Instant reconcileAfter, long seenVersion) {
         if (!RECONCILE_FROM.contains(expected) || reconcileAfter == null) {
             throw new IllegalArgumentException("deferReconcile not allowed from " + expected);
         }
-        return repository.deferReconcile(id, expected, reconcileAfter) == 1;
+        return repository.deferReconcile(id, expected, reconcileAfter, seenVersion) == 1;
     }
 
     /**
@@ -163,7 +164,7 @@ public class ActionIntentTransitions {
      * idempotent and while dispatches remain. The capability gate is part of the UPDATE predicate, so no caller can bypass it.
      */
     @Transactional
-    public boolean safeRetry(UUID id, int maxExecutionAttempts) {
+    public boolean safeRetry(UUID id, int maxExecutionAttempts, long seenVersion) {
         List<String> resendSafe = Arrays.stream(ActionType.values())
                 .filter(capabilities::supportsIdempotentResend)
                 .map(ActionType::name)
@@ -171,6 +172,6 @@ public class ActionIntentTransitions {
         if (resendSafe.isEmpty()) {
             return false;
         }
-        return repository.safeRetry(id, resendSafe, maxExecutionAttempts) == 1;
+        return repository.safeRetry(id, resendSafe, maxExecutionAttempts, seenVersion) == 1;
     }
 }

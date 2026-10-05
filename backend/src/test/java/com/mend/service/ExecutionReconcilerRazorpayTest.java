@@ -192,6 +192,7 @@ class ExecutionReconcilerRazorpayTest extends com.mend.integration.AbstractInteg
         reconciler.runCycle();
 
         assertEquals(ActionIntentStatus.AWAITING_PAYMENT, reload(intent).getStatus());
+        assertTrue(reload(intent).getReconcileAfter().isAfter(Instant.now()), "the row must be pushed into the future");
         assertEquals(CampaignStatus.EXECUTING, campaigns.findById(intent.getCampaignId()).orElseThrow().getCurrentState());
         assertOnlyReads();
     }

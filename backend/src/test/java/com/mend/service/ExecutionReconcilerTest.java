@@ -78,10 +78,24 @@ class ExecutionReconcilerTest extends AbstractIntegrationTest {
     }
 
     private ExecutionReconciler newReconciler(Duration backoffBase, Duration backoffCap, long seed) {
-        return new ExecutionReconciler(intents, transitions, paymentProvider, capabilities, campaigns, attempts, campaignLifecycleService,
+        return newReconciler(backoffBase, backoffCap, seed, paymentProvider, 50);
+    }
+
+    private ExecutionReconciler newReconciler(Duration backoffBase, Duration backoffCap, long seed, PaymentProvider provider, int batchSize) {
+        return new ExecutionReconciler(intents, transitions, provider, capabilities, campaigns, attempts, campaignLifecycleService,
                 campaignStateMachine, humanApprovalService, auditService, transactionManager,
-                new ExecutionReconciler.Settings(true, false, 50, Duration.ofSeconds(60), Duration.ofSeconds(120), Duration.ofSeconds(120), 3, 5),
+                new ExecutionReconciler.Settings(true, false, batchSize, Duration.ofSeconds(60), Duration.ofSeconds(120), Duration.ofSeconds(120), 3, 5),
                 new ReconcileBackoff(backoffBase, backoffCap, new SplittableRandom(seed)), Clock.systemUTC());
+    }
+
+    private void campaignTo(ActionIntent intent, CampaignStatus... path) {
+        for (CampaignStatus target : path) {
+            campaignLifecycleService.transitionState(merchantId, intent.getCampaignId(), target, "test: drive campaign", "SYSTEM", null);
+        }
+    }
+
+    private Optional<ReviewQueue> pendingReview(ActionIntent intent) {
+        return reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(intent.getCampaignId(), ReviewQueueStatus.PENDING);
     }
 
     // ---- fixtures ----
@@ -358,7 +372,7 @@ class ExecutionReconcilerTest extends AbstractIntegrationTest {
         mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
         ActionIntent intent = inNeedsReconciliation(ActionType.RETRY_PAYMENT);
         dispatchedLongAgo(intent);
-        assertFalse(transitions.safeRetry(intent.getId(), 3), "the UPDATE predicate itself refuses a non-resend-safe action");
+        assertFalse(transitions.safeRetry(intent.getId(), 3, reload(intent).getVersion()), "the UPDATE predicate itself refuses a non-resend-safe action");
 
         for (int cycle = 1; cycle <= 5; cycle++) {
             due(intent);
@@ -470,6 +484,245 @@ class ExecutionReconcilerTest extends AbstractIntegrationTest {
                 assertDeferred(row, ActionIntentStatus.NEEDS_RECONCILIATION, 1);
             }
         } finally {
+            threads.shutdownNow();
+        }
+    }
+
+    // ---- U5 review: remaining table rows ----
+
+    @Test
+    @DisplayName("NR + link found PARTIALLY_PAID -> AWAITING_PAYMENT")
+    void needsReconciliationFoundPartiallyPaidAwaitsPayment() {
+        mock.setSimulatedLostResponse(true);
+        ActionIntent intent = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        mock.setLinkState(key(intent), PaymentLinkState.PARTIALLY_PAID);
+        due(intent);
+
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, reload(intent).getStatus());
+    }
+
+    @Test
+    @DisplayName("NR + link found CANCELLED -> FAILED, campaign EXHAUSTED")
+    void needsReconciliationFoundCancelledFails() {
+        mock.setSimulatedLostResponse(true);
+        ActionIntent intent = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        mock.setLinkState(key(intent), PaymentLinkState.CANCELLED);
+        due(intent);
+
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.EXHAUSTED, campaignState(intent));
+    }
+
+    @Test
+    @DisplayName("AWAITING_PAYMENT + link EXPIRED -> FAILED, campaign EXHAUSTED")
+    void awaitingPaymentExpiredFails() {
+        ActionIntent intent = awaitingPayment();
+        mock.setLinkState(key(intent), PaymentLinkState.EXPIRED);
+        due(intent);
+
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.EXHAUSTED, campaignState(intent));
+    }
+
+    // ---- U5 review: terminal-campaign policy, escalation states ----
+
+    @Test
+    @DisplayName("Link NotFound after grace on a CANCELLED campaign -> FAILED, no resend, no review (attempts below and at max)")
+    void linkNotFoundOnTerminalCampaignFailsWithoutReview() {
+        mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
+        ActionIntent belowMax = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        ActionIntent atMax = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        jdbc.update("UPDATE action_intents SET execution_attempts = 3 WHERE id = ?", atMax.getId());
+        for (ActionIntent intent : List.of(belowMax, atMax)) {
+            campaignTo(intent, CampaignStatus.CANCELLED);
+            dispatchedLongAgo(intent);
+            due(intent);
+        }
+
+        reconciler.runCycle();
+
+        for (ActionIntent intent : List.of(belowMax, atMax)) {
+            assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+            assertEquals(CampaignStatus.CANCELLED, campaignState(intent));
+            assertTrue(pendingReview(intent).isEmpty(), "nothing for a human to decide");
+            assertTrue(audited(intent, "RECONCILER_FAILED"));
+            assertEquals(1, providerSends(intent));
+        }
+    }
+
+    @Test
+    @DisplayName("Ambiguous debit on a CANCELLED campaign -> FAILED + AMBIGUOUS_DEBIT review anyway (money may have moved)")
+    void ambiguousDebitOnTerminalCampaignStillGetsReview() {
+        mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
+        ActionIntent intent = inNeedsReconciliation(ActionType.RETRY_PAYMENT);
+        campaignTo(intent, CampaignStatus.CANCELLED);
+        jdbc.update("UPDATE action_intents SET reconcile_attempts = 5 WHERE id = ?", intent.getId());
+        due(intent);
+
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.CANCELLED, campaignState(intent));
+        assertTrue(pendingReview(intent).orElseThrow().getReason().startsWith(ExecutionReconciler.AMBIGUOUS_DEBIT));
+    }
+
+    @Test
+    @DisplayName("Escalation from a campaign in ACTION_PENDING -> campaign ELIGIBLE + review")
+    void escalationFromActionPendingCampaign() {
+        mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
+        ActionIntent intent = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        campaignTo(intent, CampaignStatus.ACTION_PENDING);
+        jdbc.update("UPDATE action_intents SET execution_attempts = 3 WHERE id = ?", intent.getId());
+        dispatchedLongAgo(intent);
+        due(intent);
+
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.ELIGIBLE, campaignState(intent));
+        assertTrue(pendingReview(intent).orElseThrow().getReason().startsWith(ExecutionReconciler.RECONCILIATION_ESCALATED));
+    }
+
+    @Test
+    @DisplayName("Captured payment on a campaign that cannot be RECOVERED -> intent SUCCEEDED, audit + review (money surfaced)")
+    void capturedOnTerminalCampaignIsSurfaced() {
+        ActionIntent intent = awaitingPayment();
+        campaignTo(intent, CampaignStatus.CANCELLED);
+        mock.payLink(key(intent), PaymentEvidenceStatus.CAPTURED);
+        due(intent);
+
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.SUCCEEDED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.CANCELLED, campaignState(intent));
+        assertTrue(audited(intent, "CAPTURED_ON_TERMINAL_CAMPAIGN"));
+        assertTrue(pendingReview(intent).orElseThrow().getReason().startsWith("CAPTURED_ON_TERMINAL_CAMPAIGN"));
+    }
+
+    // ---- U5 review: liveness on errors, version fence, stale worker, settings ----
+
+    @Test
+    @DisplayName("An exception while reconciling a row -> backoff + audit RECONCILE_ERROR (no hot loop)")
+    void errorWhileReconcilingBacksOff() {
+        mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
+        ActionIntent intent = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        due(intent);
+        PaymentProvider exploding = new PaymentProvider() {
+            public com.mend.provider.RequestResult<com.mend.provider.PaymentLinkSnapshot> createPaymentLink(com.mend.provider.MerchantRef m, com.mend.provider.CreatePaymentLink c) {
+                throw new AssertionError("the reconciler must never create");
+            }
+            public com.mend.provider.LookupResult<com.mend.provider.PaymentLinkSnapshot> findPaymentLinkByReference(com.mend.provider.MerchantRef m, ProviderAttemptKey k) {
+                throw new IllegalStateException("boom");
+            }
+            public com.mend.provider.LookupResult<com.mend.provider.PaymentLinkSnapshot> getPaymentLink(com.mend.provider.MerchantRef m, String id) {
+                throw new IllegalStateException("boom");
+            }
+            public com.mend.provider.LookupResult<com.mend.provider.PaymentEvidence> getPayment(com.mend.provider.MerchantRef m, String id) {
+                throw new IllegalStateException("boom");
+            }
+        };
+
+        newReconciler(Duration.ofSeconds(30), Duration.ofHours(6), 3, exploding, 50).runCycle();
+
+        assertDeferred(intent, ActionIntentStatus.NEEDS_RECONCILIATION, 1);
+        assertTrue(audited(intent, "RECONCILE_ERROR"));
+    }
+
+    @Test
+    @DisplayName("Reconciler writes are fenced by the version seen after the lease: a concurrent change makes them no-ops")
+    void reconcilerWritesRequireTheSeenVersion() {
+        mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
+        ActionIntent intent = inNeedsReconciliation(ActionType.REQUEST_CUSTOMER_ACTION);
+        long seen = reload(intent).getVersion();
+        jdbc.update("UPDATE action_intents SET version = version + 1 WHERE id = ?", intent.getId());
+
+        assertFalse(transitions.deferReconcile(intent.getId(), ActionIntentStatus.NEEDS_RECONCILIATION, Instant.now().plusSeconds(60), seen));
+        assertFalse(transitions.safeRetry(intent.getId(), 3, seen));
+        assertFalse(transitions.reconcileTo(intent.getId(), ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.FAILED, null,
+                Instant.now(), null, seen));
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, reload(intent).getStatus());
+        assertEquals(0, reload(intent).getReconcileAttempts());
+    }
+
+    @Test
+    @DisplayName("After the stuck sweep, the presumed-dead worker's finalize is refused")
+    void deadWorkerCannotFinalizeAfterStuckSweep() {
+        ActionIntent intent = readyIntent(ActionType.REQUEST_CUSTOMER_ACTION);
+        ActionIntent claimed = claimService.claimSpecificIntent(intent.getId(), "slow-worker").orElseThrow();
+        campaignTo(intent, CampaignStatus.EXECUTING);
+        assertTrue(transitions.dispatch(intent.getId(), claimed.getClaimToken(), Instant.now()));
+        dispatchedLongAgo(intent);
+        mock.setSimulatedLookupUnavailable(true);
+
+        reconciler.runCycle();
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, reload(intent).getStatus());
+
+        assertFalse(transitions.finalizeFromExecuting(intent.getId(), claimed.getClaimToken(), ActionIntentStatus.AWAITING_PAYMENT,
+                "plink_late", null, Instant.now()));
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, reload(intent).getStatus());
+    }
+
+    @Test
+    @DisplayName("Invalid reconciler settings fail at startup")
+    void invalidSettingsAreRejected() {
+        assertThrows(IllegalStateException.class, () -> new ExecutionReconciler.Settings(true, true, 0, Duration.ofSeconds(60),
+                Duration.ofSeconds(120), Duration.ofSeconds(120), 3, 5));
+        assertThrows(IllegalStateException.class, () -> new ExecutionReconciler.Settings(true, true, 50, Duration.ZERO,
+                Duration.ofSeconds(120), Duration.ofSeconds(120), 3, 5));
+        assertThrows(IllegalStateException.class, () -> new ExecutionReconciler.Settings(true, true, 50, Duration.ofSeconds(60),
+                Duration.ofSeconds(120), Duration.ofSeconds(120), 0, 5));
+    }
+
+    @Test
+    @DisplayName("SKIP LOCKED: rows locked by another transaction are skipped without blocking; the others are processed")
+    void lockedRowsAreSkippedNotWaitedFor() throws Exception {
+        List<ActionIntent> rows = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            ActionIntent intent = readyIntent(ActionType.REQUEST_CUSTOMER_ACTION);
+            jdbc.update("UPDATE action_intents SET status = 'NEEDS_RECONCILIATION', dispatched_at = now(), execution_attempts = 1, "
+                    + "reconcile_after = now() - interval '1 second' WHERE id = ?", intent.getId());
+            rows.add(intent);
+        }
+        List<ActionIntent> held = rows.subList(0, 3);
+        List<ActionIntent> free = rows.subList(3, 6);
+        ExecutorService threads = Executors.newSingleThreadExecutor();
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        org.springframework.transaction.support.TransactionTemplate holder = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        try {
+            Future<?> lockHolder = threads.submit(() -> holder.executeWithoutResult(status -> {
+                for (ActionIntent intent : held) {
+                    jdbc.queryForList("SELECT id FROM action_intents WHERE id = ? FOR UPDATE", intent.getId());
+                }
+                locked.countDown();
+                try {
+                    releaseLock.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }));
+            assertTrue(locked.await(10, TimeUnit.SECONDS));
+
+            ExecutionReconciler b = newReconciler(Duration.ofHours(1), Duration.ofHours(1), 9, paymentProvider, 6);
+            ExecutionReconciler.Cycle cycle = CompletableFuture.supplyAsync(b::runCycle).get(10, TimeUnit.SECONDS);
+
+            for (ActionIntent intent : free) {
+                assertTrue(cycle.picked().contains(intent.getId()));
+                assertDeferred(intent, ActionIntentStatus.NEEDS_RECONCILIATION, 1);
+            }
+            for (ActionIntent intent : held) {
+                assertFalse(cycle.picked().contains(intent.getId()), "a locked row must be skipped");
+            }
+            releaseLock.countDown();
+            lockHolder.get(10, TimeUnit.SECONDS);
+        } finally {
+            releaseLock.countDown();
             threads.shutdownNow();
         }
     }
