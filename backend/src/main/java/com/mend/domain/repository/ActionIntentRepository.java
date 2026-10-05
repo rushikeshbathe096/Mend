@@ -102,4 +102,81 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
             @Param("workerId") String workerId,
             @Param("expectedCampaignStatus") CampaignStatus expectedCampaignStatus
     );
+
+    // ---- M2 fenced transitions (only ActionIntentTransitions calls these) ----
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE ActionIntent a SET a.status = com.mend.domain.enums.ActionIntentStatus.READY WHERE a.id = :id AND a.status = com.mend.domain.enums.ActionIntentStatus.SCHEDULED")
+    int promoteScheduled(@Param("id") UUID id);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = com.mend.domain.enums.ActionIntentStatus.EXPIRED, a.completedAt = :now
+             WHERE a.id = :id
+               AND a.status IN (com.mend.domain.enums.ActionIntentStatus.SCHEDULED, com.mend.domain.enums.ActionIntentStatus.READY,
+                                com.mend.domain.enums.ActionIntentStatus.PENDING)
+               AND a.expiresAt IS NOT NULL AND a.expiresAt < :now
+            """)
+    int expireUnclaimed(@Param("id") UUID id, @Param("now") Instant now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = com.mend.domain.enums.ActionIntentStatus.READY,
+                   a.claimedAt = NULL, a.claimToken = NULL, a.workerId = NULL
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.CLAIMED
+               AND a.dispatchedAt IS NULL
+               AND a.claimedAt < :threshold
+            """)
+    int releaseIfUndispatched(@Param("id") UUID id, @Param("threshold") Instant threshold);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING,
+                   a.dispatchedAt = :now,
+                   a.executionAttempts = a.executionAttempts + 1
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.CLAIMED
+               AND a.claimToken = :token
+            """)
+    int dispatch(@Param("id") UUID id, @Param("token") String token, @Param("now") Instant now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = :newStatus, a.completedAt = :now
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.CLAIMED
+               AND a.claimToken = :token
+            """)
+    int abandonClaim(@Param("id") UUID id, @Param("token") String token, @Param("newStatus") ActionIntentStatus newStatus,
+                     @Param("now") Instant now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = :newStatus,
+                   a.responseReference = COALESCE(:responseReference, a.responseReference),
+                   a.completedAt = :completedAt,
+                   a.reconcileAfter = :reconcileAfter
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING
+               AND a.claimToken = :token
+            """)
+    int finalizeFromExecuting(@Param("id") UUID id, @Param("token") String token, @Param("newStatus") ActionIntentStatus newStatus,
+                              @Param("responseReference") String responseReference, @Param("completedAt") Instant completedAt,
+                              @Param("reconcileAfter") Instant reconcileAfter);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.status = com.mend.domain.enums.ActionIntentStatus.CANCELLED, a.completedAt = :now
+             WHERE a.id = :id
+               AND a.status NOT IN (com.mend.domain.enums.ActionIntentStatus.SUCCEEDED, com.mend.domain.enums.ActionIntentStatus.FAILED,
+                                    com.mend.domain.enums.ActionIntentStatus.CANCELLED, com.mend.domain.enums.ActionIntentStatus.EXPIRED)
+            """)
+    int cancelNonTerminal(@Param("id") UUID id, @Param("now") Instant now);
 }

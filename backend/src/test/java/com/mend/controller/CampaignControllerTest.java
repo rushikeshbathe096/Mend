@@ -45,6 +45,8 @@ class CampaignControllerTest {
     private ActionIntentRepository actionIntentRepository;
     @Mock
     private AuditService auditService;
+    @Mock
+    private com.mend.service.ActionIntentClaimService actionIntentClaimService;
 
     private CampaignController campaignController;
 
@@ -69,7 +71,8 @@ class CampaignControllerTest {
                 agentDecisionRecordRepository,
                 campaignRepository,
                 actionIntentRepository,
-                auditService
+                auditService,
+                actionIntentClaimService
         );
     }
 
@@ -108,5 +111,51 @@ class CampaignControllerTest {
 
         verify(campaignLifecycleService).getOrCreateCampaign(merchantId, "pay_test_123", "cust_hash_123", "sub_123");
         verify(recoveryOrchestratorService).orchestrateRecovery(merchantId, campaignId);
+    }
+
+    private ActionIntent readyIntentForOrchestration(UUID campaignId) {
+        Campaign campaign = new Campaign();
+        campaign.setId(campaignId);
+        campaign.setMerchantId(merchantId);
+        campaign.setPaymentId("pay_test_456");
+        campaign.setCurrentState(CampaignStatus.ACTION_PENDING);
+        ActionIntent intent = new ActionIntent();
+        intent.setId(UUID.randomUUID());
+        intent.setActionType("REQUEST_CUSTOMER_ACTION");
+        intent.setStatus(ActionIntentStatus.READY);
+        when(campaignLifecycleService.getOrCreateCampaign(merchantId, "pay_test_456", null, null)).thenReturn(campaign);
+        when(recoveryOrchestratorService.orchestrateRecovery(merchantId, campaignId)).thenReturn(intent);
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+        when(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaignId)).thenReturn(Collections.emptyList());
+        return intent;
+    }
+
+    @Test
+    void startRecovery_executesOnlyAfterAtomicClaim() {
+        UUID campaignId = UUID.randomUUID();
+        ActionIntent intent = readyIntentForOrchestration(campaignId);
+        when(actionIntentClaimService.claimSpecificIntent(org.mockito.ArgumentMatchers.eq(intent.getId()), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.of(intent));
+
+        campaignController.startRecovery(new StartRecoveryRequest("pay_test_456", null, null), merchantId.toString(), authenticatedUser);
+
+        verify(actionExecutionService).executeActionIntent(org.mockito.ArgumentMatchers.eq(intent.getId()), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any());
+        // M2: the manual path never claims by saving the entity.
+        verify(actionIntentRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void startRecovery_doesNotExecuteWhenClaimNotAcquired() {
+        UUID campaignId = UUID.randomUUID();
+        ActionIntent intent = readyIntentForOrchestration(campaignId);
+        when(actionIntentClaimService.claimSpecificIntent(org.mockito.ArgumentMatchers.eq(intent.getId()), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.empty());
+
+        var response = campaignController.startRecovery(new StartRecoveryRequest("pay_test_456", null, null), merchantId.toString(), authenticatedUser);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        verify(actionExecutionService, org.mockito.Mockito.never()).executeActionIntent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
     }
 }

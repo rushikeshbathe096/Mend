@@ -367,7 +367,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
         assertEquals("plink_Tk6TAI6WoeOTDh", report.getExternalReference());
         ActionIntent storedIntent = actionIntentRepository.findById(fixture.intent().getId()).orElseThrow();
-        assertEquals(ActionIntentStatus.EXECUTING, storedIntent.getStatus());
+        // M2 behaviour change: a live payment link is AWAITING_PAYMENT (was EXECUTING), see ADR-002
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, storedIntent.getStatus());
         assertEquals("plink_Tk6TAI6WoeOTDh", storedIntent.getResponseReference());
         Campaign storedCampaign = campaignRepository.findById(fixture.campaign().getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, storedCampaign.getCurrentState());
@@ -465,6 +466,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
                 ActionIntentStatus.CLAIMED, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION", Instant.now());
         intent.setClaimedAt(Instant.now());
         intent.setWorkerId("worker-phase20");
+        // M2: a CLAIMED intent always carries a claim token (fixture correction; the dispatch fence requires it), see ADR-002
+        intent.setClaimToken(UUID.randomUUID().toString());
         return new LinkFixture(campaign, actionIntentRepository.saveAndFlush(intent));
     }
 
@@ -473,6 +476,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         stored.setStatus(ActionIntentStatus.CLAIMED);
         stored.setClaimedAt(Instant.now());
         stored.setWorkerId("worker-phase20");
+        // M2: a CLAIMED intent always carries a claim token (fixture correction; the dispatch fence requires it), see ADR-002
+        stored.setClaimToken(UUID.randomUUID().toString());
         return actionIntentRepository.saveAndFlush(stored);
     }
 

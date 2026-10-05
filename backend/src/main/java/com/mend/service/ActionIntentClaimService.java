@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -24,16 +25,19 @@ public class ActionIntentClaimService {
     private static final Logger log = LoggerFactory.getLogger(ActionIntentClaimService.class);
 
     private final ActionIntentRepository actionIntentRepository;
+    private final ActionIntentTransitions transitions;
     private final AuditService auditService;
     private final int batchSize;
     private final Duration leaseDuration;
 
     public ActionIntentClaimService(
             ActionIntentRepository actionIntentRepository,
+            ActionIntentTransitions transitions,
             AuditService auditService,
             @org.springframework.beans.factory.annotation.Value("${mend.scheduler.batch-size:50}") int batchSize,
             @org.springframework.beans.factory.annotation.Value("${mend.scheduler.lease-duration-minutes:5}") int leaseDurationMinutes) {
         this.actionIntentRepository = actionIntentRepository;
+        this.transitions = transitions;
         this.auditService = auditService;
         this.batchSize = batchSize;
         this.leaseDuration = Duration.ofMinutes(leaseDurationMinutes);
@@ -48,8 +52,10 @@ public class ActionIntentClaimService {
 
         List<ActionIntent> promotedIntents = new ArrayList<>();
         for (ActionIntent intent : scheduledIntents) {
+            if (!transitions.promote(intent.getId())) {
+                continue;
+            }
             intent.setStatus(ActionIntentStatus.READY);
-            actionIntentRepository.save(intent);
             promotedIntents.add(intent);
 
             log.info("Promoted Action Intent '{}' for campaign '{}' from SCHEDULED to READY", intent.getId(), intent.getCampaignId());
@@ -71,17 +77,7 @@ public class ActionIntentClaimService {
 
         for (ActionIntent intent : readyIntents) {
             String claimToken = UUID.randomUUID().toString();
-            int updated = actionIntentRepository.claimIntentAtomic(
-                    intent.getId(),
-                    ActionIntentStatus.READY,
-                    ActionIntentStatus.CLAIMED,
-                    now,
-                    claimToken,
-                    workerId,
-                    CampaignStatus.ACTION_PENDING
-            );
-
-            if (updated == 1) {
+            if (transitions.claim(intent.getId(), workerId, claimToken, now)) {
                 intent.setStatus(ActionIntentStatus.CLAIMED);
                 intent.setClaimedAt(now);
                 intent.setClaimToken(claimToken);
@@ -105,11 +101,14 @@ public class ActionIntentClaimService {
 
         List<ActionIntent> releasedIntents = new ArrayList<>();
         for (ActionIntent intent : expiredClaims) {
+            // Only undispatched claims are released; possibly-dispatched work (EXECUTING) never returns to READY (invariant 13).
+            if (!transitions.releaseIfUndispatched(intent.getId(), expiredThreshold)) {
+                continue;
+            }
             intent.setStatus(ActionIntentStatus.READY);
             intent.setClaimedAt(null);
             intent.setClaimToken(null);
             intent.setWorkerId(null);
-            actionIntentRepository.save(intent);
             releasedIntents.add(intent);
 
             auditService.logEvent(
@@ -134,9 +133,11 @@ public class ActionIntentClaimService {
 
         List<ActionIntent> processed = new ArrayList<>();
         for (ActionIntent intent : expiredIntents) {
+            if (!transitions.expire(intent.getId(), now)) {
+                continue;
+            }
             intent.setStatus(ActionIntentStatus.EXPIRED);
             intent.setCompletedAt(now);
-            actionIntentRepository.save(intent);
             processed.add(intent);
 
             auditService.logEvent(
@@ -153,5 +154,19 @@ public class ActionIntentClaimService {
         }
 
         return processed;
+    }
+
+    /**
+     * Atomic claim of one specific intent, with the same predicate as the scheduler's claim (READY, due, campaign
+     * ACTION_PENDING). Used by every non-scheduler path into execution. Empty when another actor owns it or it is not claimable.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<ActionIntent> claimSpecificIntent(UUID intentId, String workerId) {
+        String claimToken = UUID.randomUUID().toString();
+        if (!transitions.claim(intentId, workerId, claimToken, Instant.now())) {
+            log.info("Worker '{}' could not claim Action Intent '{}' (not claimable or owned by another worker)", workerId, intentId);
+            return Optional.empty();
+        }
+        return actionIntentRepository.findById(intentId);
     }
 }

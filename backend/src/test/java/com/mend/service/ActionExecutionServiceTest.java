@@ -201,7 +201,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         // Assert 2: ActionIntent left EXECUTING for reconciliation
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING (was FAILED), see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, updatedIntent.getStatus());
 
         // Assert 3: Campaign is not RECOVERED
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
