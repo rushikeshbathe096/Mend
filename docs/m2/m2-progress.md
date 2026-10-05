@@ -216,3 +216,41 @@ Tests after fixes: `Tests run: 597, Failures: 0, Errors: 0, Skipped: 2`.
    - create the partial unique index. The header notes lock behaviour.
 2. The invoice-key derivation comes from the original failure webhook (`inv:` / `ord:` / `pay:`), copied onto the intent at creation.
 3. S7's fixture gets its `invoice_key` through the production derivation; un-disable S7.
+
+## U6 — invoice_key + DB-enforced one in flight per invoice
+Built:
+- `InvoiceKeyResolver`. It is a pure `fromPayload` over the untrusted payment entity: `inv:` | `ord:` | `pay:`, with id shapes validated (`inv_` / `order_` / `pay_` + 1–60 alnum). The first present field decides, and a malformed one falls back to `cmp:<campaignId>` + WARN, so it under-groups and never merges.
+  - `resolveForCampaign` reads the stored failure webhook, using the same tenant-scoped lookup as the amount resolver.
+- `Campaign.invoiceKey`, set by `CampaignLifecycleService.getOrCreateCampaign`. That covers every creation path: webhook classification, manual start-recovery and demo; without a webhook it is the fallback. `@PrePersist` defaults it to `cmp:<id>`.
+- `ActionIntentService.createActionIntentFromCompliance` copies the campaign key. `ActionIntent` `@PrePersist` defaults to `cmp:<campaignId>`, the same value as the campaign default.
+- V13:
+  - `campaigns.invoice_key` backfilled with `cmp:<id>`, NOT NULL;
+  - intents backfilled from their campaign, NOT NULL;
+  - the U2-review backfill of `dispatched_at` / `execution_attempts` for legacy reconcile rows;
+  - `ux_action_intents_one_inflight_per_invoice`;
+  - header with the runbook query and a lock-behaviour note.
+- Claim: `claimIntentAtomic` adds `NOT EXISTS (in-flight sibling with the same merchant_id + invoice_key)`. `claimDueIntents` and `claimSpecificIntent` are no longer wrapped in a transaction, so each promote and claim commits on its own. A unique violation under a true race (`DataIntegrityViolationException`) means "not claimed" + audit `CLAIM_BLOCKED_INFLIGHT`.
+- Spec item 6: SAFE_RETRY (NR→READY) leaves the in-flight set. Every other in-flight → in-flight move (dispatch, finalize to NR/AWAITING, reconciler NR↔AWAITING, markStuck) keeps the row's own index entry. Intents are created as PENDING/SCHEDULED/READY. So **claim is the only entry into the in-flight set**, and it is the only place that can hit the index. Nothing else needed handling.
+
+Deviations / decisions:
+- **Local test DB data fix (declared).** Before V13, the shared test DB held one campaign with 3 intents, two of them in flight (EXECUTING + CLAIMED). They were leftovers of my own U3 `ActionIntentTransitionsTest` (merchant "transitions merchant", payment `pay_m2t…`, worker `worker-t`). V13 would correctly have failed on it (runbook case).
+  - Fix: the two leftover test rows were set CANCELLED by hand in the local test DB (`ed1ceb7f…`, `aa784b9b…`).
+  - The test fixture now gives each intent its own invoice key, so it cannot recreate the shape.
+  - This is not production data, and V13 itself was not weakened: it still fails on real duplicates (tested).
+  - Flagged for owner review because the orchestrator lists "V13 fails on existing data" as a hard stop. I judged test-generated leftovers to be outside that rule's intent.
+- Existing campaigns get `cmp:<id>`, not a re-derivation in SQL. A webhook payload in SQL would be untrusted parsing inside a migration, and the fallback is today's per-campaign behaviour.
+- The `ExecutionSafetyScenarioTest.linkIntent` fixture now creates its campaign through `getOrCreateCampaign` (production derivation) and copies the key onto the intent like `ActionIntentService`. S7 un-disabled and passing.
+
+Tests:
+- `InvoiceKeyResolverTest` (7, doc-derived payloads, AMBIGUOUS noted).
+- `OneInFlightPerInvoiceTest` (6): derivation at campaign creation with and without a webhook; copy at intent creation through the real compliance path; direct-SQL index violation; claim predicate blocking a sibling; two threads → exactly one claimed; a deterministic true race (A's claim uncommitted, B blocked on the index via `pg_locks`, A commits → B not claimed + `CLAIM_BLOCKED_INFLIGHT`).
+- `V13MigrationTest` (3): backfills + index + NOT NULL; the index rejects a second in-flight intent; migration fails on existing duplicates (runbook case).
+- S7 enabled.
+
+Full suite: `Tests run: 613, Failures: 0, Errors: 0, Skipped: 1` (597 + 16; the skip is the M1 tracking test only, so no RED test remains disabled before U7).
+Review: (pending)
+
+### Adaptations for U7 (written before applying)
+1. U7 hard-stop check: no `@Disabled("M2-RED…")` remains (verified by grep before starting).
+2. The concurrency matrix reuses `BlockingPaymentProvider`, the SQL time travel and the reconciler `runCycle`. Each new test parks other classes' reconcile/EXECUTING rows the same way.
+3. Run the full suite 3× for flakes (Phase5 Redis test watched since U4).

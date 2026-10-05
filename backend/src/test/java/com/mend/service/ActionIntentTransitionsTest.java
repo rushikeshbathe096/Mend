@@ -45,8 +45,12 @@ class ActionIntentTransitionsTest extends AbstractIntegrationTest {
     }
 
     private ActionIntent intent(ActionIntentStatus status) {
-        return intents.save(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, "REQUEST_CUSTOMER_ACTION",
-                "CUSTOMER_ACTION_REQUIRED", null, status, "intent:" + UUID.randomUUID(), Instant.now().minusSeconds(5)));
+        ActionIntent intent = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, "REQUEST_CUSTOMER_ACTION",
+                "CUSTOMER_ACTION_REQUIRED", null, status, "intent:" + UUID.randomUUID(), Instant.now().minusSeconds(5));
+        // M2 U6 fixture correction: these tests exercise single-intent transitions with several in-flight intents on one
+        // campaign; each gets its own invoice key so the one-in-flight-per-invoice index (tested elsewhere) does not apply.
+        intent.setInvoiceKey("test:" + intent.getId());
+        return intents.save(intent);
     }
 
     private ActionIntent claimed(String token) {

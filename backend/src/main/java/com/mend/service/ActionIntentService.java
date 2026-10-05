@@ -121,6 +121,8 @@ public class ActionIntentService {
 
         // Expiration Window: 24 hours window
         intent.setExpiresAt(scheduledAt.plus(Duration.ofHours(24)));
+        // M2 U6: one in-flight intent per invoice — the intent carries its campaign's invoice key.
+        intent.setInvoiceKey(campaign.getInvoiceKey() != null ? campaign.getInvoiceKey() : InvoiceKeyResolver.fallback(campaign.getId()));
 
         try {
             intent = actionIntentRepository.saveAndFlush(intent);

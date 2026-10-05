@@ -64,7 +64,10 @@ public class ActionIntentClaimService {
         return promotedIntents;
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    /**
+     * Not transactional on purpose (M2 U6): every promote and every claim commits in its own transaction, so a unique
+     * violation of the one-in-flight-per-invoice index under a true race aborts only that claim.
+     */
     public List<ActionIntent> claimDueIntents(String workerId, int limit) {
         Instant now = Instant.now();
         Pageable pageable = PageRequest.of(0, Math.min(limit, batchSize));
@@ -77,7 +80,7 @@ public class ActionIntentClaimService {
 
         for (ActionIntent intent : readyIntents) {
             String claimToken = UUID.randomUUID().toString();
-            if (transitions.claim(intent.getId(), workerId, claimToken, now)) {
+            if (tryClaim(intent.getId(), intent.getMerchantId(), intent.getCampaignId(), workerId, claimToken, now)) {
                 intent.setStatus(ActionIntentStatus.CLAIMED);
                 intent.setClaimedAt(now);
                 intent.setClaimToken(claimToken);
@@ -160,13 +163,30 @@ public class ActionIntentClaimService {
      * Atomic claim of one specific intent, with the same predicate as the scheduler's claim (READY, due, campaign
      * ACTION_PENDING). Used by every non-scheduler path into execution. Empty when another actor owns it or it is not claimable.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<ActionIntent> claimSpecificIntent(UUID intentId, String workerId) {
         String claimToken = UUID.randomUUID().toString();
-        if (!transitions.claim(intentId, workerId, claimToken, Instant.now())) {
+        Optional<ActionIntent> target = actionIntentRepository.findById(intentId);
+        if (target.isEmpty()
+                || !tryClaim(intentId, target.get().getMerchantId(), target.get().getCampaignId(), workerId, claimToken, Instant.now())) {
             log.info("Worker '{}' could not claim Action Intent '{}' (not claimable or owned by another worker)", workerId, intentId);
             return Optional.empty();
         }
         return actionIntentRepository.findById(intentId);
+    }
+
+    /**
+     * One claim in its own transaction (no caller transaction: see {@link #claimDueIntents}). The claim predicate already
+     * refuses an intent whose invoice has another in-flight intent; under a true race the unique index decides, and the
+     * loser is simply not claimed.
+     */
+    private boolean tryClaim(UUID intentId, UUID merchantId, UUID campaignId, String workerId, String claimToken, Instant now) {
+        try {
+            return transitions.claim(intentId, workerId, claimToken, now);
+        } catch (org.springframework.dao.DataIntegrityViolationException inFlightSibling) {
+            log.info("event=claim_blocked_inflight intent_id={} worker={}", intentId, workerId);
+            auditService.logEvent(merchantId, campaignId, "CLAIM_BLOCKED_INFLIGHT", "SYSTEM", null,
+                    "intent=" + intentId + " not claimed: another intent for the same invoice is in flight");
+            return false;
+        }
     }
 }

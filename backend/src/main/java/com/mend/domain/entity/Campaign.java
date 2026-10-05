@@ -71,6 +71,25 @@ public class Campaign {
         this.updatedAt = Instant.now();
     }
 
+    /** M2 U6: invoice identity (§6); defaults to the per-campaign fallback so every campaign has one. */
+    @Column(name = "invoice_key", length = 120, nullable = false)
+    private String invoiceKey;
+
+    @PrePersist
+    public void prePersistInvoiceKey() {
+        if (invoiceKey == null && id != null) {
+            invoiceKey = "cmp:" + id;
+        }
+    }
+
+    public String getInvoiceKey() {
+        return invoiceKey;
+    }
+
+    public void setInvoiceKey(String invoiceKey) {
+        this.invoiceKey = invoiceKey;
+    }
+
     @PreUpdate
     public void preUpdate() {
         this.updatedAt = Instant.now();

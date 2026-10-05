@@ -128,11 +128,6 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     /** Campaign ACTION_PENDING with its original-failure webhook (amount source) and a READY payment-link intent. */
     private Fixture linkIntent(String orderIdOrNull) {
         String paymentId = "pay_m2s" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        Campaign campaign = new Campaign(UUID.randomUUID(), merchantId);
-        campaign.setPaymentId(paymentId);
-        campaign.setCurrentState(CampaignStatus.ACTION_PENDING);
-        campaign = campaignRepository.save(campaign);
-
         String orderField = orderIdOrNull == null ? "" : ",\"order_id\":\"" + orderIdOrNull + "\"";
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), paymentId, "payment.failed", "RAZORPAY",
                 "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + paymentId
@@ -141,15 +136,22 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
         event.setProcessingStatus(WebhookEventStatus.VERIFIED);
         webhookEventRepository.save(event);
 
+        // M2 U6: the campaign is created by the production path, which derives invoice_key from the stored failure webhook.
+        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, null, null);
+        campaign.setCurrentState(CampaignStatus.ACTION_PENDING);
+        campaign = campaignRepository.save(campaign);
+
         ComplianceDecisionEntity compliance = complianceDecisionRepository.save(new ComplianceDecisionEntity(UUID.randomUUID(),
                 campaign.getId(), merchantId, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED,
                 ComplianceReason.ALLOWED, "Compliant action", "v1.0.0"));
         // Scheduled long ago so the scheduler's batch (ordered by scheduled_at, max 50) always includes it, whatever
         // other test classes left behind in the shared database.
-        ActionIntent intent = actionIntentRepository.save(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
+        ActionIntent newIntent = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
                 ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(),
                 ActionIntentStatus.READY, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION",
-                Instant.EPOCH.plusSeconds(Math.floorMod(campaign.getId().getMostSignificantBits(), 1_000_000L))));
+                Instant.EPOCH.plusSeconds(Math.floorMod(campaign.getId().getMostSignificantBits(), 1_000_000L)));
+        newIntent.setInvoiceKey(campaign.getInvoiceKey());   // as ActionIntentService.createActionIntentFromCompliance does
+        ActionIntent intent = actionIntentRepository.save(newIntent);
         return new Fixture(campaign, intent, ProviderAttemptKey.forIntent(intent.getId()));
     }
 
@@ -364,13 +366,14 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @Disabled("M2-RED: S7 two intents for one order are both in flight (2 > 1). U6: fixture must get invoice_key via the production derivation")
     @DisplayName("S7 two campaigns for the same order (not a recording) -> at most one intent in flight")
     void s7AtMostOneInFlightPerInvoice() {
         // Given: two campaigns whose original failure payloads share an order_id (hand-built, not a recording).
         String sharedOrder = "order_M2s7" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
         Fixture first = linkIntent(sharedOrder);
         Fixture second = linkIntent(sharedOrder);
+        assertEquals("ord:" + sharedOrder, first.campaign().getInvoiceKey(), "precondition: production derivation");
+        assertEquals(first.campaign().getInvoiceKey(), second.campaign().getInvoiceKey());
 
         // When: the scheduler runs.
         actionScheduler.pollAndExecuteDueActions();
