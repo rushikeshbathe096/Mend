@@ -657,11 +657,10 @@ class PaymentReconciliationTest {
     }
 
     @Test
-    @Disabled("M2: correlation of original-payment failures")
-    @DisplayName("Known gap (M2): payment.failed for the ORIGINAL payment must not fail the latest recovery intent")
+    @DisplayName("Owner decision D1: payment.failed for the ORIGINAL payment does not fail an in-flight link intent")
     void originalPaymentFailureMustNotFailLatestIntent() {
-        // Strategy 4 correlates by campaign.paymentId and picks the latest intent, so a (late/duplicate) payment.failed for
-        // the original payment marks an in-flight recovery intent FAILED. Tracked for M2; this asserts the desired behaviour.
+        // Was @Disabled (M2 gap). Owner decision D1 makes FAILED a no-op for link intents, so this link case now holds;
+        // the remaining non-link strategy-4 gap is tracked by originalPaymentFailureMustNotFailNonLinkIntent below.
         Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_original_failed");
         ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, "plink_M1inflight01");
         WebhookEvent event = stored("payment.failed",
@@ -745,5 +744,62 @@ class PaymentReconciliationTest {
 
         assertEquals(ReconciliationResult.Status.RECONCILED_FAILURE, reconciliationService.reconcileWebhookEvent(event).getStatus());
         assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    @Disabled("M2: correlation of original-payment failures")
+    @DisplayName("Known gap (M2): payment.failed for the ORIGINAL payment must not fail an in-flight NON-link intent")
+    void originalPaymentFailureMustNotFailNonLinkIntent() {
+        // Strategy 4 correlates by campaign.paymentId and picks the latest intent, so a (late/duplicate) payment.failed for
+        // the original payment marks an in-flight non-link intent (e.g. outcome unknown) FAILED. Asserts the desired behaviour.
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_original_failed_nonlink");
+        ActionIntent intent = intentFor(campaign, "RETRY_PAYMENT", ActionIntentStatus.EXECUTING, null);
+        WebhookEvent event = stored("payment.failed",
+                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_original_failed_nonlink\",\"status\":\"failed\"}}}}");
+
+        reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    @DisplayName("Owner decision D1: failed attempt on a payment link alone -> intent EXECUTING, campaign not EXHAUSTED")
+    void failedLinkAttemptAloneIsNoOp() {
+        // Not a recording: hand-built payload (assumes the attempt's payment carries the link's notes.mend_intent_id).
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_d1_alone_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, "plink_M1d1alone01");
+        WebhookEvent failed = stored("payment.failed", String.format(
+                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_d1_try1\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(failed);
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_UNSUPPORTED_EVENT, result.getStatus());
+        assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        CampaignStatus state = campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState();
+        assertNotEquals(CampaignStatus.EXHAUSTED, state);
+        assertEquals(CampaignStatus.EXECUTING, state);
+    }
+
+    @Test
+    @DisplayName("Owner decision D1: failed attempt then captured payment on the same link -> RECOVERED")
+    void failedThenCapturedOnSameLinkRecovers() {
+        // Not a recording: hand-built payloads (link PAID + payment CAPTURED rule from U7).
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_d1_retry_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, "plink_M1d1retry01");
+        WebhookEvent failed = stored("payment.failed", String.format(
+                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_d1_try1\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+        assertEquals(ReconciliationResult.Status.SKIPPED_UNSUPPORTED_EVENT, reconciliationService.reconcileWebhookEvent(failed).getStatus());
+
+        WebhookEvent paid = stored("payment_link.paid",
+                "{\"event\":\"payment_link.paid\",\"payload\":{"
+                        + "\"payment_link\":{\"entity\":{\"id\":\"plink_M1d1retry01\",\"status\":\"paid\"}},"
+                        + "\"payment\":{\"entity\":{\"id\":\"pay_m1_d1_try2\",\"status\":\"captured\"}}}}");
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(paid);
+
+        assertEquals(ReconciliationResult.Status.RECONCILED_SUCCESS, result.getStatus());
+        assertEquals(ActionIntentStatus.SUCCEEDED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.RECOVERED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
     }
 }
