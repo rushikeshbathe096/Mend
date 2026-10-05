@@ -28,3 +28,27 @@ Rejected: #8 "U1 adaptations don't belong in U0's entry" — the orchestrator ru
 3. S6 is split: S6a webhook moves the intent to terminal while A is blocked (expected ALREADY-SAFE thanks to the terminal check); S6b release flips the CLAIMED intent to READY mid-call and A then finalizes (the U0-found path; expected RED).
 4. Target-state assertions use status *names* (e.g. `"NEEDS_RECONCILIATION"`) so the tests compile before U2 adds the enum values.
 5. S7 has no `invoice_key` yet: the test defines "same invoice" as its own two campaigns whose original failure payloads share an `order_id` (hand-built, labelled "not a recording") and asserts ≤ 1 of the two intents is in an in-flight status.
+
+## U1 — RED scenario tests
+Built: `backend/src/test/java/com/mend/integration/m2/ExecutionSafetyScenarioTest.java` (7 tests) and `BlockingPaymentProvider` (test-scoped `@Primary` wrapper around the mock: counts create calls per attempt key, holds the first call for registered keys). No production change.
+Results against current code (force-run, failure line observed):
+
+| Scenario | Status | Observed failure (today) |
+|---|---|---|
+| S1 manual vs scheduler | **RED** | `expected: <1> but was: <2>` (two create calls for one attempt key) |
+| S2 crash after dispatch | **RED** | `intent orphaned: READY with campaign EXECUTING` |
+| S3 unknown outcome | **RED** | `expected: <NEEDS_RECONCILIATION> but was: <EXECUTING>` |
+| S5 stale READY re-claimed | **RED** | `expected: <1> but was: <2>` |
+| S6a webhook moves intent to terminal mid-call | **ALREADY-SAFE** | passes: finalize skips terminal intents (`ActionExecutionService.java:209`) |
+| S6b release mid-call, then stale finalize | **RED** | `stale worker wrote EXECUTING to an intent whose claim had been released` |
+| S7 two campaigns, one order | **RED** | `in-flight intents for one invoice: 2` |
+
+RED tests are `@Disabled("M2-RED: S<n> ...")`. Full suite: `Tests run: 526, Failures: 0, Errors: 0, Skipped: 7` (519 + 7; skipped = M1 tracking test + 6 RED). Each test < 1 s.
+Notes: S1 also logs a `campaign_attempts` unique-key violation from the second finalize (the existing constraint catches the duplicate attempt row, not the duplicate provider call).
+
+### Adaptations for U2 (written before applying)
+1. New columns use `TIMESTAMP WITH TIME ZONE` (V8 convention for scheduler columns; JPA `Instant`).
+2. `version BIGINT NOT NULL DEFAULT 0` is added in V12 but NOT mapped in Java until U4 (`ddl-auto=validate` ignores unmapped columns).
+3. Migration test: a throwaway schema in the test database migrated with Flyway `target=11`, seeded with legacy EXECUTING rows (with and without a `plink_` reference) and an unknown status, then migrated to 12; asserts the remap, the CHECK constraints and the reconcile index; the schema is dropped afterwards. This exercises the real V12 file on a real pre-V12 schema rather than re-implementing its SQL.
+4. Pre-check done: the shared test DB is at V11 with 0 `action_intents` rows, so V12 cannot fail on existing data there.
+5. `ActionIntentStatus.isInFlight()` = CLAIMED, EXECUTING, NEEDS_RECONCILIATION, AWAITING_PAYMENT; the two new states are non-terminal and non-executable (existing predicates unchanged).
