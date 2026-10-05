@@ -267,10 +267,12 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         ActionIntent intent = createActionIntent(ActionIntentStatus.CLAIMED, Instant.now().minusSeconds(5), ActionType.RETRY_PAYMENT.name());
         intent.setComplianceDecisionId(blockedDecision.getId());
+        // M2: a CLAIMED intent always carries a claim token (fixture correction), see ADR-002
+        intent.setClaimToken("phase10-token");
         actionIntentRepository.save(intent);
 
         assertThrows(ComplianceBlockedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), null));
+                actionExecutionService.executeActionIntent(intent.getId(), null, "phase10-token"));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
     }
@@ -280,10 +282,12 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
     void testTenantIsolationEnforcement() {
         ActionIntent intent = createActionIntent(ActionIntentStatus.CLAIMED, Instant.now().minusSeconds(5), ActionType.RETRY_PAYMENT.name());
         intent.setMerchantId(tenantBId); // Mismatched tenant
+        // M2: a CLAIMED intent always carries a claim token (fixture correction), see ADR-002
+        intent.setClaimToken("phase10-token");
         actionIntentRepository.save(intent);
 
         assertThrows(TenantAccessDeniedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), null));
+                actionExecutionService.executeActionIntent(intent.getId(), null, "phase10-token"));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
     }

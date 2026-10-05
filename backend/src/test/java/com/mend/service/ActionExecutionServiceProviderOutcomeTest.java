@@ -80,7 +80,8 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
     }
 
     private PaymentExecutionResult execute(ActionIntent intent) {
-        return actionExecutionService.executeActionIntent(intent.getId(), "worker-outcome");
+        // M2 behaviour change: the executor requires the caller's claim token (fail closed), see ADR-002
+        return actionExecutionService.executeActionIntent(intent.getId(), "worker-outcome", intent.getClaimToken());
     }
 
     private ActionIntent reload(ActionIntent intent) {

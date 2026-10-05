@@ -43,20 +43,21 @@ public class ActionSchedulerTest {
                 ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
                 ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
         );
+        intent.setClaimToken("claim-key-4");
 
         when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
                 .thenReturn(List.of(intent));
 
         PaymentExecutionResult expectedResult = PaymentExecutionResult.success("ref-123", "Success message", "key-4");
         // M2 behaviour change: the scheduler passes the claim token from its atomic claim to the executor, see ADR-002
-        when(actionExecutionService.executeActionIntent(eq(intentId), anyString(), any()))
+        when(actionExecutionService.executeActionIntent(eq(intentId), anyString(), eq("claim-key-4")))
                 .thenReturn(expectedResult);
 
         List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
 
         assertEquals(1, results.size());
         assertEquals("ref-123", results.get(0).getExternalReference());
-        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), any());
+        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), eq("claim-key-4"));
         verify(claimService, times(1)).releaseExpiredClaims();
         verify(claimService, times(1)).processExpiredIntents();
     }
@@ -108,17 +109,18 @@ public class ActionSchedulerTest {
                 ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
                 ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
         );
+        intent.setClaimToken("claim-exception-4");
 
         when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
                 .thenReturn(List.of(intent));
 
         // M2 behaviour change: the scheduler passes the claim token from its atomic claim to the executor, see ADR-002
-        when(actionExecutionService.executeActionIntent(eq(intentId), anyString(), any()))
+        when(actionExecutionService.executeActionIntent(eq(intentId), anyString(), eq("claim-exception-4")))
                 .thenThrow(new RuntimeException("Provider error"));
 
         List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
 
         assertTrue(results.isEmpty());
-        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), any());
+        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), eq("claim-exception-4"));
     }
 }

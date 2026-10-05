@@ -123,6 +123,7 @@ class CampaignControllerTest {
         intent.setId(UUID.randomUUID());
         intent.setActionType("REQUEST_CUSTOMER_ACTION");
         intent.setStatus(ActionIntentStatus.READY);
+        intent.setClaimToken("claim-token-manual");
         when(campaignLifecycleService.getOrCreateCampaign(merchantId, "pay_test_456", null, null)).thenReturn(campaign);
         when(recoveryOrchestratorService.orchestrateRecovery(merchantId, campaignId)).thenReturn(intent);
         when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
@@ -140,7 +141,7 @@ class CampaignControllerTest {
         campaignController.startRecovery(new StartRecoveryRequest("pay_test_456", null, null), merchantId.toString(), authenticatedUser);
 
         verify(actionExecutionService).executeActionIntent(org.mockito.ArgumentMatchers.eq(intent.getId()), org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.any());
+                org.mockito.ArgumentMatchers.eq("claim-token-manual"));
         // M2: the manual path never claims by saving the entity.
         verify(actionIntentRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
     }
