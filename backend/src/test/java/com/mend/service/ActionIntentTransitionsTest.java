@@ -150,4 +150,30 @@ class ActionIntentTransitionsTest extends AbstractIntegrationTest {
         assertTrue(transitions.cancelNonTerminal(ready.getId(), Instant.now()));
         assertFalse(transitions.cancelNonTerminal(ready.getId(), Instant.now()), "already terminal");
     }
+
+    @Test
+    void recordEvidenceAppliesOnceDuplicateIsNoOp() {
+        ActionIntent intent = intent(ActionIntentStatus.AWAITING_PAYMENT);
+        java.util.Set<ActionIntentStatus> inFlight = java.util.EnumSet.of(ActionIntentStatus.EXECUTING,
+                ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.NEEDS_RECONCILIATION);
+        Instant first = Instant.now().minusSeconds(60);
+
+        assertTrue(transitions.recordEvidence(intent.getId(), inFlight, ActionIntentStatus.SUCCEEDED, "pay_first", first));
+        assertFalse(transitions.recordEvidence(intent.getId(), inFlight, ActionIntentStatus.SUCCEEDED, "pay_second", Instant.now()));
+
+        ActionIntent after = reload(intent);
+        assertEquals(ActionIntentStatus.SUCCEEDED, after.getStatus());
+        assertEquals("pay_first", after.getResponseReference());
+        assertEquals(first.toEpochMilli(), after.getCompletedAt().toEpochMilli());
+    }
+
+    @Test
+    void recordEvidenceRejectsDisallowedSourcesAndTargets() {
+        ActionIntent intent = intent(ActionIntentStatus.CLAIMED);
+        assertThrows(IllegalArgumentException.class, () -> transitions.recordEvidence(intent.getId(),
+                java.util.EnumSet.of(ActionIntentStatus.CLAIMED), ActionIntentStatus.SUCCEEDED, null, Instant.now()));
+        assertThrows(IllegalArgumentException.class, () -> transitions.recordEvidence(intent.getId(),
+                java.util.EnumSet.of(ActionIntentStatus.EXECUTING), ActionIntentStatus.READY, null, Instant.now()));
+        assertEquals(ActionIntentStatus.CLAIMED, reload(intent).getStatus());
+    }
 }
