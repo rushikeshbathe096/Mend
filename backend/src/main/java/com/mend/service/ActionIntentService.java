@@ -40,6 +40,7 @@ public class ActionIntentService {
     private final ComplianceService complianceService;
     private final AuditService auditService;
     private final long defaultRetryDelayMinutes;
+    private final ActionIntentTransitions actionIntentTransitions;
 
     public ActionIntentService(
             CampaignRepository campaignRepository,
@@ -47,13 +48,15 @@ public class ActionIntentService {
             ActionIntentRepository actionIntentRepository,
             ComplianceService complianceService,
             AuditService auditService,
-            @Value("${mend.scheduler.default-retry-delay-minutes:15}") long defaultRetryDelayMinutes) {
+            @Value("${mend.scheduler.default-retry-delay-minutes:15}") long defaultRetryDelayMinutes,
+            ActionIntentTransitions actionIntentTransitions) {
         this.campaignRepository = campaignRepository;
         this.merchantConfigRepository = merchantConfigRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.complianceService = complianceService;
         this.auditService = auditService;
         this.defaultRetryDelayMinutes = defaultRetryDelayMinutes;
+        this.actionIntentTransitions = actionIntentTransitions;
     }
 
     @Transactional
@@ -154,10 +157,8 @@ public class ActionIntentService {
 
         List<ActionIntent> intents = actionIntentRepository.findByCampaignId(campaignId);
         for (ActionIntent intent : intents) {
-            if (intent.getStatus().isExecutable()) {
-                intent.setStatus(ActionIntentStatus.CANCELLED);
-                intent.setCompletedAt(Instant.now());
-                actionIntentRepository.save(intent);
+            // M2: conditional update (PENDING/SCHEDULED/READY only), so work claimed in the meantime is never cancelled blindly.
+            if (intent.getStatus().isExecutable() && actionIntentTransitions.cancelIfExecutable(intent.getId(), Instant.now())) {
 
                 auditService.logEvent(
                         merchantId,

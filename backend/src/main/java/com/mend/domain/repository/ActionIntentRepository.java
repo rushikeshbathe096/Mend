@@ -78,7 +78,7 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = :newStatus,
+               SET a.version = a.version + 1, a.status = :newStatus,
                    a.claimedAt = :claimedAt,
                    a.claimToken = :claimToken,
                    a.workerId = :workerId
@@ -106,13 +106,13 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     // ---- M2 fenced transitions (only ActionIntentTransitions calls these) ----
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE ActionIntent a SET a.status = com.mend.domain.enums.ActionIntentStatus.READY WHERE a.id = :id AND a.status = com.mend.domain.enums.ActionIntentStatus.SCHEDULED")
+    @Query("UPDATE ActionIntent a SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.READY WHERE a.id = :id AND a.status = com.mend.domain.enums.ActionIntentStatus.SCHEDULED")
     int promoteScheduled(@Param("id") UUID id);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = com.mend.domain.enums.ActionIntentStatus.EXPIRED, a.completedAt = :now
+               SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.EXPIRED, a.completedAt = :now
              WHERE a.id = :id
                AND a.status IN (com.mend.domain.enums.ActionIntentStatus.SCHEDULED, com.mend.domain.enums.ActionIntentStatus.READY,
                                 com.mend.domain.enums.ActionIntentStatus.PENDING)
@@ -123,7 +123,7 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = com.mend.domain.enums.ActionIntentStatus.READY,
+               SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.READY,
                    a.claimedAt = NULL, a.claimToken = NULL, a.workerId = NULL
              WHERE a.id = :id
                AND a.status = com.mend.domain.enums.ActionIntentStatus.CLAIMED
@@ -135,7 +135,7 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING,
+               SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING,
                    a.dispatchedAt = :now,
                    a.executionAttempts = a.executionAttempts + 1
              WHERE a.id = :id
@@ -147,7 +147,7 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = :newStatus, a.completedAt = :now
+               SET a.version = a.version + 1, a.status = :newStatus, a.completedAt = :now
              WHERE a.id = :id
                AND a.status = com.mend.domain.enums.ActionIntentStatus.CLAIMED
                AND a.claimToken = :token
@@ -158,7 +158,7 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = :newStatus,
+               SET a.version = a.version + 1, a.status = :newStatus,
                    a.responseReference = COALESCE(:responseReference, a.responseReference),
                    a.completedAt = :completedAt,
                    a.reconcileAfter = :reconcileAfter
@@ -173,10 +173,35 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
-               SET a.status = com.mend.domain.enums.ActionIntentStatus.CANCELLED, a.completedAt = :now
+               SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.CANCELLED, a.completedAt = :now
              WHERE a.id = :id
                AND a.status NOT IN (com.mend.domain.enums.ActionIntentStatus.SUCCEEDED, com.mend.domain.enums.ActionIntentStatus.FAILED,
                                     com.mend.domain.enums.ActionIntentStatus.CANCELLED, com.mend.domain.enums.ActionIntentStatus.EXPIRED)
             """)
     int cancelNonTerminal(@Param("id") UUID id, @Param("now") Instant now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1,
+                   a.status = :newStatus,
+                   a.responseReference = COALESCE(:responseReference, a.responseReference),
+                   a.completedAt = :completedAt
+             WHERE a.id = :id
+               AND a.status IN :expected
+            """)
+    int recordEvidence(@Param("id") UUID id, @Param("expected") java.util.Collection<ActionIntentStatus> expected,
+                       @Param("newStatus") ActionIntentStatus newStatus, @Param("responseReference") String responseReference,
+                       @Param("completedAt") Instant completedAt);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1,
+                   a.status = com.mend.domain.enums.ActionIntentStatus.CANCELLED, a.completedAt = :now
+             WHERE a.id = :id
+               AND a.status IN (com.mend.domain.enums.ActionIntentStatus.PENDING, com.mend.domain.enums.ActionIntentStatus.SCHEDULED,
+                                com.mend.domain.enums.ActionIntentStatus.READY)
+            """)
+    int cancelIfExecutable(@Param("id") UUID id, @Param("now") Instant now);
 }

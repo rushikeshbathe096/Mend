@@ -39,6 +39,11 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
     private final CampaignStateMachine campaignStateMachine;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final ActionIntentTransitions transitions;
+
+    /** Evidence may move an intent only out of these statuses (M2 §4). */
+    private static final java.util.Set<ActionIntentStatus> EVIDENCE_FROM = java.util.EnumSet.of(
+            ActionIntentStatus.EXECUTING, ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.NEEDS_RECONCILIATION);
     /** Single interpreter of provider status strings (M1 U5): only captured is money. */
     private final PaymentStatusInterpreter evidenceMapper;
 
@@ -51,7 +56,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             CampaignStateMachine campaignStateMachine,
             AuditService auditService,
             ObjectMapper objectMapper,
-            PaymentStatusInterpreter evidenceMapper) {
+            PaymentStatusInterpreter evidenceMapper,
+            ActionIntentTransitions transitions) {
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -61,6 +67,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         this.auditService = auditService;
         this.objectMapper = objectMapper;
         this.evidenceMapper = evidenceMapper;
+        this.transitions = transitions;
     }
 
     @Override
@@ -138,13 +145,12 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         Instant now = Instant.now();
 
         if (Boolean.TRUE.equals(isSuccessEvent)) {
-            // Reconcile to SUCCESS
-            intent.setStatus(ActionIntentStatus.SUCCEEDED);
-            if (providerRef != null) {
-                intent.setResponseReference(providerRef);
+            // Reconcile to SUCCESS — fenced: only an in-flight intent (EXECUTING / AWAITING_PAYMENT / NEEDS_RECONCILIATION).
+            if (!transitions.recordEvidence(intent.getId(), EVIDENCE_FROM, ActionIntentStatus.SUCCEEDED, providerRef, now)) {
+                log.info("event=reconciliation_not_applied intent_id={} status={} outcome=SUCCESS", intent.getId(), intent.getStatus());
+                return ReconciliationResult.alreadyFinalized(intent.getId(), campaign.getId(),
+                        "ActionIntent " + intent.getId() + " is not in flight (" + intent.getStatus() + "); evidence not applied");
             }
-            intent.setCompletedAt(now);
-            actionIntentRepository.save(intent);
 
             // Create / update CampaignAttempt
             CampaignAttempt attempt = campaignAttemptRepository
@@ -179,10 +185,12 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                     "Reconciled execution attempt to SUCCESS");
 
         } else {
-            // Reconcile to FAILURE
-            intent.setStatus(ActionIntentStatus.FAILED);
-            intent.setCompletedAt(now);
-            actionIntentRepository.save(intent);
+            // Reconcile to FAILURE — fenced: only an in-flight intent.
+            if (!transitions.recordEvidence(intent.getId(), EVIDENCE_FROM, ActionIntentStatus.FAILED, null, now)) {
+                log.info("event=reconciliation_not_applied intent_id={} status={} outcome=FAILURE", intent.getId(), intent.getStatus());
+                return ReconciliationResult.alreadyFinalized(intent.getId(), campaign.getId(),
+                        "ActionIntent " + intent.getId() + " is not in flight (" + intent.getStatus() + "); evidence not applied");
+            }
 
             CampaignAttempt attempt = campaignAttemptRepository
                     .findByCampaignIdAndAttemptNumber(campaign.getId(), intent.getAttemptNumber())
