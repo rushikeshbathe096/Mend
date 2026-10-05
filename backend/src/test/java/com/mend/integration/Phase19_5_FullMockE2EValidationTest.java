@@ -2,7 +2,7 @@ package com.mend.integration;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mend.client.MockPaymentProviderClient;
+import com.mend.provider.mock.MockPaymentProvider;
 import com.mend.config.RazorpayWebhookProperties;
 import com.mend.config.RedisStreamProperties;
 import com.mend.consumer.RedisWebhookEventConsumer;
@@ -95,7 +95,7 @@ public class Phase19_5_FullMockE2EValidationTest {
     private ActionExecutionService actionExecutionService;
 
     @Autowired
-    private MockPaymentProviderClient mockPaymentProviderClient;
+    private MockPaymentProvider mockPaymentProviderClient;
 
     @Autowired
     private AnalyticsQueryService analyticsQueryService;
@@ -264,7 +264,8 @@ public class Phase19_5_FullMockE2EValidationTest {
         assertEquals(ActionIntentStatus.SUCCEEDED, finalIntent.getStatus());
         assertNotNull(finalIntent.getCompletedAt());
         assertNotNull(finalIntent.getResponseReference());
-        assertTrue(finalIntent.getResponseReference().startsWith("mock_ref_"));
+        // M1 behaviour change: synthetic mock references are prefixed pay_mock_ (was mock_ref_), see ADR-001
+        assertTrue(finalIntent.getResponseReference().startsWith("pay_mock_"));
 
         // Validate Revenue Metrics in PostgreSQL
         BigDecimal amountAtRisk = BigDecimal.valueOf(amountInCents).divide(BigDecimal.valueOf(100)); // ₹500.00

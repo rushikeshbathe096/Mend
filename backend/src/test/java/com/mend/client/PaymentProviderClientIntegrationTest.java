@@ -1,9 +1,12 @@
 package com.mend.client;
 
-import com.mend.domain.enums.ActionType;
-import com.mend.dto.payment.PaymentExecutionRequest;
-import com.mend.dto.payment.PaymentExecutionResult;
-import com.mend.dto.payment.PaymentExecutionStatus;
+import com.mend.provider.MerchantRef;
+import com.mend.provider.PaymentProvider;
+import com.mend.provider.ProviderAttemptKey;
+import com.mend.provider.ProviderCapabilities;
+import com.mend.provider.RequestResult;
+import com.mend.provider.mock.MockPaymentProvider;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,30 +23,23 @@ import static org.junit.jupiter.api.Assertions.*;
 public class PaymentProviderClientIntegrationTest {
 
     @Autowired
-    private PaymentProviderClient paymentProviderClient;
+    private PaymentProvider paymentProvider;
+
+    @Autowired
+    private ProviderCapabilities providerCapabilities;
 
     @Test
     @DisplayName("Spring context should inject PaymentProviderClient interface as MockPaymentProviderClient bean")
     void testPaymentProviderClientBeanInjection() {
-        assertNotNull(paymentProviderClient);
-        assertTrue(paymentProviderClient instanceof MockPaymentProviderClient);
+        // M1 behaviour change: the port is PaymentProvider and the default bean is MockPaymentProvider, see ADR-001
+        assertNotNull(paymentProvider);
+        assertInstanceOf(MockPaymentProvider.class, paymentProvider);
+        assertTrue(providerCapabilities.supportsRecurringDebit());
 
-        PaymentExecutionRequest request = new PaymentExecutionRequest(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                "pay_integration_test",
-                "sub_integration_test",
-                ActionType.RETRY_PAYMENT,
-                1,
-                "intent:integration:attempt_1:RETRY_PAYMENT"
-        );
+        UUID intentId = UUID.randomUUID();
+        RequestResult<String> result = ((MockPaymentProvider) paymentProvider).simulateDebit(
+                new MerchantRef(UUID.randomUUID()), UUID.randomUUID(), intentId, ProviderAttemptKey.forIntent(intentId));
 
-        PaymentExecutionResult result = paymentProviderClient.executeAction(request);
-
-        assertNotNull(result);
-        assertEquals(PaymentExecutionStatus.SUCCESS, result.getStatus());
-        assertTrue(result.isSuccess());
-        assertEquals("intent:integration:attempt_1:RETRY_PAYMENT", result.getIdempotencyKey());
+        assertInstanceOf(RequestResult.Accepted.class, result);
     }
 }

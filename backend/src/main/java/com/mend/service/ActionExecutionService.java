@@ -1,6 +1,5 @@
 package com.mend.service;
 
-import com.mend.client.PaymentProviderClient;
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.CampaignAttempt;
@@ -13,8 +12,8 @@ import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.ComplianceDecisionRepository;
-import com.mend.dto.payment.PaymentExecutionRequest;
 import com.mend.dto.payment.PaymentExecutionResult;
+import com.mend.provider.ProviderAttemptKey;
 import com.mend.exception.ComplianceBlockedException;
 import com.mend.exception.InvalidCampaignStateException;
 import com.mend.exception.ResourceNotFoundException;
@@ -28,6 +27,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -44,7 +44,7 @@ public class ActionExecutionService {
     private final CampaignAttemptRepository campaignAttemptRepository;
     private final ComplianceDecisionRepository complianceDecisionRepository;
     private final CampaignLifecycleService campaignLifecycleService;
-    private final PaymentProviderClient paymentProviderClient;
+    private final ProviderActionDispatcher providerActionDispatcher;
     private final AuditService auditService;
     private final TransactionTemplate executionTransactionTemplate;
 
@@ -54,7 +54,7 @@ public class ActionExecutionService {
             CampaignAttemptRepository campaignAttemptRepository,
             ComplianceDecisionRepository complianceDecisionRepository,
             CampaignLifecycleService campaignLifecycleService,
-            PaymentProviderClient paymentProviderClient,
+            ProviderActionDispatcher providerActionDispatcher,
             AuditService auditService,
             PlatformTransactionManager transactionManager) {
         this.actionIntentRepository = actionIntentRepository;
@@ -62,7 +62,7 @@ public class ActionExecutionService {
         this.campaignAttemptRepository = campaignAttemptRepository;
         this.complianceDecisionRepository = complianceDecisionRepository;
         this.campaignLifecycleService = campaignLifecycleService;
-        this.paymentProviderClient = paymentProviderClient;
+        this.providerActionDispatcher = providerActionDispatcher;
         this.auditService = auditService;
         this.executionTransactionTemplate = new TransactionTemplate(transactionManager);
         this.executionTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -94,48 +94,19 @@ public class ActionExecutionService {
         ActionIntent intent = preparation.getIntent();
         Campaign campaign = preparation.getCampaign();
 
-        // Step 2: Build untrusted-free PaymentExecutionRequest
-        ActionType actionType = null;
+        // Step 2: Dispatch to the provider OUTSIDE any database transaction (no retry of state-changing calls)
+        ProviderActionOutcome outcome;
         try {
-            if (intent.getActionType() != null) {
-                actionType = ActionType.valueOf(intent.getActionType());
-            }
+            log.info("Dispatching ActionIntent '{}' to provider (key='{}')", intent.getId(), intent.getIdempotencyKey());
+            outcome = providerActionDispatcher.dispatch(intent, campaign);
         } catch (Exception e) {
-            actionType = null;
-        }
-        if (actionType == null) {
-            log.warn("ActionIntent '{}' has unsupported or invalid actionType: '{}'", intent.getId(), intent.getActionType());
-            PaymentExecutionResult unsupportedResult = PaymentExecutionResult.error(
-                    "Unsupported action type: " + intent.getActionType(),
-                    intent.getIdempotencyKey()
-            );
-            return inExecutionTransaction(() -> finalizeExecution(intent.getId(), workerId, unsupportedResult));
+            log.error("Unhandled exception while dispatching ActionIntent '{}': {}", intent.getId(), e.getClass().getSimpleName());
+            outcome = new ProviderActionOutcome.Unknown("UNEXPECTED_DISPATCH_EXCEPTION", null);
         }
 
-        PaymentExecutionRequest request = new PaymentExecutionRequest(
-                intent.getMerchantId(),
-                intent.getCampaignId(),
-                intent.getId(),
-                campaign.getPaymentId(),
-                campaign.getSubscriptionId(),
-                actionType,
-                intent.getAttemptNumber(),
-                intent.getIdempotencyKey()
-        );
-
-        // Step 3: Invoke PaymentProviderClient OUTSIDE database transaction
-        PaymentExecutionResult result;
-        try {
-            log.info("Invoking PaymentProviderClient for ActionIntent '{}' (key='{}')", intent.getId(), intent.getIdempotencyKey());
-            result = paymentProviderClient.executeAction(request);
-        } catch (Exception e) {
-            log.error("Unhandled exception during PaymentProviderClient execution for ActionIntent '{}': {}", intent.getId(), e.getMessage(), e);
-            result = PaymentExecutionResult.error("Unhandled provider exception: " + e.getMessage(), intent.getIdempotencyKey());
-        }
-
-        // Step 4: Transactional persistence of result & state synchronization
-        PaymentExecutionResult providerResult = result;
-        return inExecutionTransaction(() -> finalizeExecution(intent.getId(), workerId, providerResult));
+        // Step 3: Transactional persistence of the outcome & state synchronization
+        ProviderActionOutcome providerOutcome = outcome;
+        return inExecutionTransaction(() -> finalizeExecution(intent.getId(), workerId, providerOutcome));
     }
 
     private ExecutionPreparation prepareExecution(UUID intentId, String workerId) {
@@ -220,21 +191,27 @@ public class ActionExecutionService {
         return ExecutionPreparation.proceed(intent, campaign);
     }
 
-    private PaymentExecutionResult finalizeExecution(UUID intentId, String workerId, PaymentExecutionResult result) {
+    /**
+     * Maps a provider outcome to intent/campaign state (M1 design doc, "Executor mapping"). Only a synthetic mock
+     * capture reaches RECOVERED here; a Razorpay request outcome never does — recovery comes from captured evidence.
+     */
+    private PaymentExecutionResult finalizeExecution(UUID intentId, String workerId, ProviderActionOutcome outcome) {
         ActionIntent intent = actionIntentRepository.findById(intentId)
                 .orElseThrow(() -> new ResourceNotFoundException("ActionIntent not found with ID: " + intentId));
 
         Campaign campaign = campaignRepository.findById(intent.getCampaignId())
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + intent.getCampaignId()));
 
+        PaymentExecutionResult report = toReport(outcome, intent.getIdempotencyKey());
+
         // Check if intent was already finalized by a concurrent worker
         if (intent.getStatus().isTerminal()) {
             log.warn("ActionIntent '{}' already reached terminal state '{}'. Skipping duplicate finalization.", intentId, intent.getStatus());
-            return result;
+            return report;
         }
 
         Instant now = Instant.now();
-        Instant completedAt = result.getExecutedAt() != null ? result.getExecutedAt() : now;
+        String attemptKey = ProviderAttemptKey.forIntent(intent.getId()).value();
 
         // Step 1: Create & Persist CampaignAttempt (Enforcing UK uk_campaign_attempt_number)
         CampaignAttempt attempt = new CampaignAttempt(
@@ -245,18 +222,32 @@ public class ActionExecutionService {
         attempt.setActionType(intent.getActionType());
         attempt.setScheduledAt(intent.getScheduledAt());
         attempt.setStartedAt(intent.getClaimedAt() != null ? intent.getClaimedAt() : now);
-        attempt.setCompletedAt(completedAt);
-        attempt.setExternalReference(result.getExternalReference());
-
-        if (result.isSuccess()) {
-            attempt.setStatus("SUCCESS");
-            attempt.setFailureReason(null);
-        } else if (result.isFailure()) {
-            attempt.setStatus("FAILED");
-            attempt.setFailureReason(result.getMessage() != null ? result.getMessage() : "Payment declined");
-        } else {
-            attempt.setStatus("ERROR");
-            attempt.setFailureReason(result.getMessage() != null ? result.getMessage() : "Provider error");
+        switch (outcome) {
+            case ProviderActionOutcome.SyntheticCaptured captured -> {
+                attempt.setStatus("SUCCESS");
+                attempt.setExternalReference(captured.reference());
+                attempt.setCompletedAt(now);
+            }
+            case ProviderActionOutcome.LinkIssued issued -> {
+                attempt.setStatus("ISSUED");
+                attempt.setExternalReference(issued.link().providerLinkId());
+            }
+            case ProviderActionOutcome.Unknown unknown -> attempt.setStatus("UNKNOWN");
+            case ProviderActionOutcome.Rejected rejected -> {
+                attempt.setStatus("FAILED");
+                attempt.setFailureReason(rejected.reason() != null ? rejected.reason() : rejected.code());
+                attempt.setCompletedAt(now);
+            }
+            case ProviderActionOutcome.NotSupported notSupported -> {
+                attempt.setStatus("FAILED");
+                attempt.setFailureReason(notSupported.reason());
+                attempt.setCompletedAt(now);
+            }
+            case ProviderActionOutcome.NotSent notSent -> {
+                attempt.setStatus("FAILED");
+                attempt.setFailureReason("NOT_SENT:" + notSent.cause());
+                attempt.setCompletedAt(now);
+            }
         }
 
         try {
@@ -271,86 +262,141 @@ public class ActionExecutionService {
         campaignRepository.save(campaign);
 
         // Step 2: Handle Outcome Specific Synchronization
-        if (result.isSuccess()) {
-            intent.setStatus(ActionIntentStatus.SUCCEEDED);
-            intent.setResponseReference(result.getExternalReference());
-            intent.setCompletedAt(completedAt);
-            actionIntentRepository.save(intent);
+        switch (outcome) {
+            case ProviderActionOutcome.SyntheticCaptured captured -> {
+                intent.setStatus(ActionIntentStatus.SUCCEEDED);
+                intent.setResponseReference(captured.reference());
+                intent.setCompletedAt(now);
+                actionIntentRepository.save(intent);
 
-            campaignLifecycleService.transitionState(
-                    campaign.getMerchantId(),
-                    campaign.getId(),
-                    CampaignStatus.RECOVERED,
-                    "Payment recovery succeeded via provider (Ref: " + result.getExternalReference() + ")",
-                    "SYSTEM",
-                    null
-            );
+                campaignLifecycleService.transitionState(
+                        campaign.getMerchantId(),
+                        campaign.getId(),
+                        CampaignStatus.RECOVERED,
+                        "SYNTHETIC mock provider capture (Ref: " + captured.reference() + ")",
+                        "SYSTEM",
+                        null
+                );
 
-            auditService.logEvent(
-                    intent.getMerchantId(), intent.getCampaignId(),
-                    "ACTION_SUCCEEDED", "SYSTEM", null,
-                    "ActionIntent " + intent.getId() + " SUCCEEDED with ref: " + result.getExternalReference()
-            );
+                auditService.logEvent(
+                        intent.getMerchantId(), intent.getCampaignId(),
+                        "ACTION_SUCCEEDED", "SYSTEM", null,
+                        "ActionIntent " + intent.getId() + " SUCCEEDED (SYNTHETIC mock provider) with ref: " + captured.reference()
+                );
 
-            log.info("ActionIntent '{}' SUCCEEDED. Campaign '{}' transitioned to RECOVERED.", intentId, campaign.getId());
+                log.info("ActionIntent '{}' SUCCEEDED (SYNTHETIC). Campaign '{}' transitioned to RECOVERED.", intentId, campaign.getId());
+            }
+            case ProviderActionOutcome.LinkIssued issued -> {
+                // A link is not money: intent waits for captured evidence (reconciliation), campaign stays EXECUTING.
+                intent.setStatus(ActionIntentStatus.EXECUTING);
+                intent.setResponseReference(issued.link().providerLinkId());
+                actionIntentRepository.save(intent);
 
-        } else if (result.isFailure()) {
-            intent.setStatus(ActionIntentStatus.FAILED);
-            intent.setCompletedAt(completedAt);
-            actionIntentRepository.save(intent);
+                logProviderAudit(intent, "PROVIDER_REQUEST_ACCEPTED", attemptKey,
+                        details("providerReference", issued.link().providerLinkId()));
+                log.info("ActionIntent '{}' payment link issued ({}). Awaiting payment evidence.", intentId, issued.link().providerLinkId());
+            }
+            case ProviderActionOutcome.Unknown unknown -> {
+                // The provider may have acted: never FAILED. EXECUTING is not recycled by releaseExpiredClaims (CLAIMED only).
+                intent.setStatus(ActionIntentStatus.EXECUTING);
+                actionIntentRepository.save(intent);
 
-            // Campaign state: EXECUTING -> FAILED -> EXHAUSTED
-            campaignLifecycleService.transitionState(
-                    campaign.getMerchantId(),
-                    campaign.getId(),
-                    CampaignStatus.FAILED,
-                    "Action execution failed: " + result.getMessage(),
-                    "SYSTEM",
-                    null
-            );
-
-            campaignLifecycleService.transitionState(
-                    campaign.getMerchantId(),
-                    campaign.getId(),
-                    CampaignStatus.EXHAUSTED,
-                    "Campaign attempts exhausted following failed action execution",
-                    "SYSTEM",
-                    null
-            );
-
-            auditService.logEvent(
-                    intent.getMerchantId(), intent.getCampaignId(),
-                    "ACTION_FAILED", "SYSTEM", null,
-                    "ActionIntent " + intent.getId() + " FAILED: " + result.getMessage()
-            );
-
-            log.info("ActionIntent '{}' FAILED. Campaign '{}' transitioned to FAILED/EXHAUSTED.", intentId, campaign.getId());
-
-        } else { // ERROR
-            intent.setStatus(ActionIntentStatus.FAILED);
-            intent.setCompletedAt(completedAt);
-            actionIntentRepository.save(intent);
-
-            // Transition EXECUTING -> FAILED (Without RECOVERED)
-            campaignLifecycleService.transitionState(
-                    campaign.getMerchantId(),
-                    campaign.getId(),
-                    CampaignStatus.FAILED,
-                    "Action execution provider error/timeout: " + result.getMessage(),
-                    "SYSTEM",
-                    null
-            );
-
-            auditService.logEvent(
-                    intent.getMerchantId(), intent.getCampaignId(),
-                    "ACTION_ERROR", "SYSTEM", null,
-                    "ActionIntent " + intent.getId() + " ERROR: " + result.getMessage()
-            );
-
-            log.warn("ActionIntent '{}' encountered provider ERROR. Campaign '{}' transitioned to FAILED.", intentId, campaign.getId());
+                logProviderAudit(intent, "PROVIDER_OUTCOME_UNKNOWN", attemptKey,
+                        details("cause", unknown.cause(), "httpStatus", unknown.httpStatus()));
+                log.warn("ActionIntent '{}' provider outcome UNKNOWN ({}). Left EXECUTING for reconciliation.", intentId, unknown.cause());
+            }
+            case ProviderActionOutcome.Rejected rejected -> {
+                failIntentAndCampaign(intent, campaign, now, "Provider request rejected: " + rejected.kind());
+                logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
+                        details("kind", rejected.kind().name(), "code", rejected.code(), "httpStatus", rejected.httpStatus()));
+            }
+            case ProviderActionOutcome.NotSupported notSupported -> {
+                failIntentAndCampaign(intent, campaign, now, "Provider operation not supported: " + notSupported.reason());
+                logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
+                        details("kind", "NOT_SUPPORTED", "code", "PROVIDER_OPERATION_NOT_SUPPORTED", "reason", notSupported.reason()));
+            }
+            case ProviderActionOutcome.NotSent notSent -> {
+                failIntentAndCampaign(intent, campaign, now, "Provider request not sent: " + notSent.cause());
+                logProviderAudit(intent, "PROVIDER_REQUEST_NOT_SENT", attemptKey,
+                        details("code", "PROVIDER_UNREACHABLE", "cause", notSent.cause()));
+            }
         }
 
-        return result;
+        return report;
+    }
+
+    /** Existing FAILURE path: intent FAILED, campaign EXECUTING -> FAILED -> EXHAUSTED. */
+    private void failIntentAndCampaign(ActionIntent intent, Campaign campaign, Instant completedAt, String reason) {
+        intent.setStatus(ActionIntentStatus.FAILED);
+        intent.setCompletedAt(completedAt);
+        actionIntentRepository.save(intent);
+
+        campaignLifecycleService.transitionState(
+                campaign.getMerchantId(),
+                campaign.getId(),
+                CampaignStatus.FAILED,
+                "Action execution failed: " + reason,
+                "SYSTEM",
+                null
+        );
+
+        campaignLifecycleService.transitionState(
+                campaign.getMerchantId(),
+                campaign.getId(),
+                CampaignStatus.EXHAUSTED,
+                "Campaign attempts exhausted following failed action execution",
+                "SYSTEM",
+                null
+        );
+
+        log.info("ActionIntent '{}' FAILED. Campaign '{}' transitioned to FAILED/EXHAUSTED.", intent.getId(), campaign.getId());
+    }
+
+    /** One audit row per finalize. Ids and codes only: no provider text, no PII. */
+    private void logProviderAudit(ActionIntent intent, String eventType, String attemptKey, Map<String, Object> details) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("intentId", intent.getId().toString());
+        metadata.put("attemptKey", attemptKey);
+        metadata.put("actionType", intent.getActionType() != null ? intent.getActionType() : "UNKNOWN");
+        metadata.putAll(details);
+        auditService.logStructuredEvent(
+                intent.getMerchantId(),
+                intent.getCampaignId(),
+                eventType,
+                "SYSTEM",
+                null,
+                eventType + " for ActionIntent " + intent.getId() + " " + details,
+                metadata,
+                Map.of()
+        );
+    }
+
+    private static Map<String, Object> details(Object... keyValues) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < keyValues.length; i += 2) {
+            if (keyValues[i + 1] != null) {
+                details.put((String) keyValues[i], keyValues[i + 1]);
+            }
+        }
+        return details;
+    }
+
+    /** Executor report for callers (scheduler, controller). PENDING is not money. */
+    private static PaymentExecutionResult toReport(ProviderActionOutcome outcome, String idempotencyKey) {
+        return switch (outcome) {
+            case ProviderActionOutcome.SyntheticCaptured captured -> PaymentExecutionResult.success(captured.reference(),
+                    "SYNTHETIC mock provider capture", idempotencyKey);
+            case ProviderActionOutcome.LinkIssued issued -> PaymentExecutionResult.pending(issued.link().providerLinkId(),
+                    "Payment link issued; awaiting payment evidence", idempotencyKey);
+            case ProviderActionOutcome.Unknown unknown -> PaymentExecutionResult.pending(null,
+                    "Provider outcome unknown (" + unknown.cause() + "); awaiting reconciliation", idempotencyKey);
+            case ProviderActionOutcome.Rejected rejected -> PaymentExecutionResult.failure(
+                    rejected.reason() != null ? rejected.reason() : rejected.code(), rejected.code(), idempotencyKey);
+            case ProviderActionOutcome.NotSupported notSupported -> PaymentExecutionResult.failure(notSupported.reason(),
+                    "PROVIDER_OPERATION_NOT_SUPPORTED", idempotencyKey);
+            case ProviderActionOutcome.NotSent notSent -> PaymentExecutionResult.failure("Provider request not sent: " + notSent.cause(),
+                    "PROVIDER_UNREACHABLE", idempotencyKey);
+        };
     }
 
     private <T> T inExecutionTransaction(Supplier<T> work) {

@@ -1,6 +1,9 @@
 package com.mend.scheduler;
 
-import com.mend.client.PaymentProviderClient;
+import com.mend.provider.MerchantRef;
+import com.mend.provider.ProviderAttemptKey;
+import com.mend.provider.RequestResult;
+import com.mend.provider.mock.SyntheticDebitSimulator;
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.CampaignAttempt;
@@ -17,8 +20,8 @@ import com.mend.domain.repository.CampaignAttemptRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.ComplianceDecisionRepository;
 import com.mend.domain.repository.MerchantRepository;
-import com.mend.dto.payment.PaymentExecutionRequest;
 import com.mend.dto.payment.PaymentExecutionResult;
+import com.mend.dto.payment.PaymentExecutionStatus;
 import com.mend.integration.AbstractIntegrationTest;
 import com.mend.service.ActionIntentClaimService;
 import org.junit.jupiter.api.AfterEach;
@@ -183,16 +186,21 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         actionScheduler.pollAndExecuteDueActions();
 
         assertEquals(1, results.size());
-        assertTrue(results.get(0).isError());
+        // M1 behaviour change: a provider exception is an unknown outcome, not an error/failure (invariant 4), see ADR-001
+        assertEquals(PaymentExecutionStatus.PENDING, results.get(0).getStatus());
         assertEquals(1, paymentProvider.invocations);
-        assertEquals(ActionIntentStatus.FAILED,
+        // M1 behaviour change: unknown outcome leaves the intent EXECUTING (was FAILED); still no blind retry, see ADR-001
+        assertEquals(ActionIntentStatus.EXECUTING,
                 actionIntentRepository.findById(fixture.intent().getId()).orElseThrow().getStatus());
-        assertEquals(CampaignStatus.FAILED,
+        // M1 behaviour change: campaign stays EXECUTING (was FAILED) while the outcome is unknown, see ADR-001
+        assertEquals(CampaignStatus.EXECUTING,
                 campaignRepository.findById(fixture.campaign().getId()).orElseThrow().getCurrentState());
         List<CampaignAttempt> attempts = campaignAttemptRepository.findByCampaignId(fixture.campaign().getId());
         assertEquals(1, attempts.size());
-        assertEquals("ERROR", attempts.get(0).getStatus());
-        assertEquals(fixture.intent().getIdempotencyKey(), paymentProvider.lastIdempotencyKey);
+        // M1 behaviour change: attempt recorded as UNKNOWN (was ERROR), see ADR-001
+        assertEquals("UNKNOWN", attempts.get(0).getStatus());
+        // M1 behaviour change: the provider receives the attempt key derived from the intent id, see ADR-001
+        assertEquals(ProviderAttemptKey.forIntent(fixture.intent().getId()), paymentProvider.lastAttemptKey);
     }
 
     @Test
@@ -328,7 +336,8 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         }
     }
 
-    static class ObservingPaymentProvider implements PaymentProviderClient {
+    // M1: the observing double sits at the new provider seam (mock-mode synthetic debit), see ADR-001
+    static class ObservingPaymentProvider implements SyntheticDebitSimulator {
         private final ActionIntentRepository actionIntentRepository;
         private final CampaignRepository campaignRepository;
         private int invocations;
@@ -336,7 +345,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         private boolean claimWasCommitted;
         private boolean executingTransitionWasCommitted;
         private boolean throwProviderException;
-        private String lastIdempotencyKey;
+        private ProviderAttemptKey lastAttemptKey;
 
         ObservingPaymentProvider(ActionIntentRepository actionIntentRepository,
                                  CampaignRepository campaignRepository) {
@@ -345,21 +354,20 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         }
 
         @Override
-        public PaymentExecutionResult executeAction(PaymentExecutionRequest request) {
+        public RequestResult<String> simulateDebit(MerchantRef merchant, UUID campaignId, UUID intentId, ProviderAttemptKey key) {
             invocations++;
             transactionActiveDuringCall = TransactionSynchronizationManager.isActualTransactionActive();
-            claimWasCommitted = actionIntentRepository.findById(request.getIntentId())
+            claimWasCommitted = actionIntentRepository.findById(intentId)
                     .map(intent -> intent.getStatus() == ActionIntentStatus.CLAIMED)
                     .orElse(false);
-            executingTransitionWasCommitted = campaignRepository.findById(request.getCampaignId())
+            executingTransitionWasCommitted = campaignRepository.findById(campaignId)
                     .map(campaign -> campaign.getCurrentState() == CampaignStatus.EXECUTING)
                     .orElse(false);
-            lastIdempotencyKey = request.getIdempotencyKey();
+            lastAttemptKey = key;
             if (throwProviderException) {
                 throw new RuntimeException("simulated provider timeout");
             }
-            return PaymentExecutionResult.success(
-                    "scheduler-tx-ref", "scheduler transaction test", request.getIdempotencyKey());
+            return new RequestResult.Accepted<>("pay_mock_schedulertx");
         }
 
         void reset() {
@@ -368,7 +376,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
             claimWasCommitted = false;
             executingTransitionWasCommitted = false;
             throwProviderException = false;
-            lastIdempotencyKey = null;
+            lastAttemptKey = null;
         }
     }
 }
