@@ -205,3 +205,20 @@ Built: in `DefaultPaymentReconciliationService`, a FAILED payment correlated to 
 Tests: `failedLinkAttemptAloneIsNoOp`, `failedThenCapturedOnSameLinkRecovers` (hand-built, "Not a recording"). The former `@Disabled` link-intent M2 test now passes under D1 and is enabled (assertions unchanged); the remaining non-link strategy-4 gap moved to a new `@Disabled("M2: correlation of original-payment failures")` test, verified failing when force-enabled (`expected: <EXECUTING> but was: <FAILED>`).
 Review (fresh subagent): 0 blockers/majors. Fixed: D1 check moved after late-webhook/idempotency guards (U7: late-webhook behaviour unchanged); non-link gap test also asserts campaign not EXHAUSTED; distinct payment ids in D1 tests. Tenant checks confirmed earlier in the method (before correlation-dependent logic).
 Full suite: `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1`.
+
+## U9 — Close-out
+### Adaptations for U9 (written before applying)
+1. Gate regressions found by the U9 grep pass, fixed as a small code commit before the close-out docs:
+   - U1 gate: `ProviderCapabilities` Javadoc (added in U6) contained the word "Razorpay" in `com.mend.provider` → reworded (comment only).
+   - Plan checklist #3 ("no razorpay imports outside `com.mend.provider.razorpay` + config"): U7's spec made `DefaultPaymentReconciliationService` use `RazorpayEvidenceMapper` directly. Fix: domain interface `com.mend.provider.PaymentStatusInterpreter` (payment + link status mapping), implemented by `RazorpayEvidenceMapper`, provided as a bean from `com.mend.config.ProviderEvidenceConfiguration`; reconciliation depends on the interface. Behaviour unchanged; the mapper stays the single interpreter.
+2. §4–§10 of `M1-provider-correctness.md` are not edited (run rule); recording evidence and the doc re-check go into §12 and ADR-001 "Evidence". §5's `payment_link.paid` row stays AMBIGUOUS (D4).
+### U9 results
+- Step 1: final run `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1`, BUILD SUCCESS, 78 classes, on commit `b5077c9` (summary `docs/m1/m1-final-test-run-summary.txt`; raw log local-only). ≥ 320 baseline.
+- Step 2: §12 filled from the summary files (baseline 320 @ `839f049`, health check 323 @ `5052719`, final 516 @ `b5077c9`) plus recording inventory.
+- Step 3: create-link doc page re-checked 2026-10-05 — unchanged; documented duplicate-reference text differs from recording `02` (classification unaffected). §4/§5 not edited.
+- Step 4: plan checklist rows 1–13 and the four extra gates ticked with SHAs.
+- Step 5: ADR-001 → Accepted; Evidence lists fixtures, test results, U8 skipped, owner decisions D1–D5 and open evidence items; "M2 backlog from M1" section added.
+- Step 6: grep gates — U1 0 (after the `b5077c9` Javadoc fix), U6 `backend/src/main` 0 (D2), `PaymentProviderClient` in main 0, U8 0 (skipped), plan #3 clean (after `b5077c9`). `CampaignStatus.RECOVERED` is set at runtime only by reconciliation on captured evidence and the mock synthetic path (other hits: dev seed data, analytics count).
+- Step 7: `docs/m1/M1-summary.md` (10 lines + M2 backlog).
+- U9 code-fix review (fresh subagent): 0 blockers. Findings 1–3 (stale commit in §12, docs mixed into the commit, untracked summary) came from reviewing `git diff HEAD~1` against the working tree; `b5077c9` contains only `backend/src`, §12 already cites `b5077c9`, and the summary is committed with the U9 docs. Finding 4 checked: the config bean is the only `PaymentStatusInterpreter` bean (`RazorpayPaymentProvider` keeps a private instance); razorpay-mode contexts boot in Phase20 and the selection test. Finding 6: `PaymentLinkState.UNRECOGNIZED` exists. Not changed: NIT field name `evidenceMapper`.
+- AGENTS.md still references `docs/m1/baseline-test-run.txt` (now local-only); AGENTS.md is not editable under the run rules — the tracked equivalent is `baseline-test-run-summary.txt`.
