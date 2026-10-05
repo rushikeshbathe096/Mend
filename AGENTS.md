@@ -22,7 +22,7 @@ Out of scope in M1: lease/claim/fencing changes, NEEDS_RECONCILIATION state, AI 
 ## Tests
 - Run: `cd backend && ./mvnw test`
 - Never delete or weaken an existing test. If a legitimate behaviour change breaks one: keep the test, change the assertion, put `// M1 behaviour change: <reason>, see ADR-001` above it, and add a regression test.
-- Final test count must be ≥ the baseline in `docs/m1/baseline-test-run.txt`.
+- Final test count must be ≥ the baseline in `docs/m1/baseline-test-run-summary.txt (raw log is local-only)`.
 - Provider contract tests replay fixtures from `backend/src/test/resources/razorpay/recorded/`. Fixtures not recorded from Razorpay go in `.../doc-derived/` with a `_source` URL.
 
 ## Code style
