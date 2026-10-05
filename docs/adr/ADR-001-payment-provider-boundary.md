@@ -67,7 +67,7 @@ Option 2.
 - Doc-derived fixtures (`backend/src/test/resources/razorpay/doc-derived/`, each with `_source`): failed payment entity, 2xx without id, empty lookup, two links for one reference, paid link with a captured payment.
 - Test results (copied from the summary files; raw logs are local-only):
   - Baseline `839f049`: `Tests run: 320, Failures: 0, Errors: 0, Skipped: 0` (`docs/m1/baseline-test-run-summary.txt`).
-  - M1 final `b5077c9`: `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1` (`docs/m1/m1-final-test-run-summary.txt`). The skipped test is the `@Disabled` M2 tracking test required by U7.
+  - M1 final `9948324`: `Tests run: 519, Failures: 0, Errors: 0, Skipped: 1` (`docs/m1/m1-final-test-run-summary.txt`). The skipped test is the `@Disabled` M2 tracking test required by U7.
 - U8 (recurring debit adapter): **skipped: no test-mode recurring access** (no fixtures `30`–`33`). `RETRY_PAYMENT` stays `NotSupported` in Razorpay mode.
 - Implementation note: at the executor level the "Rejected(NOT_SUPPORTED)" decision is realised as `ProviderActionOutcome.NotSupported("RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2")` → intent FAILED, audit `PROVIDER_REQUEST_REJECTED`, zero HTTP calls.
 - Owner decisions during M1 (2026-10-05): D1 a failed payment on a link intent is a no-op (a link accepts several attempts); D2 the U6 grep gate applies to `backend/src/main` only; D3 `PaymentExecutionResult` kept as the executor report type and MANUAL_REVIEW → NotSupported in Razorpay mode; D4 U8 skipped, paid-link/webhook fixtures not recorded; D5 `docs/` tracked except raw logs.

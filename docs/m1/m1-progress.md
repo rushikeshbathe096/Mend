@@ -230,3 +230,6 @@ Test changes (values only, no assertion semantics changed): `mnd_rec_1791151909`
 New tests: `paidLinkExposesTheCapturedPaymentOfRecording21_fixture20`, `capturedPaymentIsCapturedEvidence_fixture21`, `d1WithRecording21NotesShape` ("notes shape from recording 21").
 Full suite: `Tests run: 519, Failures: 0, Errors: 0, Skipped: 1`.
 Docs: §5 rows added (paid link status RECORDED `20`; notes copied link→payment RECORDED `21`; `payment_link.paid` webhook AMBIGUOUS); §12, ADR-001 Evidence, plan checklist and M1-summary updated; M2 backlog item 15 (link payments carry `order_id` → reconcile link intents via `GET /v1/orders/{order_id}/payments`).
+
+### U9 refresh after re-recording
+Final run on `9948324`: `Tests run: 519, Failures: 0, Errors: 0, Skipped: 1`, BUILD SUCCESS, 78 classes (per-class lines sum to 519); summary regenerated. §12, ADR-001 Evidence, plan row 9 and M1-summary updated from 516 to 519. Grep gates re-run below.

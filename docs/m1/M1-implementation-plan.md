@@ -33,7 +33,7 @@ Ticked at U9 (2026-10-05). Commits are on branch `m1/u1-domain-port`; "+fix" = t
 | 6 | Ambiguous outcomes represented safely | U2 `41b1ff7` (`OutcomeUnknown`), U6 `fcfd481` (EXECUTING, not FAILED) | ☑ |
 | 7 | Contract tests exist | U4 `769a2af`, U5 `cfb8b4e` (U8 skipped: no recurring fixtures) | ☑ (links + evidence reads) |
 | 8 | Recorded/test-mode responses used where possible | U0 `8166d0f` (14 fixtures) + U4/U5 replay | ☑ (paid link `20` + captured payment `21` recorded; webhook fixtures `22`–`24` still open) |
-| 9 | Existing tests still pass | U9: `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1` ≥ 320 baseline | ☑ |
+| 9 | Existing tests still pass | U9 (`9948324`): `Tests run: 519, Failures: 0, Errors: 0, Skipped: 1` ≥ 320 baseline | ☑ |
 | 10 | New tests cover failure cases | U2 socket tests, U6 mapping tests (`ActionExecutionServiceProviderOutcomeTest`) | ☑ |
 | 11 | No provider behaviour from memory | DOC/RECORDED cited in code comments and fixtures; doc-derived fixtures carry `_source`; `payment_link.paid` stays AMBIGUOUS | ☑ |
 | 12 | ADR written | `ADR-001` → Accepted at U9 | ☑ |
