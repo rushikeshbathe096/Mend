@@ -98,9 +98,9 @@ Findings (`DOC`):
 
 | Item | Verdict | Evidence | Action |
 |---|---|---|---|
-| E2 `POST /v1/payments/{id}/retry` | **INCORRECT** | DOC #1 · NOT RECORDED | Delete |
-| E3 `POST /v1/subscriptions/{id}/charge` | **INCORRECT** | DOC #2 · NOT RECORDED | Delete |
-| E4 `POST /v1/payments/retry` | **INCORRECT** | DOC #1 · NOT RECORDED | Delete |
+| E2 `POST /v1/payments/{id}/retry` | **INCORRECT** | DOC #1 · RECORDED (10): 404 no Route matched | Delete |
+| E3 `POST /v1/subscriptions/{id}/charge` | **INCORRECT** | DOC #2 · RECORDED (11): 404 no Route matched | Delete |
+| E4 `POST /v1/payments/retry` | **INCORRECT** | DOC #1 · RECORDED (12): 404 no Route matched | Delete |
 | E1 endpoint `POST /v1/payment_links` | **CORRECT** | DOC #7 | Keep |
 | E1 request body | **INCORRECT** | DOC #7 · CODE | Missing required `amount`; sends `receipt`, `idempotency_key`, `payment_id` which are not link fields → documented "extra fields" 400. **Every real link creation would currently be rejected.** |
 | E1 response mapping (2xx → SUCCESS → RECOVERED) | **INCORRECT** | DOC #7 · CODE | A new link has `status: created`, `amount_paid: 0`. Creating a link is not recovering money (violates invariant 6.3). |
@@ -116,13 +116,13 @@ Findings (`DOC`):
 | Reconciliation: payload status `active` = success | **INCORRECT** | CODE | `active` is a token/subscription state, not money. |
 | Amount as rupee `BigDecimal` | **INCORRECT vs invariant 6.1** | CODE | Resolve integer paise directly. |
 | Order + `/payments/create/recurring` (brief's hypothesis) | **CORRECT per docs; test-mode behaviour AMBIGUOUS** | DOC #3–#6 · NOT RECORDED | MEND lacks `token_id`, `customer_id`, email/contact, amount → **not executable on the current data model.** UPI Autopay cannot be exercised in test mode at all (DOC). |
-| Order `receipt` uniqueness enforced? | **AMBIGUOUS** | create-order: "unique identifier"; fetch-order: "has to be unique" | U0 records it. |
+| Order `receipt` uniqueness enforced? | **NOT ENFORCED — RECORDED (08): two orders created with the same receipt** | create-order: "unique identifier"; fetch-order: "has to be unique" · RECORDED (08) | Consequence: receipt cannot be an idempotency key; M2 must persist order_id per intent before any payment call (M2 backlog). |
 | Two `create/recurring` calls on the same *unpaid* order | **AMBIGUOUS** | Docs only cover `paid` | Never rely on it; M2 DB constraint prevents it. |
 | Webhook name for a paid link (`payment_link.paid`) | **AMBIGUOUS** (not checked this session) | — | Confirm in U0 with one real test-mode payment. |
 | Paid link status after payment | **RECORDED** (fixture `20`, 2026-10-05) | `status: paid`, `amount_paid` = amount, `payments[]` item with `payment_id` and `status: captured` | Matches U7's success rule (link PAID + payment CAPTURED). |
 | Link notes copied onto the link's payment | **RECORDED** (fixture `21`, 2026-10-05) | Captured payment entity carries `notes.mend_intent_id` set only on the link; it also carries an `order_id` | Verifies owner decision D1's premise: a failed attempt's payment would correlate to the link intent, so FAILED must be a no-op for link intents. |
 | `payment_link.paid` webhook name/shape | **AMBIGUOUS** (fixtures `22`–`24` not recorded) | — | Keep AMBIGUOUS until a delivered webhook body is recorded. |
-| Exact text of duplicate-reference 400 | DOC · NOT RECORDED | DOC #7 | Never match on text alone (§9). |
+| Exact text of duplicate-reference 400 | DOC · RECORDED (02): "payment link with given reference_id: mnd_rec_1791176340 already exists. Please create a payment link with a different reference_id" | DOC #7 (documented text differs: "payment link creation with reference ID already attempted") | Never match on text alone (§9). |
 
 ## 6. MEND provider operations actually required
 
