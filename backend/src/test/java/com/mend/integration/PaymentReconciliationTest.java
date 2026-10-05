@@ -876,4 +876,40 @@ class PaymentReconciliationTest {
         assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
         assertEquals(CampaignStatus.FAILED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
     }
+
+    @Autowired private AuditLogRepository auditLogRepositoryM2;
+
+    @Test
+    @DisplayName("M2: captured evidence for a FAILED intent on a live campaign keeps the intent FAILED but is surfaced (audit)")
+    void capturedEvidenceForFailedIntentIsAuditedNotDropped() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m2_live_orig");
+        ActionIntent intent = intentFor(campaign, "RETRY_PAYMENT", ActionIntentStatus.FAILED, null);
+        WebhookEvent event = stored("payment.captured", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2_late\",\"status\":\"captured\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_ALREADY_FINALIZED, result.getStatus());
+        assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.EXECUTING, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+        assertTrue(auditLogRepositoryM2.findByCampaignIdOrderByCreatedAtAsc(campaign.getId()).stream()
+                .anyMatch(a -> "CAPTURED_EVIDENCE_NOT_APPLIED".equals(a.getEventType())));
+    }
+
+    @Test
+    @DisplayName("M2 / D1: a failed payment never ends an AWAITING_PAYMENT intent, even when read before its link reference")
+    void failedEvidenceNeverEndsAwaitingPayment() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m2_await_orig");
+        // responseReference null models the race where the webhook read the intent before the link reference was written.
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.AWAITING_PAYMENT, null);
+        WebhookEvent event = stored("payment.failed", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2_await_fail\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.EXECUTING, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
 }

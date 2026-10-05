@@ -261,7 +261,11 @@ public class DemoController {
         steps.add("Compliance ALLOWED and ActionIntent " + intent.getId() + " created.");
         // M2: execute through the real claim + executor; the mock provider issues a (SYNTHETIC) payment link -> AWAITING_PAYMENT.
         claimAndExecute(merchantId, intent, response, steps);
-        steps.add("Payment update link issued to the customer (intent AWAITING_PAYMENT).");
+        ActionIntentStatus linkState = actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus();
+        if (linkState != ActionIntentStatus.AWAITING_PAYMENT) {
+            throw new IllegalStateException("Demo payment link was not issued; intent is " + linkState);
+        }
+        steps.add("Payment update link issued to the customer (intent " + linkState + ").");
 
         steps.add("Simulating the customer completing payment: a payment.captured webhook for the link payment is delivered through the real reconciliation service.");
         String capturedEventId = "evt_" + UUID.randomUUID();
@@ -292,14 +296,19 @@ public class DemoController {
 
         ActionIntent claimed = actionIntentClaimService.claimSpecificIntent(intent.getId(), "demo-worker")
                 .orElseThrow(() -> new IllegalStateException("Demo intent " + intent.getId() + " could not be claimed"));
-        // M2: record the dispatch (CLAIMED -> EXECUTING) exactly as the executor does before a provider call, then the
-        // simulated timeout as an unknown outcome (NEEDS_RECONCILIATION). No provider call is made in this demo step.
+        // M2: record the dispatch (CLAIMED -> EXECUTING) as the executor does, then the simulated timeout as an unknown
+        // outcome (NEEDS_RECONCILIATION). Demo-only: NO provider call is made here, which is why this skips the executor's
+        // compliance re-check; never copy this pattern into a path that calls the provider (invariants 7 and 12).
         Instant now = Instant.now();
-        actionIntentTransitions.dispatch(claimed.getId(), claimed.getClaimToken(), now);
+        if (!actionIntentTransitions.dispatch(claimed.getId(), claimed.getClaimToken(), now)) {
+            throw new IllegalStateException("Demo dispatch was not applied for intent " + claimed.getId());
+        }
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXECUTING,
                 "Provider execution in flight with ambiguous outcome; awaiting reconciliation", "SYSTEM", null);
-        actionIntentTransitions.finalizeFromExecuting(claimed.getId(), claimed.getClaimToken(), ActionIntentStatus.NEEDS_RECONCILIATION,
-                null, null, now);
+        if (!actionIntentTransitions.finalizeFromExecuting(claimed.getId(), claimed.getClaimToken(), ActionIntentStatus.NEEDS_RECONCILIATION,
+                null, null, now)) {
+            throw new IllegalStateException("Demo unknown outcome was not recorded for intent " + claimed.getId());
+        }
         steps.add("ActionIntent " + intent.getId() + " claimed and dispatch recorded (simulated provider call).");
         steps.add("Provider response timed out - execution state is UNKNOWN (NEEDS_RECONCILIATION). No terminal state assumed.");
 

@@ -44,6 +44,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
     /** Evidence may move an intent only out of these statuses (M2 §4). */
     private static final java.util.Set<ActionIntentStatus> EVIDENCE_FROM = java.util.EnumSet.of(
             ActionIntentStatus.EXECUTING, ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.NEEDS_RECONCILIATION);
+    private static final java.util.Set<ActionIntentStatus> FAILURE_FROM = java.util.EnumSet.of(
+            ActionIntentStatus.EXECUTING, ActionIntentStatus.NEEDS_RECONCILIATION);
     /** Single interpreter of provider status strings (M1 U5): only captured is money. */
     private final PaymentStatusInterpreter evidenceMapper;
 
@@ -147,9 +149,19 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         if (Boolean.TRUE.equals(isSuccessEvent)) {
             // Reconcile to SUCCESS — fenced: only an in-flight intent (EXECUTING / AWAITING_PAYMENT / NEEDS_RECONCILIATION).
             if (!transitions.recordEvidence(intent.getId(), EVIDENCE_FROM, ActionIntentStatus.SUCCEEDED, providerRef, now)) {
-                log.info("event=reconciliation_not_applied intent_id={} status={} outcome=SUCCESS", intent.getId(), intent.getStatus());
+                ActionIntentStatus current = currentStatus(intent);
+                if (current != ActionIntentStatus.SUCCEEDED) {
+                    // Captured money for an intent that is not in flight (e.g. already FAILED). §4 keeps the intent where it
+                    // is; the evidence is surfaced (WARN + audit) instead of being dropped silently. Owner decision pending.
+                    log.warn("event=captured_evidence_not_applied intent_id={} status_at_read={} status_now={} webhook_event_id={}",
+                            intent.getId(), intent.getStatus(), current, event.getId());
+                    auditService.logEvent(intent.getMerchantId(), intent.getCampaignId(), "CAPTURED_EVIDENCE_NOT_APPLIED", "SYSTEM", null,
+                            "intent=" + intent.getId() + " status=" + current + " webhook_event=" + event.getId());
+                } else {
+                    log.info("event=reconciliation_not_applied intent_id={} status_now={} outcome=SUCCESS", intent.getId(), current);
+                }
                 return ReconciliationResult.alreadyFinalized(intent.getId(), campaign.getId(),
-                        "ActionIntent " + intent.getId() + " is not in flight (" + intent.getStatus() + "); evidence not applied");
+                        "ActionIntent " + intent.getId() + " is not in flight (" + current + "); evidence not applied");
             }
 
             // Create / update CampaignAttempt
@@ -186,10 +198,13 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
 
         } else {
             // Reconcile to FAILURE — fenced: only an in-flight intent.
-            if (!transitions.recordEvidence(intent.getId(), EVIDENCE_FROM, ActionIntentStatus.FAILED, null, now)) {
-                log.info("event=reconciliation_not_applied intent_id={} status={} outcome=FAILURE", intent.getId(), intent.getStatus());
+            // AWAITING_PAYMENT is excluded: it always means a live payment link, which a failed attempt never ends (D1).
+            // This also covers a race where the intent was read before the link reference was written.
+            if (!transitions.recordEvidence(intent.getId(), FAILURE_FROM, ActionIntentStatus.FAILED, null, now)) {
+                ActionIntentStatus current = currentStatus(intent);
+                log.info("event=reconciliation_not_applied intent_id={} status_now={} outcome=FAILURE", intent.getId(), current);
                 return ReconciliationResult.alreadyFinalized(intent.getId(), campaign.getId(),
-                        "ActionIntent " + intent.getId() + " is not in flight (" + intent.getStatus() + "); evidence not applied");
+                        "ActionIntent " + intent.getId() + " is not open to failure evidence (" + current + "); evidence not applied");
             }
 
             CampaignAttempt attempt = campaignAttemptRepository
@@ -460,6 +475,10 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         String intentIdForCorrelation = mendIntentId != null ? mendIntentId : actionIntentId;
         return new PayloadDetails(paymentId, subscriptionId, idempotencyKey, intentIdForCorrelation, status, failureReason,
                 paymentLinkPresent, paymentLinkId, paymentLinkStatus);
+    }
+
+    private ActionIntentStatus currentStatus(ActionIntent intent) {
+        return actionIntentRepository.findById(intent.getId()).map(ActionIntent::getStatus).orElse(intent.getStatus());
     }
 
     private static boolean isPaymentLinkReference(String responseReference) {
