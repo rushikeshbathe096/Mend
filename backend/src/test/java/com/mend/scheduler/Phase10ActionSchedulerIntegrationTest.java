@@ -191,7 +191,8 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING for reconciliation, see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, updatedIntent.getStatus());
 
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, updatedCampaign.getCurrentState());
@@ -219,7 +220,8 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING, never blindly retried, see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, updatedIntent.getStatus());
 
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
         // M1 behaviour change: campaign stays EXECUTING (not FAILED) while the outcome is unknown, see ADR-001

@@ -1,0 +1,90 @@
+package com.mend.service;
+
+import com.mend.domain.enums.ActionIntentStatus;
+import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.repository.ActionIntentRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.EnumSet;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * The only component that changes an ActionIntent's status after creation (M2 invariant 11). Every method is one
+ * conditional UPDATE fenced by the expected status, and by {@code claim_token} for worker-owned transitions. Each returns
+ * {@code true} only if exactly one row changed; {@code false} means another actor got there first (stale / lost race).
+ * Methods join the caller's transaction.
+ */
+@Service
+public class ActionIntentTransitions {
+
+    private static final Set<ActionIntentStatus> FINALIZE_TARGETS = EnumSet.of(
+            ActionIntentStatus.SUCCEEDED, ActionIntentStatus.FAILED,
+            ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.NEEDS_RECONCILIATION);
+    private static final Set<ActionIntentStatus> ABANDON_TARGETS = EnumSet.of(ActionIntentStatus.FAILED, ActionIntentStatus.EXPIRED);
+
+    private final ActionIntentRepository repository;
+
+    public ActionIntentTransitions(ActionIntentRepository repository) {
+        this.repository = repository;
+    }
+
+    /** READY → CLAIMED with a fresh token, only while the campaign is ACTION_PENDING and the intent is due. */
+    @Transactional
+    public boolean claim(UUID id, String workerId, String token, Instant now) {
+        return repository.claimIntentAtomic(id, ActionIntentStatus.READY, ActionIntentStatus.CLAIMED, now, token, workerId,
+                CampaignStatus.ACTION_PENDING) == 1;
+    }
+
+    /** SCHEDULED → READY. */
+    @Transactional
+    public boolean promote(UUID id) {
+        return repository.promoteScheduled(id) == 1;
+    }
+
+    /** SCHEDULED/READY/PENDING past {@code expires_at} → EXPIRED. Never touches claimed or dispatched work. */
+    @Transactional
+    public boolean expire(UUID id, Instant now) {
+        return repository.expireUnclaimed(id, now) == 1;
+    }
+
+    /** CLAIMED with an expired lease and NO dispatch → READY. Dispatched (EXECUTING) work is never released. */
+    @Transactional
+    public boolean releaseIfUndispatched(UUID id, Instant threshold) {
+        return repository.releaseIfUndispatched(id, threshold) == 1;
+    }
+
+    /** CLAIMED → EXECUTING by the token holder; records {@code dispatched_at} and counts the attempt. Required before any provider call. */
+    @Transactional
+    public boolean dispatch(UUID id, String token, Instant now) {
+        return token != null && repository.dispatch(id, token, now) == 1;
+    }
+
+    /** CLAIMED → FAILED/EXPIRED by the token holder, before any dispatch (e.g. compliance blocked, execution window passed). */
+    @Transactional
+    public boolean abandonClaim(UUID id, String token, ActionIntentStatus newStatus, Instant now) {
+        if (!ABANDON_TARGETS.contains(newStatus)) {
+            throw new IllegalArgumentException("abandonClaim target not allowed: " + newStatus);
+        }
+        return token != null && repository.abandonClaim(id, token, newStatus, now) == 1;
+    }
+
+    /** EXECUTING → SUCCEEDED/FAILED/AWAITING_PAYMENT/NEEDS_RECONCILIATION by the token holder. */
+    @Transactional
+    public boolean finalizeFromExecuting(UUID id, String token, ActionIntentStatus newStatus, String responseReference,
+                                         Instant completedAt, Instant reconcileAfter) {
+        if (!FINALIZE_TARGETS.contains(newStatus)) {
+            throw new IllegalArgumentException("finalize target not allowed: " + newStatus);
+        }
+        return token != null
+                && repository.finalizeFromExecuting(id, token, newStatus, responseReference, completedAt, reconcileAfter) == 1;
+    }
+
+    /** Any non-terminal status → CANCELLED (campaign cancellation). */
+    @Transactional
+    public boolean cancelNonTerminal(UUID id, Instant now) {
+        return repository.cancelNonTerminal(id, now) == 1;
+    }
+}

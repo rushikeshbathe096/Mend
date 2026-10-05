@@ -66,6 +66,7 @@ public class DemoController {
     private final ActionIntentRepository actionIntentRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final AuditService auditService;
+    private final com.mend.service.ActionIntentClaimService actionIntentClaimService;
 
     public DemoController(
             CampaignLifecycleService campaignLifecycleService,
@@ -77,7 +78,8 @@ public class DemoController {
             AgentDecisionRecordRepository agentDecisionRecordRepository,
             ActionIntentRepository actionIntentRepository,
             WebhookEventRepository webhookEventRepository,
-            AuditService auditService) {
+            AuditService auditService,
+            com.mend.service.ActionIntentClaimService actionIntentClaimService) {
         this.campaignLifecycleService = campaignLifecycleService;
         this.actionIntentService = actionIntentService;
         this.actionExecutionService = actionExecutionService;
@@ -88,6 +90,7 @@ public class DemoController {
         this.actionIntentRepository = actionIntentRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.auditService = auditService;
+        this.actionIntentClaimService = actionIntentClaimService;
     }
 
     public static class DemoTriggerRequest {
@@ -282,7 +285,7 @@ public class DemoController {
                 "Retry dispatched toward the provider; response window open (intent " + intent.getId() + ")");
 
         steps.add("ActionIntent " + intent.getId() + " claimed for execution; provider request dispatched.");
-        claimIntent(intent);
+        actionIntentClaimService.claimSpecificIntent(intent.getId(), "demo-worker");
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXECUTING,
                 "Provider execution in flight with ambiguous outcome; awaiting reconciliation", "SYSTEM", null);
         steps.add("Provider response timed out - execution state is UNKNOWN (ambiguous). No terminal state assumed.");
@@ -437,16 +440,14 @@ public class DemoController {
     }
 
     private void claimAndExecute(UUID merchantId, ActionIntent intent, DemoTriggerResponse response, List<String> steps) {
-        claimIntent(intent);
+        // Same atomic claim primitive as the scheduler (M2): never claim by saving the entity.
+        var claimed = actionIntentClaimService.claimSpecificIntent(intent.getId(), "demo-worker");
+        if (claimed.isEmpty()) {
+            steps.add("Claim not acquired (intent not claimable or owned by another worker); left to the scheduler.");
+            return;
+        }
         steps.add("Scheduler claim acquired (worker demo-worker); executing through the provider boundary...");
-        actionExecutionService.executeActionIntent(intent.getId(), "demo-worker");
-    }
-
-    private void claimIntent(ActionIntent intent) {
-        intent.setStatus(ActionIntentStatus.CLAIMED);
-        intent.setWorkerId("demo-worker");
-        intent.setClaimedAt(Instant.now());
-        actionIntentRepository.saveAndFlush(intent);
+        actionExecutionService.executeActionIntent(intent.getId(), "demo-worker", claimed.get().getClaimToken());
     }
 
     private void reconcileCapturedPayment(UUID merchantId, UUID campaignId, String paymentId,

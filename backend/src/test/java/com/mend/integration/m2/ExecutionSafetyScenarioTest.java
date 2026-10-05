@@ -172,7 +172,6 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @Disabled("M2-RED: S1 manual start-recovery claims by plain save and dispatches a second create call (2 != 1)")
     @DisplayName("S1 manual start-recovery while the scheduler's provider call is in flight -> exactly one provider call")
     void s1ManualPathDoesNotDuplicateInFlightCall() throws Exception {
         // Given: worker A (scheduler) claimed the intent and is inside the provider call.
@@ -201,7 +200,6 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @Disabled("M2-RED: S2 lease release returns a dispatched intent to READY behind an EXECUTING campaign")
     @DisplayName("S2 worker dies after dispatch, lease expires -> intent is not orphaned as READY with campaign EXECUTING")
     void s2CrashAfterDispatchIsNotOrphaned() throws Exception {
         // Given: worker A dispatched and is (effectively) dead inside the provider call.
@@ -226,7 +224,6 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @Disabled("M2-RED: S3 OutcomeUnknown leaves the intent EXECUTING with no reconciliation")
     @DisplayName("S3 provider outcome unknown -> intent is handed to reconciliation, not left EXECUTING")
     void s3UnknownOutcomeIsScheduledForReconciliation() {
         // Given: the provider times out (OutcomeUnknown).
@@ -243,7 +240,6 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @Disabled("M2-RED: S5 released in-flight intent is re-claimed and dispatched again (2 != 1)")
     @DisplayName("S5 released in-flight intent and campaign back in ACTION_PENDING -> no second provider call for the attempt")
     void s5StaleReadyIntentIsNotReExecuted() throws Exception {
         // Given: worker A dispatched and hangs; the lease expires and the release job runs.
@@ -297,7 +293,6 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @Disabled("M2-RED: S6 stale worker finalize writes EXECUTING onto an intent whose claim was released")
     @DisplayName("S6b claim released while worker A is mid-call -> A's result is never applied to an intent A no longer owns")
     void s6bStaleWorkerCannotWriteAfterLosingClaim() throws Exception {
         // Given: worker A is inside the provider call.

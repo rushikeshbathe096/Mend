@@ -190,6 +190,8 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
         ActionIntent intent = actionIntentRepository.findById(UUID.fromString(intentId)).orElseThrow();
         intent.setStatus(ActionIntentStatus.CLAIMED);
         intent.setWorkerId("phase19-test-worker");
+        // M2: a CLAIMED intent always carries a claim token (fixture correction; the dispatch fence requires it), see ADR-002
+        intent.setClaimToken(java.util.UUID.randomUUID().toString());
         intent.setClaimedAt(Instant.now());
         actionIntentRepository.saveAndFlush(intent);
         actionExecutionService.executeActionIntent(intent.getId(), "phase19-test-worker");

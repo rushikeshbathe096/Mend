@@ -32,7 +32,7 @@ public class ActionIntentClaimServiceTest {
     void setUp() {
         repository = Mockito.mock(ActionIntentRepository.class);
         auditService = Mockito.mock(AuditService.class);
-        claimService = new ActionIntentClaimService(repository, auditService, 50, 5);
+        claimService = new ActionIntentClaimService(repository, new ActionIntentTransitions(repository), auditService, 50, 5);
     }
 
     @Test
@@ -48,12 +48,15 @@ public class ActionIntentClaimServiceTest {
         when(repository.findDueClaimableIntents(eq(ActionIntentStatus.SCHEDULED),
                 eq(CampaignStatus.ACTION_PENDING), any(Instant.class), any()))
                 .thenReturn(List.of(intent));
+        when(repository.promoteScheduled(intent.getId())).thenReturn(1);
 
         List<ActionIntent> promoted = claimService.promoteScheduledIntents();
 
         assertEquals(1, promoted.size());
         assertEquals(ActionIntentStatus.READY, promoted.get(0).getStatus());
-        verify(repository, times(1)).save(intent);
+        // M2 behaviour change: status changes go through a conditional UPDATE (ActionIntentTransitions), not entity save, see ADR-002
+        verify(repository, times(1)).promoteScheduled(intent.getId());
+        verify(repository, never()).save(any());
     }
 
     @Test
@@ -122,6 +125,7 @@ public class ActionIntentClaimServiceTest {
 
         when(repository.findExpiredClaims(any(Instant.class)))
                 .thenReturn(List.of(intent));
+        when(repository.releaseIfUndispatched(eq(intent.getId()), any(Instant.class))).thenReturn(1);
 
         List<ActionIntent> released = claimService.releaseExpiredClaims();
 
@@ -130,7 +134,9 @@ public class ActionIntentClaimServiceTest {
         assertNull(released.get(0).getClaimedAt());
         assertNull(released.get(0).getClaimToken());
         assertNull(released.get(0).getWorkerId());
-        verify(repository, times(1)).save(intent);
+        // M2 behaviour change: release is a conditional UPDATE that only applies to undispatched claims, see ADR-002
+        verify(repository, times(1)).releaseIfUndispatched(eq(intent.getId()), any(Instant.class));
+        verify(repository, never()).save(any());
         verify(auditService, times(1)).logEvent(any(), any(), eq("STATE_TRANSITION"), eq("SYSTEM"), isNull(), anyString());
     }
 
@@ -147,13 +153,36 @@ public class ActionIntentClaimServiceTest {
 
         when(repository.findExpiredIntents(any(Instant.class)))
                 .thenReturn(List.of(intent));
+        when(repository.expireUnclaimed(eq(intent.getId()), any(Instant.class))).thenReturn(1);
 
         List<ActionIntent> processed = claimService.processExpiredIntents();
 
         assertEquals(1, processed.size());
         assertEquals(ActionIntentStatus.EXPIRED, processed.get(0).getStatus());
         assertNotNull(processed.get(0).getCompletedAt());
-        verify(repository, times(1)).save(intent);
+        // M2 behaviour change: expiry is a conditional UPDATE (ActionIntentTransitions), not entity save, see ADR-002
+        verify(repository, times(1)).expireUnclaimed(eq(intent.getId()), any(Instant.class));
+        verify(repository, never()).save(any());
         verify(auditService, times(1)).logEvent(any(), any(), eq("STATE_TRANSITION"), eq("SYSTEM"), isNull(), anyString());
+    }
+
+    @Test
+    @DisplayName("M2: a dispatched (or concurrently moved) intent is never released back to READY")
+    void testReleaseSkipsWhenConditionalUpdateDoesNotApply() {
+        ActionIntent intent = new ActionIntent(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 1,
+                ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
+                ActionIntentStatus.CLAIMED, "key-6", Instant.now().minusSeconds(600)
+        );
+        intent.setClaimedAt(Instant.now().minus(Duration.ofMinutes(10)));
+        intent.setClaimToken("token-456");
+        when(repository.findExpiredClaims(any(Instant.class))).thenReturn(List.of(intent));
+        when(repository.releaseIfUndispatched(eq(intent.getId()), any(Instant.class))).thenReturn(0);
+
+        List<ActionIntent> released = claimService.releaseExpiredClaims();
+
+        assertTrue(released.isEmpty());
+        assertEquals("token-456", intent.getClaimToken());
+        verify(auditService, never()).logEvent(any(), any(), anyString(), anyString(), any(), anyString());
     }
 }
