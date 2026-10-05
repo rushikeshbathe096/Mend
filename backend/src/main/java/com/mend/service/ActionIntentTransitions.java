@@ -174,4 +174,13 @@ public class ActionIntentTransitions {
         }
         return repository.safeRetry(id, resendSafe, maxExecutionAttempts, seenVersion) == 1;
     }
+
+    /**
+     * The claim in its own transaction, whatever the caller holds (M2 U6): a unique violation of the one-in-flight index
+     * under a true race rolls back only this claim and never marks a caller's transaction rollback-only.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public boolean claimIsolated(UUID id, String workerId, String token, Instant now) {
+        return claim(id, workerId, token, now);
+    }
 }
