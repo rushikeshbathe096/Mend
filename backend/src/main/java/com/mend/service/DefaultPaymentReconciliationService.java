@@ -381,8 +381,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                         if (linkEntity.has("status") && !linkEntity.get("status").isNull()) {
                             paymentLinkStatus = linkEntity.get("status").asText();
                         }
-                        if (linkEntity.has("notes") && linkEntity.get("notes").isObject() && linkEntity.get("notes").has("mend_intent_id")) {
-                            mendIntentId = linkEntity.get("notes").get("mend_intent_id").asText();
+                        if (linkEntity.has("notes") && linkEntity.get("notes").isObject()) {
+                            mendIntentId = text(linkEntity.get("notes"), "mend_intent_id");
                         }
                     }
                     if (payload.has("subscription") && payload.get("subscription").has("entity")) {
@@ -407,10 +407,19 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                     }
                     if (paymentEntity.has("notes") && paymentEntity.get("notes").isObject()) {
                         JsonNode notes = paymentEntity.get("notes");
-                        if (notes.has("idempotency_key")) idempotencyKey = notes.get("idempotency_key").asText();
-                        if (notes.has("mend_intent_id")) mendIntentId = notes.get("mend_intent_id").asText();
+                        String keyFromNotes = text(notes, "idempotency_key");
+                        if (keyFromNotes != null) idempotencyKey = keyFromNotes;
+                        String paymentMendIntentId = text(notes, "mend_intent_id");
+                        if (paymentMendIntentId != null) {
+                            if (mendIntentId != null && !mendIntentId.equals(paymentMendIntentId)) {
+                                log.warn("event=reconciliation_conflicting_intent_ids link_intent_id={} payment_intent_id={}",
+                                        mendIntentId, paymentMendIntentId);
+                            }
+                            mendIntentId = paymentMendIntentId;
+                        }
                         // Legacy key, kept for intents created before M1.
-                        if (notes.has("action_intent_id")) actionIntentId = notes.get("action_intent_id").asText();
+                        String legacyIntentId = text(notes, "action_intent_id");
+                        if (legacyIntentId != null) actionIntentId = legacyIntentId;
                     }
                     // M1: `receipt` is no longer an idempotency-key fallback (payment links send no receipt; the
                     // legacy rcpt_<n> value could never match an intent).
@@ -432,6 +441,12 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         String intentIdForCorrelation = mendIntentId != null ? mendIntentId : actionIntentId;
         return new PayloadDetails(paymentId, subscriptionId, idempotencyKey, intentIdForCorrelation, status, failureReason,
                 paymentLinkPresent, paymentLinkId, paymentLinkStatus);
+    }
+
+    /** Untrusted payload: only a non-blank string value counts; null, numbers or objects are ignored. */
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value != null && value.isString() && !value.stringValue().isBlank() ? value.stringValue() : null;
     }
 
     private record PayloadDetails(
