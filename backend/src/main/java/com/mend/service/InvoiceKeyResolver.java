@@ -43,15 +43,14 @@ public class InvoiceKeyResolver {
         if (merchantId == null || paymentId == null || paymentId.isBlank()) {
             return fallback(campaignId, "NO_PAYMENT_ID");
         }
-        return webhookEventRepository.findByMerchantIdAndExternalEventId(merchantId, paymentId)
-                .map(event -> {
-                    try {
-                        return fromPayload(objectMapper.readTree(event.getRawPayload()), campaignId);
-                    } catch (RuntimeException unreadable) {
-                        return fallback(campaignId, "UNREADABLE_PAYLOAD");
-                    }
-                })
-                .orElseGet(() -> fallback(campaignId, "NO_WEBHOOK"));
+        try {
+            return webhookEventRepository.findByMerchantIdAndExternalEventId(merchantId, paymentId)
+                    .map(event -> fromPayload(objectMapper.readTree(event.getRawPayload()), campaignId))
+                    .orElseGet(() -> fallback(campaignId, "NO_WEBHOOK"));
+        } catch (RuntimeException unreadable) {
+            // Never let key derivation break campaign creation; the fallback only under-groups.
+            return fallback(campaignId, "LOOKUP_OR_PARSE_FAILED");
+        }
     }
 
     /** Pure derivation from a webhook payload root ({@code payload.payment.entity}). */

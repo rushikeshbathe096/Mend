@@ -44,13 +44,18 @@ class ActionIntentTransitionsTest extends AbstractIntegrationTest {
         campaign = campaigns.save(campaign);
     }
 
+    /**
+     * M2 U6 fixture correction: these tests exercise single-intent transitions and used to put several in-flight intents on
+     * one campaign. That shape is now impossible by design (one in flight per invoice, key = campaign key), so every
+     * intent gets its own ACTION_PENDING campaign; {@code campaign} is the most recent one.
+     */
     private ActionIntent intent(ActionIntentStatus status) {
-        ActionIntent intent = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, "REQUEST_CUSTOMER_ACTION",
-                "CUSTOMER_ACTION_REQUIRED", null, status, "intent:" + UUID.randomUUID(), Instant.now().minusSeconds(5));
-        // M2 U6 fixture correction: these tests exercise single-intent transitions with several in-flight intents on one
-        // campaign; each gets its own invoice key so the one-in-flight-per-invoice index (tested elsewhere) does not apply.
-        intent.setInvoiceKey("test:" + intent.getId());
-        return intents.save(intent);
+        campaign = new Campaign(UUID.randomUUID(), merchantId);
+        campaign.setPaymentId("pay_m2t" + UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+        campaign.setCurrentState(CampaignStatus.ACTION_PENDING);
+        campaign = campaigns.save(campaign);
+        return intents.save(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, "REQUEST_CUSTOMER_ACTION",
+                "CUSTOMER_ACTION_REQUIRED", null, status, "intent:" + UUID.randomUUID(), Instant.now().minusSeconds(5)));
     }
 
     private ActionIntent claimed(String token) {

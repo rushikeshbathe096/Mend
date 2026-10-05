@@ -175,18 +175,36 @@ public class ActionIntentClaimService {
     }
 
     /**
-     * One claim in its own transaction (no caller transaction: see {@link #claimDueIntents}). The claim predicate already
+     * One claim in its own transaction ({@code claimIsolated}, REQUIRES_NEW). The claim predicate already
      * refuses an intent whose invoice has another in-flight intent; under a true race the unique index decides, and the
      * loser is simply not claimed.
      */
     private boolean tryClaim(UUID intentId, UUID merchantId, UUID campaignId, String workerId, String claimToken, Instant now) {
         try {
-            return transitions.claim(intentId, workerId, claimToken, now);
-        } catch (org.springframework.dao.DataIntegrityViolationException inFlightSibling) {
+            return transitions.claimIsolated(intentId, workerId, claimToken, now);
+        } catch (org.springframework.dao.DataIntegrityViolationException violation) {
+            if (!violates(violation, ONE_IN_FLIGHT_INDEX)) {
+                throw violation;
+            }
             log.info("event=claim_blocked_inflight intent_id={} worker={}", intentId, workerId);
             auditService.logEvent(merchantId, campaignId, "CLAIM_BLOCKED_INFLIGHT", "SYSTEM", null,
                     "intent=" + intentId + " not claimed: another intent for the same invoice is in flight");
             return false;
         }
+    }
+
+    static final String ONE_IN_FLIGHT_INDEX = "ux_action_intents_one_inflight_per_invoice";
+
+    /** True when the violated constraint is {@code constraintName} (searched through the cause chain). */
+    private static boolean violates(Throwable error, String constraintName) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (t instanceof org.hibernate.exception.ConstraintViolationException cve && constraintName.equals(cve.getConstraintName())) {
+                return true;
+            }
+            if (t.getMessage() != null && t.getMessage().contains(constraintName)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

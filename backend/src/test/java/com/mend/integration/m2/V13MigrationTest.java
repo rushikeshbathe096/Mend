@@ -113,8 +113,25 @@ class V13MigrationTest extends AbstractIntegrationTest {
         seedIntent(campaign, "EXECUTING");
         seedIntent(campaign, "NEEDS_RECONCILIATION");
 
-        assertThrows(RuntimeException.class, () -> flyway("13").migrate());
+        assertThrows(org.flywaydb.core.api.FlywayException.class, () -> flyway("13").migrate());
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'ux_action_intents_one_inflight_per_invoice'",
                 Integer.class, schema));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM information_schema.columns WHERE table_schema = ? "
+                + "AND table_name = 'campaigns' AND column_name = 'invoice_key'", Integer.class, schema), "rolled back: no partial state");
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".flyway_schema_history WHERE version = '13' AND success",
+                Integer.class));
+    }
+
+    @Test
+    @DisplayName("V14: an intent's invoice_key must equal its campaign's (composite foreign key)")
+    void intentKeyMustMatchCampaignKey() {
+        UUID campaign = seedCampaign();
+        flyway("14").migrate();
+
+        seedIntent(campaign, "READY", "cmp:" + campaign);
+        assertThrows(DataIntegrityViolationException.class, () -> seedIntent(campaign, "READY", "ord:order_Other1"));
+        UUID intent = seedIntent(campaign, "READY", "cmp:" + campaign);
+        assertThrows(DataIntegrityViolationException.class,
+                () -> jdbc.update("UPDATE " + schema + ".action_intents SET invoice_key = 'cmp:other' WHERE id = ?", intent));
     }
 }

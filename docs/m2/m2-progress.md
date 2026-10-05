@@ -248,9 +248,30 @@ Tests:
 - S7 enabled.
 
 Full suite: `Tests run: 613, Failures: 0, Errors: 0, Skipped: 1` (597 + 16; the skip is the M1 tracking test only, so no RED test remains disabled before U7).
-Review: (pending)
+Review (fresh subagent): 0 blockers. Fixed in `M2 U6: review fixes`:
+- MAJOR blocked intents could fill the claim batch (the NOT EXISTS was only on the claim UPDATE) → `findDueClaimableIntents` excludes intents whose invoice has an in-flight sibling. Test `blockedIntentsDoNotStarveTheBatch` (batch 2, 3 older blocked intents, the free one is claimed); **verified it fails without the fix**.
+- MAJOR a claim could poison a caller's transaction → new `ActionIntentTransitions.claimIsolated` (REQUIRES_NEW on another bean), used by both claim paths. The claim is isolated whatever the caller holds, and `claimDueIntents` stays non-transactional, so there is no self-deadlock against promoted rows.
+- MAJOR sibling intents could get different keys (`@PrePersist` default `cmp:<campaign>` vs a campaign holding `ord:X`) → **new V14** `uq_campaigns_id_invoice_key UNIQUE (id, invoice_key)` + `fk_action_intents_campaign_invoice_key FOREIGN KEY (campaign_id, invoice_key) REFERENCES campaigns (id, invoice_key)`: "intent key = campaign key" is now a database rule. `ActionIntentService` uses `requireNonNull` on the campaign key (dead fallback removed). Grep: the only production intent creators are `ActionIntentService` (copies) and the dev seed (campaign default ⇒ same key). Test `V13MigrationTest.intentKeyMustMatchCampaignKey`.
+  - **Numbering deviation**: V13 is committed and applied, so it is not edited (invariant 10). The key rule is V14, and **U8's planned V14 (`provider_payment_id`) becomes V15**.
+  - `ActionIntentTransitionsTest`'s `test:<id>` fixture keys now violate the FK, so each fixture intent gets its own ACTION_PENDING campaign.
+- MAJOR V13's runbook query is wrong after a rolled-back V13 (`invoice_key` NULL or absent) → the corrected query (grouped by campaign) is in V14's header, plus here:
+  `SELECT merchant_id, campaign_id, array_agg(id || ':' || status ORDER BY created_at) FROM action_intents WHERE status IN ('CLAIMED','EXECUTING','NEEDS_RECONCILIATION','AWAITING_PAYMENT') GROUP BY merchant_id, campaign_id HAVING count(*) > 1;`
+  V13's header cannot be corrected in place (invariant 10).
+- MINOR V13 lock note incomplete → corrected in V14's header: ADD COLUMN / SET NOT NULL take ACCESS EXCLUSIVE locks, so reads are blocked too.
+- MINOR failure test did not prove there was no partial state → asserts `campaigns.invoice_key` absent, no successful v13 history row, and a `FlywayException`.
+- MINOR any integrity violation was treated as "sibling in flight" → `tryClaim` checks the constraint name (`ux_action_intents_one_inflight_per_invoice`) through the cause chain and rethrows anything else.
+- MINOR race-test lock poll was cluster-wide → it counts only waiters blocked by A's backend (`? = ANY(pg_blocking_pids(pid))`).
+- MINOR new tests left claimable rows behind → `OneInFlightPerInvoiceTest` `@AfterEach` cancels its merchant's non-terminal intents.
+- MINOR resolver lookup outside the try → lookup and parse are both inside it; any failure falls back (never breaks campaign creation).
+Explained / not changed:
+- "dispatched_at backfill undeclared": it was declared in the U5 adaptations ("the V13 backfill lands in U6"), following the U2 review plan. Legacy EXECUTING rows cannot exist after V12, which remapped every EXECUTING row. The stuck sweep uses `COALESCE(dispatched_at, claimed_at, created_at)` anyway.
+- Resolver uses `external_event_id = campaign.paymentId`. That matches production: `processClassificationResult` creates the campaign with `paymentId = event.getExternalEventId()`, and `external_event_id` is globally UNIQUE (V1). No `VERIFIED` filter: the amount resolver trusts the same stored row for money, and the effect is limited to over-grouping within the merchant.
+- Campaign has only `@PreUpdate`, so the new `@PrePersist` is the only one. `int:` fallback and field placement: nits, unchanged.
+**Local test DB data fix #2 (declared).** Before V14, the local test DB held 15 intents with `test:<id>` keys. All were created by the U6 `ActionIntentTransitionsTest` fixture this review replaced. They were deleted by hand (`DELETE … WHERE invoice_key LIKE 'test:%' AND invoice_key <> campaign key`; 15 rows; nothing references `action_intents` by FK). Afterwards 0 rows differ from their campaign's key. Reviewer's opinion on fix #1: acceptable for a disposable local DB. It is evidence that integration tests need an isolated database (recorded as an out-of-scope finding).
+Tests after fixes: `Tests run: 615, Failures: 0, Errors: 0, Skipped: 1`.
 
 ### Adaptations for U7 (written before applying)
-1. U7 hard-stop check: no `@Disabled("M2-RED…")` remains (verified by grep before starting).
+1. U7 hard-stop check: no `@Disabled("M2-RED…")` remains (verified by grep before starting). The only `@Disabled` is the M1 tracking test in `PaymentReconciliationTest` (owned by U8).
+4. U8 uses migration **V15** (V14 is taken by the key rule above).
 2. The concurrency matrix reuses `BlockingPaymentProvider`, the SQL time travel and the reconciler `runCycle`. Each new test parks other classes' reconcile/EXECUTING rows the same way.
 3. Run the full suite 3× for flakes (Phase5 Redis test watched since U4).

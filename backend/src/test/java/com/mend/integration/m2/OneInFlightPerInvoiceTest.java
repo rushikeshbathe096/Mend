@@ -52,6 +52,13 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
         merchants.save(new Merchant(merchantId, "M2 U6 merchant"));
     }
 
+    /** Shared database: leave no claimable or in-flight rows behind for other test classes. */
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        jdbc.update("UPDATE action_intents SET status = 'CANCELLED', completed_at = now() WHERE merchant_id = ? "
+                + "AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED')", merchantId);
+    }
+
     private String storeFailure(String orderIdOrNull) {
         String paymentId = "pay_m2u6" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         String order = orderIdOrNull == null ? "" : ",\"order_id\":\"" + orderIdOrNull + "\"";
@@ -177,8 +184,10 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
         CountDownLatch commitA = new CountDownLatch(1);
         try {
             // A claims inside a transaction that stays open: B's predicate cannot see A's uncommitted claim.
+            int[] backendA = new int[1];
             Future<Boolean> fa = threads.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
                 boolean claimed = transitions.claim(a.getId(), "wa", UUID.randomUUID().toString(), Instant.now());
+                backendA[0] = jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class);
                 aClaimedUncommitted.countDown();
                 try {
                     commitA.await(20, TimeUnit.SECONDS);
@@ -192,7 +201,9 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
 
             // Wait until B is blocked on the index entry of A's uncommitted row, then let A commit.
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (jdbc.queryForObject("SELECT count(*) FROM pg_locks WHERE NOT granted", Integer.class) == 0) {
+            // Only a waiter blocked by A's backend counts (not any unrelated lock wait in the cluster).
+            while (jdbc.queryForObject("SELECT count(*) FROM pg_locks WHERE NOT granted AND ? = ANY(pg_blocking_pids(pid))",
+                    Integer.class, backendA[0]) == 0) {
                 assertTrue(System.nanoTime() < deadline, "B never blocked on A's uncommitted claim");
                 Thread.onSpinWait();
             }
@@ -208,5 +219,28 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
         assertEquals(ActionIntentStatus.READY, reload(b).getStatus());
         assertTrue(auditLogs.findByCampaignIdOrderByCreatedAtAsc(b.getCampaignId()).stream()
                 .anyMatch(log -> "CLAIM_BLOCKED_INFLIGHT".equals(log.getEventType())));
+    }
+
+    @Autowired private com.mend.service.AuditService auditService;
+
+    @Test
+    @DisplayName("Blocked intents do not fill the claim batch: a free intent is still claimed behind more blocked ones than the batch size")
+    void blockedIntentsDoNotStarveTheBatch() {
+        ActionIntentClaimService smallBatch = new ActionIntentClaimService(intents, transitions, auditService, 2, 5);
+        // Shared database: keep other classes' READY rows out of this small batch.
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' WHERE status = 'READY' AND merchant_id <> ?", merchantId);
+        for (int i = 0; i < 3; i++) {
+            String order = "order_M2u6b" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+            ActionIntent inFlight = readyIntentFor(storeFailure(order));
+            assertTrue(claimService.claimSpecificIntent(inFlight.getId(), "holder").isPresent());
+            ActionIntent blocked = readyIntentFor(storeFailure(order));
+            jdbc.update("UPDATE action_intents SET scheduled_at = now() - interval '1 day' WHERE id = ?", blocked.getId());
+        }
+        ActionIntent free = readyIntentFor(storeFailure(null));
+
+        List<ActionIntent> claimed = smallBatch.claimDueIntents("batch-worker", 2);
+
+        assertTrue(claimed.stream().anyMatch(intent -> intent.getId().equals(free.getId())),
+                "the free intent must be claimed although 3 older blocked intents exceed the batch of 2");
     }
 }
