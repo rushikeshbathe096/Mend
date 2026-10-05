@@ -92,9 +92,17 @@ public class ActionIntent {
     @Column(name = "version", nullable = false)
     private Long version;
 
-    /** M2: copied from the campaign (U6); nullable until then. */
-    @Column(name = "invoice_key", length = 120)
+    /** M2 U6: copied from the campaign at creation; one in-flight intent per (merchant, invoice_key) is DB-enforced. */
+    @Column(name = "invoice_key", length = 120, nullable = false)
     private String invoiceKey;
+
+    /** Intents created without an explicit key get their campaign's fallback key (same as the campaign default). */
+    @PrePersist
+    public void prePersistInvoiceKey() {
+        if (invoiceKey == null && campaignId != null) {
+            invoiceKey = "cmp:" + campaignId;
+        }
+    }
 
     public ActionIntent() {
     }

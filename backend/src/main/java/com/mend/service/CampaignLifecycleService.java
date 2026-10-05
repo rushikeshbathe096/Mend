@@ -36,13 +36,17 @@ public class CampaignLifecycleService {
     private final AuditService auditService;
     private final RecoveryOrchestratorService recoveryOrchestratorService;
 
+    private final InvoiceKeyResolver invoiceKeyResolver;
+
     public CampaignLifecycleService(
             CampaignRepository campaignRepository,
             ClassificationResultRepository classificationResultRepository,
             MerchantRepository merchantRepository,
             CampaignStateMachine campaignStateMachine,
             AuditService auditService,
-            @Lazy RecoveryOrchestratorService recoveryOrchestratorService) {
+            @Lazy RecoveryOrchestratorService recoveryOrchestratorService,
+            InvoiceKeyResolver invoiceKeyResolver) {
+        this.invoiceKeyResolver = invoiceKeyResolver;
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.merchantRepository = merchantRepository;
@@ -84,6 +88,7 @@ public class CampaignLifecycleService {
         newCampaign.setCustomerIdHash(customerIdHash);
         newCampaign.setSubscriptionId(subscriptionId);
         newCampaign.setCurrentState(CampaignStatus.CREATED);
+        newCampaign.setInvoiceKey(invoiceKeyResolver.resolveForCampaign(effectiveMerchantId, effectivePaymentId, newCampaign.getId()));
 
         try {
             Campaign saved = campaignRepository.saveAndFlush(newCampaign);

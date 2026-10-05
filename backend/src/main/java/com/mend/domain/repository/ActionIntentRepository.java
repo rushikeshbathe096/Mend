@@ -92,6 +92,16 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                       AND c.merchantId = a.merchantId
                       AND c.currentState = :expectedCampaignStatus
                )
+               AND NOT EXISTS (
+                   SELECT s.id
+                     FROM ActionIntent s
+                    WHERE s.merchantId = a.merchantId
+                      AND s.invoiceKey = a.invoiceKey
+                      AND s.id <> a.id
+                      AND s.status IN (com.mend.domain.enums.ActionIntentStatus.CLAIMED, com.mend.domain.enums.ActionIntentStatus.EXECUTING,
+                                       com.mend.domain.enums.ActionIntentStatus.NEEDS_RECONCILIATION,
+                                       com.mend.domain.enums.ActionIntentStatus.AWAITING_PAYMENT)
+               )
             """)
     int claimIntentAtomic(
             @Param("id") UUID id,
