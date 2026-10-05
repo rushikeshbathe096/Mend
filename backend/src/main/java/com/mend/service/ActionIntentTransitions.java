@@ -1,13 +1,17 @@
 package com.mend.service;
 
 import com.mend.domain.enums.ActionIntentStatus;
+import com.mend.domain.enums.ActionType;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.repository.ActionIntentRepository;
+import com.mend.provider.ProviderCapabilities;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -26,9 +30,11 @@ public class ActionIntentTransitions {
     private static final Set<ActionIntentStatus> ABANDON_TARGETS = EnumSet.of(ActionIntentStatus.FAILED, ActionIntentStatus.EXPIRED);
 
     private final ActionIntentRepository repository;
+    private final ProviderCapabilities capabilities;
 
-    public ActionIntentTransitions(ActionIntentRepository repository) {
+    public ActionIntentTransitions(ActionIntentRepository repository, ProviderCapabilities capabilities) {
         this.repository = repository;
+        this.capabilities = capabilities;
     }
 
     /** READY → CLAIMED with a fresh token, only while the campaign is ACTION_PENDING and the intent is due. */
@@ -112,5 +118,59 @@ public class ActionIntentTransitions {
     @Transactional
     public boolean cancelIfExecutable(UUID id, Instant now) {
         return repository.cancelIfExecutable(id, now) == 1;
+    }
+
+    // ---- M2 U5 reconciler transitions (status-fenced; the reconciler is not the worker, so no claim token) ----
+
+    private static final Set<ActionIntentStatus> RECONCILE_FROM = EnumSet.of(
+            ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.AWAITING_PAYMENT);
+    private static final Set<ActionIntentStatus> RECONCILE_TARGETS = EnumSet.of(ActionIntentStatus.AWAITING_PAYMENT,
+            ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.SUCCEEDED, ActionIntentStatus.FAILED);
+
+    /** EXECUTING whose dispatch is older than {@code threshold} → NEEDS_RECONCILIATION, due now. The dead worker's token stays,
+     *  but its finalize requires EXECUTING and so fails. */
+    @Transactional
+    public boolean markStuck(UUID id, Instant threshold, Instant now) {
+        return repository.markStuck(id, threshold, now) == 1;
+    }
+
+    /** NEEDS_RECONCILIATION / AWAITING_PAYMENT → another reconcile state or a terminal one, counting the reconcile attempt. */
+    @Transactional
+    public boolean reconcileTo(UUID id, ActionIntentStatus expected, ActionIntentStatus newStatus, String responseReference,
+                               Instant now, Instant reconcileAfter) {
+        if (!RECONCILE_FROM.contains(expected) || !RECONCILE_TARGETS.contains(newStatus) || expected == newStatus) {
+            throw new IllegalArgumentException("reconcileTo not allowed: " + expected + " -> " + newStatus);
+        }
+        boolean terminal = newStatus == ActionIntentStatus.SUCCEEDED || newStatus == ActionIntentStatus.FAILED;
+        if (!terminal && reconcileAfter == null) {
+            throw new IllegalArgumentException("a non-terminal reconcile state needs reconcileAfter");
+        }
+        return repository.reconcileTo(id, expected, newStatus, responseReference, terminal ? now : null,
+                terminal ? null : reconcileAfter) == 1;
+    }
+
+    /** Stay in {@code expected}, try again at {@code reconcileAfter} (backoff). */
+    @Transactional
+    public boolean deferReconcile(UUID id, ActionIntentStatus expected, Instant reconcileAfter) {
+        if (!RECONCILE_FROM.contains(expected) || reconcileAfter == null) {
+            throw new IllegalArgumentException("deferReconcile not allowed from " + expected);
+        }
+        return repository.deferReconcile(id, expected, reconcileAfter) == 1;
+    }
+
+    /**
+     * SAFE_RETRY: NEEDS_RECONCILIATION → READY (same intent, same attempt key), only for action types whose provider resend is
+     * idempotent and while dispatches remain. The capability gate is part of the UPDATE predicate, so no caller can bypass it.
+     */
+    @Transactional
+    public boolean safeRetry(UUID id, int maxExecutionAttempts) {
+        List<String> resendSafe = Arrays.stream(ActionType.values())
+                .filter(capabilities::supportsIdempotentResend)
+                .map(ActionType::name)
+                .toList();
+        if (resendSafe.isEmpty()) {
+            return false;
+        }
+        return repository.safeRetry(id, resendSafe, maxExecutionAttempts) == 1;
     }
 }

@@ -142,3 +142,60 @@ Out-of-scope / decision for later units: `cancelIfExecutable` keeps the pre-M2 r
 3. `SKIP LOCKED` pick is a native query in its own short transaction that also pushes `reconcile_after` forward (the reconcile lease), then provider lookups run outside any transaction.
 4. Backoff policy class `ReconcileBackoff` with injectable `RandomGenerator` and `Clock` (no `*Utils`).
 5. SAFE_RETRY re-enters READY with the same attempt key; it clears `claim_token`, `worker_id`, `claimed_at`, `dispatched_at`; campaign EXECUTING → ACTION_PENDING via the new state-machine edge (reason `RETRY_DEFERRED`).
+
+## U5 — Reconciler job, SAFE_RETRY, link TTL (production behaviour change)
+Built:
+- `ProviderCapabilities.supportsIdempotentResend(ActionType)`. Razorpay: true only for REQUEST_CUSTOMER_ACTION. Mock: true for REQUEST_CUSTOMER_ACTION, false for RETRY_PAYMENT / MANUAL_REVIEW.
+- `MockPaymentProvider`:
+  - reference uniqueness (a second create with the same key returns the existing link, logged `duplicate_reference`);
+  - `getPayment` returns only payments made with the `payLink` knob (SYNTHETIC);
+  - knobs `setLinkState`, `setSimulatedLostResponse` (link stored, OutcomeUnknown returned), `setSimulatedLookupUnavailable`.
+- `CampaignStateMachine`: EXECUTING → ACTION_PENDING (reason `RETRY_DEFERRED`).
+- New `ExecutionReconciler` (scheduled, toggles `mend.reconciler.enabled` / `scheduled-enabled`). Each cycle:
+  - (a) stuck sweep: EXECUTING older than T_stuck → NEEDS_RECONCILIATION, audit `EXECUTION_STUCK`;
+  - (b) a short transaction picks due rows with `FOR UPDATE SKIP LOCKED` (native) and pushes `reconcile_after` by the lease;
+  - (c) per row, outside any transaction: GET lookups only, then the §7 table applied through new status-fenced transitions (`markStuck`, `reconcileTo`, `deferReconcile`, `safeRetry`), each counting `reconcile_attempts` and setting the next `reconcile_after` with full-jitter backoff;
+  - (d) SAFE_RETRY → READY with the same key, ownership and dispatch cleared, campaign → ACTION_PENDING, audit `SAFE_RETRY`. Escalation → intent FAILED, campaign → FAILED → ELIGIBLE, `HumanApprovalService.createReview` with `RECONCILIATION_ESCALATED` / `AMBIGUOUS_DEBIT`;
+  - (e) SUCCEEDED → campaign RECOVERED; FAILED → existing failure path (FAILED → EXHAUSTED).
+- `ReconcileBackoff`: injectable `RandomGenerator`, 1 s floor so a row is always pushed into the future.
+- `ProviderActionDispatcher`: `expireBy = now + mend.recovery.link-ttl-hours` (72). TTL outside 15 min–180 days fails at startup.
+- Config defaults (OD-2/OD-3) in `application.properties`. Tests disable the schedule and call `runCycle`.
+
+Adaptations (decided while building):
+- The SAFE_RETRY capability gate is in the UPDATE predicate (`action_type IN :resendSafeTypes AND execution_attempts < :max`), so no caller can resend a debit even by mistake.
+- Legacy rows: the grace and stuck checks use `COALESCE(dispatched_at, claimed_at, created_at)`; the pick includes `reconcile_after IS NULL`.
+- `supportsIdempotentResend` is a `default` method returning false (fail safe). That keeps the existing lambda-based `ProviderActionDispatcherTest` compiling unchanged. The 4-arg dispatcher constructor is kept, defaulting the TTL to 72 h.
+- The reconciler also updates the `campaign_attempts` row: ISSUED / SUCCESS / FAILED / UNRESOLVED.
+- Behaviour fix found by the tests: `ActionExecutionService.finalizeExecution` inserted a new `campaign_attempts` row on every finalize. A SAFE_RETRY re-executes the same attempt number, so it hit the unique key. It now finds or creates the row.
+- A PAID link without a CAPTURED `getPayment` is never success (invariant 2): the row stays and logs WARN `paid_link_without_captured_evidence`.
+- NotFound after grace when the campaign is terminal → intent FAILED without resend. When the campaign is not EXECUTING / ACTION_PENDING → escalate.
+- Razorpay-mode reconciler tests build the real adapter by hand against the stub inside the shared test context. A separate `@SpringBootTest` context exhausted Postgres connections ("too many clients") in the full run.
+
+Tests:
+- `ExecutionReconcilerTest` (16, mock):
+  - every §7 row for NEEDS_RECONCILIATION and AWAITING_PAYMENT;
+  - SAFE_RETRY plus the resend using the same key;
+  - escalation when dispatches are exhausted;
+  - Unavailable ≠ NotFound;
+  - debit never resent and ending in an `AMBIGUOUS_DEBIT` review after 5 deferrals;
+  - liveness: crash before or after the request reached the provider, resolved within 2 cycles;
+  - recent EXECUTING untouched;
+  - two reconciler instances concurrently: no row picked twice, each processed once.
+- `ExecutionReconcilerRazorpayTest` (5, recorded 05/06/20/21 + doc-derived empty lookup; asserts the reconciler sent only GETs).
+- `ReconcileBackoffTest` (4, seeded): bounds, floor, cap, determinism.
+- `MockPaymentProviderM2Test` (5).
+- `ProviderActionDispatcherTest` +2 (expireBy, TTL bounds).
+- `CampaignStateMachineTest` +1.
+- `ExecutionSafetyScenarioTest` +1: S2 end-to-end. The reconciler resolves a dead worker's intent, the late worker result is discarded, and the resend gets the same link (two sends, one link).
+- S2/S3/S5 were already enabled in U3. The S2 resolution the U3 comment deferred is now asserted.
+
+Full suite: `Tests run: 585, Failures: 0, Errors: 0, Skipped: 2` (551 + 34).
+Review: (pending)
+
+### Adaptations for U6 (written before applying)
+1. V13 (new migration, never edit V12):
+   - backfill `dispatched_at = COALESCE(claimed_at, now())` and `execution_attempts = GREATEST(execution_attempts, 1)` for NEEDS_RECONCILIATION / AWAITING_PAYMENT rows with NULL `dispatched_at`;
+   - backfill `invoice_key`;
+   - create the partial unique index. The header notes lock behaviour.
+2. The invoice-key derivation comes from the original failure webhook (`inv:` / `ord:` / `pay:`), copied onto the intent at creation.
+3. S7's fixture gets its `invoice_key` through the production derivation; un-disable S7.
