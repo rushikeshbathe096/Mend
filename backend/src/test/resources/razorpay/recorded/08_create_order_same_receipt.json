@@ -1,0 +1,38 @@
+{
+  "fixture": "08_create_order_same_receipt",
+  "mode": "test",
+  "recorded_at": "2026-10-05T04:59:05Z",
+  "latency_ms": 260,
+  "request": {
+    "method": "POST",
+    "path": "/v1/orders",
+    "body": {
+      "amount": 100,
+      "currency": "INR",
+      "receipt": "mnd_rcpt_1791176340",
+      "payment_capture": true,
+      "notes": {
+        "mend_intent_id": "recording"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "amount": 100,
+      "amount_due": 100,
+      "amount_paid": 0,
+      "attempts": 0,
+      "created_at": 1791176345,
+      "currency": "INR",
+      "entity": "order",
+      "id": "order_Tk6TFD4t5SaUF5",
+      "notes": {
+        "mend_intent_id": "recording"
+      },
+      "offer_id": null,
+      "receipt": "mnd_rcpt_1791176340",
+      "status": "created"
+    }
+  }
+}

@@ -1,14 +1,21 @@
 package com.mend.integration;
 
+import com.mend.provider.ProviderAttemptKey;
+import com.mend.provider.razorpay.RazorpayCredentials;
+import com.mend.provider.razorpay.RazorpayProperties;
+import com.mend.provider.razorpay.RazorpayStubServer;
+import com.mend.service.ActionExecutionService;
+import org.junit.jupiter.api.AfterAll;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mend.client.RazorpayPaymentProviderClient;
 import com.mend.config.RazorpayWebhookProperties;
 import com.mend.config.RedisStreamProperties;
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.*;
 import com.mend.domain.repository.*;
 import com.mend.dto.AnalyticsOverviewDto;
-import com.mend.dto.payment.PaymentExecutionRequest;
 import com.mend.dto.payment.PaymentExecutionResult;
 import com.mend.dto.payment.PaymentExecutionStatus;
 import com.mend.events.WebhookEventMessage;
@@ -47,10 +54,33 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
         "mend.payment.provider=razorpay",
         "razorpay.key-id=rzp_test_key_phase20",
         "razorpay.key-secret=rzp_test_secret_phase20",
-        "razorpay.webhook.secret=rzp_whsec_phase20"
+        "razorpay.webhook.secret=rzp_whsec_phase20",
+        "razorpay.single-tenant-merchant-id=" + Phase20_RazorpayTestModeE2EValidationTest.SINGLE_TENANT_MERCHANT
 })
 @ActiveProfiles("test")
 public class Phase20_RazorpayTestModeE2EValidationTest {
+
+    /** The only merchant the single-tenant env credentials may act for (M1 fail-closed resolver). */
+    static final String SINGLE_TENANT_MERCHANT = "5f0a9c2e-4b1d-4e8a-9c3f-20a1b2c3d4e5";
+
+    /** M1: the app's Razorpay provider talks to this local stub replaying recorded fixtures, never to the internet. */
+    private static final RazorpayStubServer RAZORPAY_STUB = RazorpayStubServer.start();
+
+    @DynamicPropertySource
+    static void razorpayStub(DynamicPropertyRegistry registry) {
+        registry.add("razorpay.api.base-url", RAZORPAY_STUB::baseUrl);
+    }
+
+    @AfterAll
+    static void stopStub() {
+        RAZORPAY_STUB.close();
+    }
+
+    @Autowired
+    private ActionExecutionService actionExecutionService;
+
+    @Autowired
+    private ComplianceDecisionRepository complianceDecisionRepository;
 
     @Value("${razorpay.api.base-url:https://api.razorpay.com}")
     private String razorpayBaseUrl;
@@ -138,6 +168,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         } catch (Exception ignored) {
         }
 
+        RAZORPAY_STUB.reset();
         merchantId = UUID.randomUUID();
         merchant = new Merchant(merchantId, "Razorpay Phase20 Test Merchant");
         merchant.setExternalReference("ext_m_rzp_" + merchantId.toString().substring(0, 8));
@@ -155,7 +186,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
     @DisplayName("1. Configuration Audit — Verify Razorpay Provider Selection & Secret Non-Exposure")
     void testConfigurationAudit() {
         assertNotNull(razorpayBaseUrl);
-        assertTrue(razorpayBaseUrl.contains("razorpay.com"));
+        // M1 behaviour change: in this test the base URL points at the local fixture stub; the production default is checked instead, see ADR-001
+        assertTrue(new RazorpayProperties(new RazorpayProperties.Api(null), "k", "s", 1, 1, null).baseUrl().contains("razorpay.com"));
         assertNotNull(razorpayKeyId);
         assertNotNull(razorpayKeySecret);
 
@@ -164,10 +196,9 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         assertFalse(razorpayKeySecret.isBlank());
 
         // Sanitization test — secret string must be redacted in logs/messages
-        RazorpayPaymentProviderClient client = new RazorpayPaymentProviderClient(
-                razorpayBaseUrl, razorpayKeyId, razorpayKeySecret, new RestTemplate(), merchantConfigRepository, objectMapper
-        );
-        assertNotNull(client);
+        // M1 behaviour change: the legacy client is gone; the credentials record is what reaches logs, see ADR-001
+        String printed = new RazorpayCredentials(razorpayKeyId, razorpayKeySecret).toString();
+        assertFalse(printed.contains(razorpayKeySecret));
     }
 
     // ==================== SCENARIO 2: WEBHOOK SIGNATURE VALIDATION ====================
@@ -290,103 +321,92 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId());
         assertNotNull(intent);
 
-        // Step 6: Mock Server simulates Razorpay 200 OK Retry API Response
-        RestTemplate restTemplate = new RestTemplate();
-        MockRestServiceServer mockServer = MockRestServiceServer.createServer(restTemplate);
-        mockServer.expect(requestTo(razorpayBaseUrl + "/v1/payments/" + paymentId + "/retry"))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(header("X-Razorpay-Idempotency-Header", intent.getIdempotencyKey()))
-                .andRespond(withStatus(HttpStatus.OK)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body("{\"id\": \"pay_rzp_recov_888\", \"status\": \"captured\", \"amount\": 75000}"));
-
-        RazorpayPaymentProviderClient razorpayClient = new RazorpayPaymentProviderClient(
-                razorpayBaseUrl, razorpayKeyId, razorpayKeySecret, restTemplate, merchantConfigRepository, objectMapper
-        );
-
-        PaymentExecutionRequest execReq = new PaymentExecutionRequest(
-                merchantId, campaign.getId(), intent.getId(), paymentId, null, ActionType.RETRY_PAYMENT, 1, intent.getIdempotencyKey()
-        );
-
-        PaymentExecutionResult execResult = razorpayClient.executeAction(execReq);
-        assertNotNull(execResult);
-        assertTrue(execResult.isSuccess());
-        assertEquals("pay_rzp_recov_888", execResult.getExternalReference());
-
-        // Step 7: Transition Campaign to RECOVERED via state machine matrix
+        // Step 6 (M1 behaviour change): POST /v1/payments/{id}/retry does not exist in Razorpay (fixture 10 recorded a 404).
+        // RETRY_PAYMENT in razorpay mode is NotSupported locally: zero HTTP calls, intent FAILED. See ADR-001.
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ACTION_PENDING, "Action pending execution", "SYSTEM", null);
-        campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.EXECUTING, "Action executing in Razorpay API", "SYSTEM", null);
-        campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.RECOVERED, "Razorpay payment retry succeeded", "RAZORPAY_API", null);
+        ActionIntent claimed = claim(intent);
+        var report = actionExecutionService.executeActionIntent(claimed.getId(), "worker-phase20");
 
+        assertEquals(PaymentExecutionStatus.FAILURE, report.getStatus());
+        assertEquals("PROVIDER_OPERATION_NOT_SUPPORTED", report.getResponseCode());
+        assertTrue(RAZORPAY_STUB.requests().isEmpty(), "RETRY_PAYMENT must make zero HTTP calls in razorpay mode");
+        assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(claimed.getId()).orElseThrow().getStatus());
+        assertTrue(auditLogRepository.findByCampaignIdOrderByCreatedAtAsc(campaign.getId()).stream()
+                .anyMatch(a -> "PROVIDER_REQUEST_REJECTED".equals(a.getEventType())
+                        && a.getReason().contains("RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2")));
+
+        // Step 7 (M1 behaviour change): no request outcome may set RECOVERED; the campaign is exhausted, not recovered.
         Campaign finalCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
-        assertEquals(CampaignStatus.RECOVERED, finalCampaign.getCurrentState());
+        assertNotEquals(CampaignStatus.RECOVERED, finalCampaign.getCurrentState());
+        assertEquals(CampaignStatus.EXHAUSTED, finalCampaign.getCurrentState());
 
         // Step 8: Revenue Metrics Verification
         AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, null);
         assertEquals(1, analytics.getTotalCampaigns());
-        assertEquals(1, analytics.getRecoveredCampaigns());
-        assertEquals(100.0, analytics.getRecoveryRate());
+        // M1 behaviour change: nothing was recovered without captured evidence, see ADR-001
+        assertEquals(0, analytics.getRecoveredCampaigns());
+        assertEquals(0.0, analytics.getRecoveryRate());
     }
 
     // ==================== SCENARIO 4: RAZORPAY IDEMPOTENCY ====================
 
     @Test
     @DisplayName("4. Razorpay Idempotency — Headers and Idempotency Key Preservation")
-    void testRazorpayIdempotencyHeaders() {
-        String idempotencyKey = "intent:" + UUID.randomUUID() + ":attempt_1:RETRY_PAYMENT";
-        Campaign campaign = createTestCampaign(merchantId, "pay_rzp_idemp_01", CampaignStatus.ELIGIBLE, 1, 10000L);
+    void testRazorpayIdempotencyHeaders() throws Exception {
+        // M1 behaviour change: REQUEST_CUSTOMER_ACTION creates a payment link (recorded fixture 01) through the executor;
+        // the attempt key travels as reference_id (no idempotency headers exist for links); the intent stays EXECUTING
+        // and the campaign is NOT recovered. See ADR-001.
+        LinkFixture fixture = claimedLinkIntent("pay_rzp_link_01", 100);
+        // Fixture 01 replayed with reference_id echoed from the request: the recorded reference belongs to the recording run.
+        String fixture01 = recordedBody("01_create_link_ok");
+        RAZORPAY_STUB.stub("POST", "/v1/payment_links", 200, requestBody ->
+                fixture01.replace("mnd_rec_1791176340", readJson(requestBody).get("reference_id").asString()));
 
-        RestTemplate restTemplate = new RestTemplate();
-        MockRestServiceServer mockServer = MockRestServiceServer.createServer(restTemplate);
-        mockServer.expect(requestTo(razorpayBaseUrl + "/v1/payments/pay_rzp_idemp_01/retry"))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(header("X-Razorpay-Idempotency-Header", idempotencyKey))
-                .andExpect(header("X-Idempotency-Key", idempotencyKey))
-                .andRespond(withStatus(HttpStatus.OK)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body("{\"id\": \"pay_rzp_idemp_ref\", \"status\": \"captured\"}"));
+        var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20");
 
-        RazorpayPaymentProviderClient razorpayClient = new RazorpayPaymentProviderClient(
-                razorpayBaseUrl, razorpayKeyId, razorpayKeySecret, restTemplate, merchantConfigRepository, objectMapper
-        );
+        assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
+        assertEquals("plink_Tk6TAI6WoeOTDh", report.getExternalReference());
+        ActionIntent storedIntent = actionIntentRepository.findById(fixture.intent().getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.EXECUTING, storedIntent.getStatus());
+        assertEquals("plink_Tk6TAI6WoeOTDh", storedIntent.getResponseReference());
+        Campaign storedCampaign = campaignRepository.findById(fixture.campaign().getId()).orElseThrow();
+        assertNotEquals(CampaignStatus.RECOVERED, storedCampaign.getCurrentState());
+        assertEquals(CampaignStatus.EXECUTING, storedCampaign.getCurrentState());
 
-        PaymentExecutionRequest req = new PaymentExecutionRequest(
-                merchantId, campaign.getId(), UUID.randomUUID(), "pay_rzp_idemp_01", null, ActionType.RETRY_PAYMENT, 1, idempotencyKey
-        );
-
-        PaymentExecutionResult result = razorpayClient.executeAction(req);
-        assertTrue(result.isSuccess());
-        assertEquals(idempotencyKey, result.getIdempotencyKey());
+        assertEquals(1, RAZORPAY_STUB.requests().size());
+        RazorpayStubServer.Request sent = RAZORPAY_STUB.requests().get(0);
+        var body = readJson(sent.body());
+        assertEquals(ProviderAttemptKey.forIntent(fixture.intent().getId()).value(), body.get("reference_id").asString());
+        assertEquals(100L, body.get("amount").longValue());
+        assertEquals(fixture.intent().getId().toString(), body.get("notes").get("mend_intent_id").asString());
+        assertTrue(sent.headers().keySet().stream().noneMatch(h -> h.equalsIgnoreCase("X-Razorpay-Idempotency-Header")));
+        assertTrue(sent.headers().keySet().stream().noneMatch(h -> h.equalsIgnoreCase("X-Idempotency-Key")));
+        assertTrue(auditLogRepository.findByCampaignIdOrderByCreatedAtAsc(fixture.campaign().getId()).stream()
+                .anyMatch(a -> "PROVIDER_REQUEST_ACCEPTED".equals(a.getEventType())));
     }
 
     // ==================== SCENARIO 5: PROVIDER 4XX DECLINE ====================
 
     @Test
     @DisplayName("5. Razorpay Provider 4xx — Card Declined Execution Result Mapping")
-    void testRazorpayDeclineHandling() {
-        Campaign campaign = createTestCampaign(merchantId, "pay_rzp_dec_01", CampaignStatus.ELIGIBLE, 1, 10000L);
-        String idempotencyKey = "intent:" + campaign.getId() + ":attempt_1:RETRY_PAYMENT";
+    void testRazorpayDeclineHandling() throws Exception {
+        // M1 behaviour change: a 400 on create link (recorded fixture 03) is resolved by lookup-by-reference first;
+        // no existing link -> Rejected(VALIDATION) -> intent FAILED, campaign EXHAUSTED. See ADR-001.
+        LinkFixture fixture = claimedLinkIntent("pay_rzp_dec_01", 10000);
+        String key = ProviderAttemptKey.forIntent(fixture.intent().getId()).value();
+        RAZORPAY_STUB.stub("POST", "/v1/payment_links", 400, recordedBody("03_create_link_extra_fields"));
+        RAZORPAY_STUB.stub("GET", "/v1/payment_links?reference_id=" + key, 200, "{\"payment_links\":[]}");
 
-        RestTemplate restTemplate = new RestTemplate();
-        MockRestServiceServer mockServer = MockRestServiceServer.createServer(restTemplate);
-        mockServer.expect(requestTo(razorpayBaseUrl + "/v1/payments/pay_rzp_dec_01/retry"))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body("{\"error\": {\"code\": \"BAD_REQUEST_ERROR\", \"description\": \"Card balance insufficient\"}}"));
+        var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20");
 
-        RazorpayPaymentProviderClient razorpayClient = new RazorpayPaymentProviderClient(
-                razorpayBaseUrl, razorpayKeyId, razorpayKeySecret, restTemplate, merchantConfigRepository, objectMapper
-        );
-
-        PaymentExecutionRequest req = new PaymentExecutionRequest(
-                merchantId, campaign.getId(), UUID.randomUUID(), "pay_rzp_dec_01", null, ActionType.RETRY_PAYMENT, 1, idempotencyKey
-        );
-
-        PaymentExecutionResult result = razorpayClient.executeAction(req);
-        assertTrue(result.isFailure());
-        assertEquals("BAD_REQUEST_ERROR", result.getResponseCode());
-        assertEquals("Card balance insufficient", result.getMessage());
+        assertEquals(PaymentExecutionStatus.FAILURE, report.getStatus());
+        assertEquals("BAD_REQUEST_ERROR", report.getResponseCode());
+        assertEquals("extra fields sent", report.getMessage());
+        assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(fixture.intent().getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.EXHAUSTED, campaignRepository.findById(fixture.campaign().getId()).orElseThrow().getCurrentState());
+        assertEquals(List.of("POST", "GET"), RAZORPAY_STUB.requests().stream().map(RazorpayStubServer.Request::method).toList());
+        assertTrue(auditLogRepository.findByCampaignIdOrderByCreatedAtAsc(fixture.campaign().getId()).stream()
+                .anyMatch(a -> "PROVIDER_REQUEST_REJECTED".equals(a.getEventType()) && a.getReason().contains("VALIDATION")));
     }
 
     // ==================== SCENARIO 6: CROSS-TENANT SAFETY ====================
@@ -417,5 +437,53 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
         return campaignRepository.saveAndFlush(campaign);
+    }
+
+    private record LinkFixture(Campaign campaign, ActionIntent intent) {
+    }
+
+    /** Campaign for the single-tenant merchant, its original payment webhook (amount source) and a CLAIMED link intent. */
+    private LinkFixture claimedLinkIntent(String paymentId, long amountMinor) {
+        UUID tenant = UUID.fromString(SINGLE_TENANT_MERCHANT);
+        if (!merchantRepository.existsById(tenant)) {
+            merchantRepository.saveAndFlush(new Merchant(tenant, "Phase20 Single-Tenant Merchant"));
+        }
+        String uniquePaymentId = paymentId + "_" + UUID.randomUUID().toString().substring(0, 8);
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), uniquePaymentId, "payment.failed", "RAZORPAY", String.format(
+                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"%s\",\"amount\":%d,\"currency\":\"INR\",\"status\":\"failed\"}}}}",
+                uniquePaymentId, amountMinor));
+        event.setMerchantId(tenant);
+        event.setProcessingStatus(WebhookEventStatus.VERIFIED);
+        webhookEventRepository.saveAndFlush(event);
+
+        Campaign campaign = createTestCampaign(tenant, uniquePaymentId, CampaignStatus.ACTION_PENDING, 0, amountMinor);
+        ComplianceDecisionEntity compliance = complianceDecisionRepository.saveAndFlush(new ComplianceDecisionEntity(
+                UUID.randomUUID(), campaign.getId(), tenant, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "Compliant action", "v1.0.0"));
+        ActionIntent intent = new ActionIntent(UUID.randomUUID(), tenant, campaign.getId(), 1,
+                ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(),
+                ActionIntentStatus.CLAIMED, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION", Instant.now());
+        intent.setClaimedAt(Instant.now());
+        intent.setWorkerId("worker-phase20");
+        return new LinkFixture(campaign, actionIntentRepository.saveAndFlush(intent));
+    }
+
+    private ActionIntent claim(ActionIntent intent) {
+        ActionIntent stored = actionIntentRepository.findById(intent.getId()).orElseThrow();
+        stored.setStatus(ActionIntentStatus.CLAIMED);
+        stored.setClaimedAt(Instant.now());
+        stored.setWorkerId("worker-phase20");
+        return actionIntentRepository.saveAndFlush(stored);
+    }
+
+    private static String recordedBody(String fixture) throws Exception {
+        try (var in = Phase20_RazorpayTestModeE2EValidationTest.class.getResourceAsStream("/razorpay/recorded/" + fixture + ".json")) {
+            var mapper = new tools.jackson.databind.ObjectMapper();
+            return mapper.writeValueAsString(mapper.readTree(in).path("response").path("body"));
+        }
+    }
+
+    private static tools.jackson.databind.JsonNode readJson(String body) {
+        return new tools.jackson.databind.ObjectMapper().readTree(body);
     }
 }

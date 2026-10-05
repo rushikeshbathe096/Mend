@@ -24,4 +24,5 @@ ai-service/.pytest_cache/
 .ai/langgraph_checkpoints.json
 .langgraph_checkpoints.json
 ai-service/.langgraph_checkpoints.json
-docs/
+docs/**/*.txt
+!docs/**/*-summary.txt

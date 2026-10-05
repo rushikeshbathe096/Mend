@@ -1,8 +1,19 @@
 package com.mend.integration;
 
+import com.mend.provider.mock.SyntheticDebitSimulator;
+import com.mend.provider.razorpay.RazorpayHttp;
+import com.mend.provider.razorpay.RazorpayPaymentProvider;
+import com.mend.provider.razorpay.RazorpayProperties;
+import com.mend.provider.razorpay.RazorpayProviderCapabilities;
+import com.mend.provider.razorpay.RazorpayStubServer;
+import com.mend.provider.razorpay.SingleTenantEnvCredentialsResolver;
+import com.mend.service.ProviderActionDispatcher;
+import com.mend.service.ProviderActionOutcome;
+import com.mend.service.WebhookAmountResolver;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mend.client.AiClassificationClient;
-import com.mend.client.RazorpayPaymentProviderClient;
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.*;
 import com.mend.domain.repository.*;
@@ -10,7 +21,6 @@ import com.mend.dto.ai.AgentOrchestrationRequestDto;
 import com.mend.dto.ai.AgentOrchestrationResponseDto;
 import com.mend.dto.ai.ClassificationRequestDto;
 import com.mend.dto.ai.ClassificationResponseDto;
-import com.mend.dto.payment.PaymentExecutionRequest;
 import com.mend.dto.payment.PaymentExecutionResult;
 import com.mend.dto.payment.PaymentExecutionStatus;
 import com.mend.scheduler.ActionScheduler;
@@ -237,46 +247,23 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         actionScheduler.pollAndExecuteDueActions();
 
         // Step F: Razorpay Provider Execution Simulation (Attempt 1 Fails)
-        RestTemplate restTemplate = new RestTemplate();
-        MockRestServiceServer mockServer = MockRestServiceServer.createServer(restTemplate);
+        // M1 behaviour change: POST /v1/payments/{id}/retry does not exist in Razorpay (recorded fixture 10: 404). In
+        // razorpay mode RETRY_PAYMENT is NotSupported locally with zero HTTP calls; the attempt still fails. See ADR-001.
+        try (RazorpayStubServer razorpay = RazorpayStubServer.start()) {
+            RazorpayProperties properties = new RazorpayProperties(new RazorpayProperties.Api(razorpay.baseUrl()),
+                    "rzp_test_key_123", "rzp_test_secret_456", 1000, 1000, testMerchant.getId().toString());
+            tools.jackson.databind.ObjectMapper providerMapper = new tools.jackson.databind.ObjectMapper();
+            RazorpayPaymentProvider razorpayProvider = new RazorpayPaymentProvider(new RazorpayHttp(properties, providerMapper),
+                    new SingleTenantEnvCredentialsResolver(properties), providerMapper);
+            ProviderActionDispatcher razorpayDispatcher = new ProviderActionDispatcher(razorpayProvider,
+                    new RazorpayProviderCapabilities(), mock(WebhookAmountResolver.class),
+                    new StaticListableBeanFactory().getBeanProvider(SyntheticDebitSimulator.class));
 
-        mockServer.expect(requestTo(razorpayApiBaseUrl + "/v1/payments/" + paymentId + "/retry"))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(header("Authorization", org.hamcrest.Matchers.startsWith("Basic ")))
-                .andRespond(withStatus(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON).body("""
-                        {
-                          "error": {
-                            "code": "BAD_REQUEST_ERROR",
-                            "description": "Payment failed again due to low balance",
-                            "source": "customer",
-                            "step": "payment_authentication"
-                          }
-                        }
-                        """));
+            ProviderActionOutcome execResult = razorpayDispatcher.dispatch(actionIntent, campaign);
 
-        RazorpayPaymentProviderClient razorpayClient = new RazorpayPaymentProviderClient(
-                razorpayApiBaseUrl,
-                "rzp_test_key_123",
-                "rzp_test_secret_456",
-                restTemplate,
-                merchantConfigRepository,
-                objectMapper
-        );
-
-        PaymentExecutionRequest execReq = new PaymentExecutionRequest(
-                testMerchant.getId(),
-                campaign.getId(),
-                actionIntent.getId(),
-                paymentId,
-                null,
-                ActionType.RETRY_PAYMENT,
-                1,
-                actionIntent.getIdempotencyKey()
-        );
-
-        PaymentExecutionResult execResult = razorpayClient.executeAction(execReq);
-        assertThat(execResult).isNotNull();
-        assertThat(execResult.getStatus()).isEqualTo(PaymentExecutionStatus.FAILURE);
+            assertThat(execResult).isEqualTo(new ProviderActionOutcome.NotSupported("RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2"));
+            assertThat(razorpay.requests()).isEmpty();
+        }
 
         // Step G: Outcome Reconciliation & Transition back to ELIGIBLE (Attempt 1 -> 1 attempt completed)
         campaign.setAttemptCount(2);

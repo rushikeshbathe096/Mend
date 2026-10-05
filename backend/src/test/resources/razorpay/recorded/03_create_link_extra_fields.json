@@ -1,0 +1,31 @@
+{
+  "fixture": "03_create_link_extra_fields",
+  "mode": "test",
+  "recorded_at": "2026-10-05T04:59:02Z",
+  "latency_ms": 551,
+  "request": {
+    "method": "POST",
+    "path": "/v1/payment_links",
+    "body": {
+      "amount": 100,
+      "currency": "INR",
+      "reference_id": "mnd_rec_1791176340_x",
+      "receipt": "rcpt_1",
+      "idempotency_key": "k",
+      "payment_id": "pay_x"
+    }
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "BAD_REQUEST_ERROR",
+        "description": "extra fields sent",
+        "metadata": [],
+        "reason": null,
+        "source": null,
+        "step": null
+      }
+    }
+  }
+}

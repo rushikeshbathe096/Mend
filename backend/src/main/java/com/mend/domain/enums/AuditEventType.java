@@ -12,5 +12,10 @@ public enum AuditEventType {
     ACTION_FAILED,
     CAMPAIGN_RECOVERED,
     CAMPAIGN_ESCALATED,
-    REVIEW_DECISION
+    REVIEW_DECISION,
+    // M1 provider outcomes (AuditService takes the names as strings).
+    PROVIDER_REQUEST_ACCEPTED,
+    PROVIDER_REQUEST_REJECTED,
+    PROVIDER_REQUEST_NOT_SENT,
+    PROVIDER_OUTCOME_UNKNOWN
 }

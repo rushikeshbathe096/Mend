@@ -1,9 +1,15 @@
 package com.mend.client;
 
-import com.mend.domain.enums.ActionType;
-import com.mend.dto.payment.PaymentExecutionRequest;
-import com.mend.dto.payment.PaymentExecutionResult;
 import com.mend.dto.payment.PaymentExecutionStatus;
+import com.mend.provider.CreatePaymentLink;
+import com.mend.provider.MerchantRef;
+import com.mend.provider.MoneyMinor;
+import com.mend.provider.PaymentLinkSnapshot;
+import com.mend.provider.PaymentLinkState;
+import com.mend.provider.ProviderAttemptKey;
+import com.mend.provider.RejectionKind;
+import com.mend.provider.RequestResult;
+import com.mend.provider.mock.MockPaymentProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,48 +18,40 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * M1 behaviour change: MockPaymentProviderClient was replaced by MockPaymentProvider (the provider port); the same five
+ * cases now run against it. Results are SYNTHETIC and only exist in mock mode. See ADR-001.
+ */
 @DisplayName("Mock Payment Provider Client Unit Tests")
 public class MockPaymentProviderClientTest {
 
-    private MockPaymentProviderClient client;
-    private UUID merchantId;
+    private MockPaymentProvider client;
+    private MerchantRef merchant;
     private UUID campaignId;
 
     @BeforeEach
     void setUp() {
-        client = new MockPaymentProviderClient();
+        client = new MockPaymentProvider();
         client.reset();
-        merchantId = UUID.randomUUID();
+        merchant = new MerchantRef(UUID.randomUUID());
         campaignId = UUID.randomUUID();
     }
 
     @Test
     @DisplayName("Should execute payment retry successfully by default")
     void testSuccessfulPaymentRetry() {
-        String idempotencyKey = "intent:camp-1:attempt_1:RETRY_PAYMENT";
-        PaymentExecutionRequest request = new PaymentExecutionRequest(
-                merchantId,
-                campaignId,
-                UUID.randomUUID(),
-                "pay_1001",
-                "sub_1001",
-                ActionType.RETRY_PAYMENT,
-                1,
-                idempotencyKey
-        );
+        UUID intentId = UUID.randomUUID();
+        ProviderAttemptKey key = ProviderAttemptKey.forIntent(intentId);
 
-        PaymentExecutionResult result = client.executeAction(request);
+        RequestResult<String> result = client.simulateDebit(merchant, campaignId, intentId, key);
 
-        assertNotNull(result);
-        assertEquals(PaymentExecutionStatus.SUCCESS, result.getStatus());
-        assertTrue(result.isSuccess());
-        assertFalse(result.isFailure());
-        assertFalse(result.isError());
-        assertNotNull(result.getExternalReference());
-        assertTrue(result.getExternalReference().startsWith("mock_ref_"));
-        assertEquals(idempotencyKey, result.getIdempotencyKey());
+        // M1 behaviour change: the mock now implements the provider port; a synthetic debit is Accepted, see ADR-001
+        RequestResult.Accepted<String> accepted = assertInstanceOf(RequestResult.Accepted.class, result);
+        // M1 behaviour change: synthetic ids are prefixed pay_mock_ (was mock_ref_), see ADR-001
+        assertTrue(accepted.value().startsWith("pay_mock_"));
         assertEquals(1, client.getInvocationCount());
-        assertEquals(request, client.getRecordedRequests().get(0));
+        assertEquals(key, client.getRecordedRequests().get(0).attemptKey());
+        assertEquals(intentId, client.getRecordedRequests().get(0).intentId());
     }
 
     @Test
@@ -61,96 +59,62 @@ public class MockPaymentProviderClientTest {
     void testSimulatedProviderFailure() {
         client.setSimulatedStatus(PaymentExecutionStatus.FAILURE);
         client.setSimulatedFailureReason("Card declined due to insufficient funds");
+        UUID intentId = UUID.randomUUID();
 
-        String idempotencyKey = "intent:camp-2:attempt_1:RETRY_PAYMENT";
-        PaymentExecutionRequest request = new PaymentExecutionRequest(
-                merchantId,
-                campaignId,
-                UUID.randomUUID(),
-                "pay_1002",
-                null,
-                ActionType.RETRY_PAYMENT,
-                1,
-                idempotencyKey
-        );
+        RequestResult<String> result = client.simulateDebit(merchant, campaignId, intentId, ProviderAttemptKey.forIntent(intentId));
 
-        PaymentExecutionResult result = client.executeAction(request);
-
-        assertNotNull(result);
-        assertEquals(PaymentExecutionStatus.FAILURE, result.getStatus());
-        assertTrue(result.isFailure());
-        assertFalse(result.isSuccess());
-        assertEquals("Card declined due to insufficient funds", result.getMessage());
-        assertEquals("MOCK_DECLINED", result.getResponseCode());
-        assertEquals(idempotencyKey, result.getIdempotencyKey());
+        // M1 behaviour change: a simulated decline is a Rejected request result (was PaymentExecutionResult FAILURE), see ADR-001
+        RequestResult.Rejected<String> rejected = assertInstanceOf(RequestResult.Rejected.class, result);
+        assertEquals(RejectionKind.VALIDATION, rejected.kind());
+        assertEquals("MOCK_DECLINED", rejected.providerCode());
+        assertEquals("Card declined due to insufficient funds", rejected.providerReason());
     }
 
     @Test
     @DisplayName("Should simulate provider error/timeout when configured")
     void testSimulatedProviderError() {
         client.setSimulatedStatus(PaymentExecutionStatus.ERROR);
-        client.setSimulatedErrorMessage("Gateway HTTP 504 Gateway Timeout");
+        UUID intentId = UUID.randomUUID();
 
-        String idempotencyKey = "intent:camp-3:attempt_1:RETRY_PAYMENT";
-        PaymentExecutionRequest request = new PaymentExecutionRequest(
-                merchantId,
-                campaignId,
-                UUID.randomUUID(),
-                "pay_1003",
-                null,
-                ActionType.RETRY_PAYMENT,
-                1,
-                idempotencyKey
-        );
+        RequestResult<String> result = client.simulateDebit(merchant, campaignId, intentId, ProviderAttemptKey.forIntent(intentId));
 
-        PaymentExecutionResult result = client.executeAction(request);
-
-        assertNotNull(result);
-        assertEquals(PaymentExecutionStatus.ERROR, result.getStatus());
-        assertTrue(result.isError());
-        assertEquals("Gateway HTTP 504 Gateway Timeout", result.getMessage());
-        assertEquals("PROVIDER_ERROR", result.getResponseCode());
-        assertEquals(idempotencyKey, result.getIdempotencyKey());
+        // M1 behaviour change: a provider error/timeout is an unknown outcome, never a failure (invariant 4), see ADR-001
+        assertInstanceOf(RequestResult.OutcomeUnknown.class, result);
     }
 
     @Test
     @DisplayName("Should propagate idempotency key deterministically across executions")
     void testIdempotencyKeyPropagation() {
-        String key1 = "intent:camp-4:attempt_1:RETRY_PAYMENT";
-        String key2 = "intent:camp-4:attempt_2:RETRY_PAYMENT";
+        UUID intent1 = UUID.randomUUID();
+        UUID intent2 = UUID.randomUUID();
 
-        PaymentExecutionRequest request1 = new PaymentExecutionRequest(
-                merchantId, campaignId, UUID.randomUUID(), "pay_1004", null, ActionType.RETRY_PAYMENT, 1, key1
-        );
-        PaymentExecutionRequest request2 = new PaymentExecutionRequest(
-                merchantId, campaignId, UUID.randomUUID(), "pay_1004", null, ActionType.RETRY_PAYMENT, 2, key2
-        );
+        RequestResult<String> result1 = client.simulateDebit(merchant, campaignId, intent1, ProviderAttemptKey.forIntent(intent1));
+        RequestResult<String> result2 = client.simulateDebit(merchant, campaignId, intent2, ProviderAttemptKey.forIntent(intent2));
 
-        PaymentExecutionResult result1 = client.executeAction(request1);
-        PaymentExecutionResult result2 = client.executeAction(request2);
-
-        assertEquals(key1, result1.getIdempotencyKey());
-        assertEquals(key2, result2.getIdempotencyKey());
-        assertNotEquals(result1.getExternalReference(), result2.getExternalReference());
+        // M1 behaviour change: the propagated key is the attempt key derived from the intent id, see ADR-001
+        assertEquals(ProviderAttemptKey.forIntent(intent1), client.getRecordedRequests().get(0).attemptKey());
+        assertEquals(ProviderAttemptKey.forIntent(intent2), client.getRecordedRequests().get(1).attemptKey());
+        assertNotEquals(((RequestResult.Accepted<String>) result1).value(), ((RequestResult.Accepted<String>) result2).value());
         assertEquals(2, client.getInvocationCount());
     }
 
     @Test
     @DisplayName("Should produce deterministic result references for identical idempotency keys")
     void testDeterministicResultBehavior() {
-        String key = "intent:camp-5:attempt_1:RETRY_PAYMENT";
-        PaymentExecutionRequest req1 = new PaymentExecutionRequest(
-                merchantId, campaignId, UUID.randomUUID(), "pay_1005", null, ActionType.RETRY_PAYMENT, 1, key
-        );
-        PaymentExecutionRequest req2 = new PaymentExecutionRequest(
-                merchantId, campaignId, UUID.randomUUID(), "pay_1005", null, ActionType.RETRY_PAYMENT, 1, key
-        );
+        UUID intentId = UUID.randomUUID();
+        ProviderAttemptKey key = ProviderAttemptKey.forIntent(intentId);
+        CreatePaymentLink command = new CreatePaymentLink(key, new MoneyMinor(49900, "INR"), "Payment for campaign x", null, intentId);
 
-        PaymentExecutionResult res1 = client.executeAction(req1);
+        RequestResult<PaymentLinkSnapshot> res1 = client.createPaymentLink(merchant, command);
+        RequestResult<PaymentLinkSnapshot> res2 = new MockPaymentProvider().createPaymentLink(merchant, command);
 
-        MockPaymentProviderClient freshClient = new MockPaymentProviderClient();
-        PaymentExecutionResult res2 = freshClient.executeAction(req2);
-
-        assertEquals(res1.getExternalReference(), res2.getExternalReference());
+        // M1 behaviour change: determinism is asserted on the synthetic link id derived from the attempt key, see ADR-001
+        PaymentLinkSnapshot link1 = ((RequestResult.Accepted<PaymentLinkSnapshot>) res1).value();
+        PaymentLinkSnapshot link2 = ((RequestResult.Accepted<PaymentLinkSnapshot>) res2).value();
+        assertEquals(link1.providerLinkId(), link2.providerLinkId());
+        assertTrue(link1.providerLinkId().startsWith("plink_mock_"));
+        // A synthetic link is still not money.
+        assertEquals(PaymentLinkState.CREATED, link1.state());
+        assertTrue(link1.capturedPaymentIds().isEmpty());
     }
 }

@@ -1,0 +1,57 @@
+{
+  "fixture": "20_fetch_link_paid",
+  "mode": "test",
+  "recorded_at": "2026-10-05T05:04:24Z",
+  "latency_ms": 329,
+  "request": {
+    "method": "GET",
+    "path": "/v1/payment_links/plink_Tk6TAI6WoeOTDh",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "accept_partial": false,
+      "allow_full_payment": false,
+      "amount": 100,
+      "amount_paid": 100,
+      "cancelled_at": 0,
+      "created_at": 1791176341,
+      "currency": "INR",
+      "customer": {},
+      "description": "MEND M1 contract recording",
+      "expire_by": 0,
+      "expired_at": 0,
+      "first_min_partial_amount": 0,
+      "id": "plink_Tk6TAI6WoeOTDh",
+      "notes": {
+        "mend_intent_id": "recording"
+      },
+      "notify": {
+        "email": false,
+        "sms": false,
+        "whatsapp": false
+      },
+      "order_id": "order_Tk6XLmzgSWNi1r",
+      "payment_plan": false,
+      "payments": [
+        {
+          "amount": 100,
+          "created_at": 1791176640,
+          "method": "netbanking",
+          "payment_id": "pay_Tk6YGMVnG6oWIq",
+          "status": "captured"
+        }
+      ],
+      "reference_id": "mnd_rec_1791176340",
+      "reminder_enable": false,
+      "reminders": {},
+      "short_url": "https://rzp.io/rzp/uyPewzr",
+      "status": "paid",
+      "updated_at": 1791176640,
+      "upi_link": false,
+      "user_id": "",
+      "whatsapp_link": false
+    }
+  }
+}

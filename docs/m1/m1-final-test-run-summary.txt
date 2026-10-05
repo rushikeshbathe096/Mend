@@ -1,0 +1,88 @@
+# Summary of m1-final-test-run.txt (raw log is local-only, not tracked in git)
+command: cd backend && ./mvnw test 2>&1 | tee ../docs/m1/m1-final-test-run.txt
+date: 2026-10-05 10:39 (local time, file mtime)
+commit: 9948324
+note: M1 close-out (U9, refreshed after re-recording); Skipped 1 = spec-mandated @Disabled M2 test
+
+total: [INFO] Tests run: 519, Failures: 0, Errors: 0, Skipped: 1
+build: [INFO] BUILD SUCCESS
+
+per-class surefire totals (78 classes):
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- Action Scheduler Unit Tests
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 -- Phase 10 Action Scheduler End-to-End Integration Tests
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- Action scheduler transaction and concurrency integration tests
+Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- Campaign State Machine Unit Tests
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.RazorpaySignatureVerifierTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.PasswordSecurityTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.JwtServiceTest
+Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayResponseClassifierTest
+Tests run: 38, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPaymentLinkContractTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayHttpFailureKindTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.SingleTenantEnvCredentialsResolverTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPropertiesBindingTest
+Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayGetPaymentContractTest
+Tests run: 30, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayEvidenceMapperTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayHttpSocketTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.RequestResultTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.CreatePaymentLinkTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.MoneyMinorTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.ProviderAttemptKeyTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.PaymentLinkSnapshotTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.PaymentEvidenceStatusTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.PaymentEvidenceTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.LookupResultTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 -- Compliance Engine Unit Tests
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.config.DevDataInitializerTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.config.RedisConfigTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.MerchantConfigApiIntegrationTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.RbacAndMultiTenancyIntegrationTest
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.CorsAndSecurityIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.WebhookIngestionRedisUnavailableIntegrationTest
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.RestApiIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase6EndToEndIntegrationTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase19MerchantProductIntegrationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.RazorpayTestModeEndToEndIntegrationTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AnalyticsObservabilityIntegrationTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AiRecoveryAgentIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase5EndToEndIntegrationTest
+Tests run: 20, Failures: 0, Errors: 0, Skipped: 0 -- Database Integration Tests
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase19_5_FullMockE2EValidationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.CrossTenantReadIsolationIntegrationTest
+Tests run: 29, Failures: 0, Errors: 0, Skipped: 1 -- com.mend.integration.PaymentReconciliationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase18ReliabilityAndFailureInjectionTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase20_RazorpayTestModeE2EValidationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AiAgentIntegrationTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.TransactionalOutboxIntegrationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AuthIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.controller.CampaignControllerTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.PostgresConnectivityTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.consumer.ConsumerConsolidationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.consumer.RedisWebhookEventConsumerTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- Action Intent State Machine Unit Tests
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.WebhookIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.RedisConnectivityTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.BackendApplicationTests
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.HealthControllerTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- Mock Payment Provider Client Unit Tests
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.client.AiClassificationClientTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- Payment Provider Client Spring Context Integration Test
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- Razorpay Payment Provider Client Unit Tests
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.events.WebhookEventMessageTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- Phase 7.1 Recovery Orchestration Integration Tests
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.OutboxPublisherServiceTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- Action Intent Service & Scheduler Integration Tests
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.ClassificationServiceTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.ProviderActionDispatcherTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- Compliance Service Integration Tests
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.WebhookAmountResolverTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.WebhookServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- Action Intent Claim Service Unit Tests
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.RedisStreamRetryServiceTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- Campaign Lifecycle Service Integration Tests
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- Recovery Strategy Service Integration Tests
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- Action Execution Service Integration Tests
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- ActionExecutionService provider outcome mapping (M1)
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- Recovery Strategy Engine Unit Tests
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.publisher.RedisFailureAndRetryTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.publisher.RedisWebhookEventPublisherTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.publisher.RedisStreamPublisherConsumerTest
