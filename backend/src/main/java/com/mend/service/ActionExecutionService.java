@@ -101,6 +101,7 @@ public class ActionExecutionService {
             outcome = providerActionDispatcher.dispatch(intent, campaign);
         } catch (Exception e) {
             log.error("Unhandled exception while dispatching ActionIntent '{}': {}", intent.getId(), e.getClass().getSimpleName());
+            log.debug("Dispatch exception detail for ActionIntent '{}'", intent.getId(), e);
             outcome = new ProviderActionOutcome.Unknown("UNEXPECTED_DISPATCH_EXCEPTION", null);
         }
 
