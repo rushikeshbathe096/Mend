@@ -78,21 +78,13 @@ public class ActionExecutionService {
     }
 
     /**
-     * Legacy entry point: fences with the claim token currently stored on the intent. Production paths (scheduler,
-     * manual start-recovery, demo) call {@link #executeActionIntent(UUID, String, String)} with the token they claimed with,
-     * which is what makes a taken-over claim detectable. Kept for existing callers in tests.
-     */
-    @Deprecated
-    public PaymentExecutionResult executeActionIntent(UUID intentId, String workerId) {
-        return executeActionIntent(intentId, workerId, null);
-    }
-
-    /**
      * Executes a claimed intent. {@code claimToken} is the token the caller received from the atomic claim; the dispatch
      * and finalize transitions only apply while the intent still carries it (M2 invariants 11, 12).
      */
     public PaymentExecutionResult executeActionIntent(UUID intentId, String workerId, String claimToken) {
         Objects.requireNonNull(intentId, "intentId must not be null");
+        // Fail closed: without the claimer's own token there is no ownership fence.
+        Objects.requireNonNull(claimToken, "claimToken must not be null - pass the token from the atomic claim");
 
         // Step 1: Pre-execution validation & transaction state preparation
         ExecutionPreparation preparation;
@@ -100,9 +92,9 @@ public class ActionExecutionService {
             preparation = inExecutionTransaction(() -> prepareExecution(intentId, workerId, claimToken));
         } catch (ComplianceBlockedException e) {
             log.warn("ActionIntent '{}' execution blocked by compliance: {}", intentId, e.getMessage());
+            // Fenced by the caller's token: a stale worker cannot fail someone else's live claim.
             executionTransactionTemplate.executeWithoutResult(status ->
-                    actionIntentRepository.findById(intentId).ifPresent(intent ->
-                            transitions.abandonClaim(intentId, intent.getClaimToken(), ActionIntentStatus.FAILED, Instant.now())));
+                    transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now()));
             throw e;
         } catch (ClaimLostBeforeDispatch lost) {
             // The prepare transaction (incl. any campaign transition) rolled back; no provider call is made.
@@ -153,7 +145,9 @@ public class ActionExecutionService {
 
         // 3. Expiration validation
         if (intent.getExpiresAt() != null && intent.getExpiresAt().isBefore(Instant.now())) {
-            transitions.abandonClaim(intent.getId(), intent.getClaimToken(), ActionIntentStatus.EXPIRED, Instant.now());
+            if (!transitions.abandonClaim(intent.getId(), callerClaimToken, ActionIntentStatus.EXPIRED, Instant.now())) {
+                return ExecutionPreparation.halt(intent, "Claim no longer held by this worker (expiry not applied)");
+            }
             auditService.logEvent(
                     intent.getMerchantId(), intent.getCampaignId(),
                     "ACTION_EXPIRED", "SYSTEM", null,
@@ -217,12 +211,12 @@ public class ActionExecutionService {
 
         // 8. Dispatch fence (M2): CLAIMED -> EXECUTING by the claim-token holder, in the same transaction as the
         // compliance re-check above. Not applied => another actor owns the intent: roll back and make no provider call.
-        String heldToken = callerClaimToken != null ? callerClaimToken : intent.getClaimToken();
-        if (!transitions.dispatch(intent.getId(), heldToken, Instant.now())) {
+        if (!transitions.dispatch(intent.getId(), callerClaimToken, Instant.now())) {
             throw new ClaimLostBeforeDispatch(intent);
         }
 
-        return ExecutionPreparation.proceed(intent, campaign, heldToken);
+        // Note: the intent/campaign objects were loaded before the dispatch update; only their ids are used afterwards.
+        return ExecutionPreparation.proceed(intent, campaign, callerClaimToken);
     }
 
     /** Thrown inside the prepare transaction to roll it back when the dispatch fence does not apply. */
@@ -248,8 +242,7 @@ public class ActionExecutionService {
         ActionIntent intent = actionIntentRepository.findById(intentId)
                 .orElseThrow(() -> new ResourceNotFoundException("ActionIntent not found with ID: " + intentId));
 
-        Campaign campaign = campaignRepository.findById(intent.getCampaignId())
-                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + intent.getCampaignId()));
+        Campaign campaign;
 
         PaymentExecutionResult report = toReport(outcome, intent.getIdempotencyKey());
 
@@ -272,12 +265,16 @@ public class ActionExecutionService {
                     ActionIntentStatus.FAILED, null, now, null);
         };
         if (!applied) {
+            String currentStatus = actionIntentRepository.findById(intentId).map(i -> i.getStatus().name()).orElse("MISSING");
             logProviderAudit(intent, "STALE_WORKER_RESULT_DISCARDED", attemptKey,
                     details("outcome", outcome.getClass().getSimpleName(), "providerReference", providerReference(outcome),
-                            "currentStatus", intent.getStatus().name()));
-            log.warn("ActionIntent '{}' result discarded: worker no longer owns the intent (current status {})", intentId, intent.getStatus());
+                            "currentStatus", currentStatus));
+            log.warn("ActionIntent '{}' result discarded: worker no longer owns the intent (current status {})", intentId, currentStatus);
             return report;
         }
+        // The conditional update cleared the persistence context: reload the campaign before writing to it.
+        campaign = campaignRepository.findById(intent.getCampaignId())
+                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + intent.getCampaignId()));
 
         // Step 1: Create & Persist CampaignAttempt (Enforcing UK uk_campaign_attempt_number)
         CampaignAttempt attempt = new CampaignAttempt(
@@ -325,7 +322,7 @@ public class ActionExecutionService {
 
         // Update Campaign attempt count
         campaign.setAttemptCount(intent.getAttemptNumber());
-        campaignRepository.save(campaign);
+        campaign = campaignRepository.save(campaign);
 
         // Step 2: Handle Outcome Specific Synchronization (the intent status was already set by the fenced transition)
         switch (outcome) {
@@ -469,9 +466,15 @@ public class ActionExecutionService {
         private final Campaign campaign;
         private final String reason;
         private final PaymentExecutionResult haltedResult;
-        private String claimToken;
+        private final String claimToken;
 
         private ExecutionPreparation(boolean executable, ActionIntent intent, Campaign campaign, String reason, PaymentExecutionResult haltedResult) {
+            this(executable, intent, campaign, reason, haltedResult, null);
+        }
+
+        private ExecutionPreparation(boolean executable, ActionIntent intent, Campaign campaign, String reason,
+                                     PaymentExecutionResult haltedResult, String claimToken) {
+            this.claimToken = claimToken;
             this.executable = executable;
             this.intent = intent;
             this.campaign = campaign;
@@ -484,9 +487,7 @@ public class ActionExecutionService {
         }
 
         public static ExecutionPreparation proceed(ActionIntent intent, Campaign campaign, String claimToken) {
-            ExecutionPreparation preparation = new ExecutionPreparation(true, intent, campaign, null, null);
-            preparation.claimToken = claimToken;
-            return preparation;
+            return new ExecutionPreparation(true, intent, campaign, null, null, claimToken);
         }
 
         public static ExecutionPreparation halt(ActionIntent intent, String reason) {

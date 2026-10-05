@@ -194,7 +194,8 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
         intent.setClaimToken(java.util.UUID.randomUUID().toString());
         intent.setClaimedAt(Instant.now());
         actionIntentRepository.saveAndFlush(intent);
-        actionExecutionService.executeActionIntent(intent.getId(), "phase19-test-worker");
+        // M2 behaviour change: the executor requires the caller's claim token (fail closed), see ADR-002
+        actionExecutionService.executeActionIntent(intent.getId(), "phase19-test-worker", intent.getClaimToken());
 
         // Campaign reached RECOVERED with authoritative evidence (provider execution result)
         mockMvc.perform(get("/api/v1/campaigns/" + campaignId)

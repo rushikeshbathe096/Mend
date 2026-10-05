@@ -168,7 +168,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
 
         assertEquals(1, results.size());
         assertFalse(paymentProvider.transactionActiveDuringCall);
-        assertTrue(paymentProvider.claimWasCommitted);
+        assertTrue(paymentProvider.dispatchWasCommitted);
         assertTrue(paymentProvider.executingTransitionWasCommitted);
         assertEquals(ActionIntentStatus.SUCCEEDED,
                 actionIntentRepository.findById(fixture.intent().getId()).orElseThrow().getStatus());
@@ -343,7 +343,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         private final CampaignRepository campaignRepository;
         private int invocations;
         private boolean transactionActiveDuringCall;
-        private boolean claimWasCommitted;
+        private boolean dispatchWasCommitted;
         private boolean executingTransitionWasCommitted;
         private boolean throwProviderException;
         private ProviderAttemptKey lastAttemptKey;
@@ -360,7 +360,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
             transactionActiveDuringCall = TransactionSynchronizationManager.isActualTransactionActive();
             // M2 behaviour change: the committed claim is observed as the committed dispatch (CLAIMED -> EXECUTING, written
             // before the provider call in the prepare transaction), see ADR-002
-            claimWasCommitted = actionIntentRepository.findById(intentId)
+            dispatchWasCommitted = actionIntentRepository.findById(intentId)
                     .map(intent -> intent.getStatus() == ActionIntentStatus.EXECUTING && intent.getDispatchedAt() != null)
                     .orElse(false);
             executingTransitionWasCommitted = campaignRepository.findById(campaignId)
@@ -376,7 +376,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         void reset() {
             invocations = 0;
             transactionActiveDuringCall = false;
-            claimWasCommitted = false;
+            dispatchWasCommitted = false;
             executingTransitionWasCommitted = false;
             throwProviderException = false;
             lastAttemptKey = null;

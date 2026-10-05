@@ -140,4 +140,46 @@ class ExecutionFenceTest extends AbstractIntegrationTest {
         assertTrue(attempts.findByCampaignId(c[0].getId()).isEmpty(), "no campaign_attempts row from a discarded result");
         assertEquals(CampaignStatus.EXECUTING, campaigns.findById(c[0].getId()).orElseThrow().getCurrentState());
     }
+
+    @Test
+    @DisplayName("stale worker cannot EXPIRE an intent another worker now owns")
+    void staleWorkerCannotExpireAnotherOwnersClaim() {
+        Campaign[] c = new Campaign[1];
+        ActionIntent intent = claimedLinkIntent(c);
+        jdbc.update("UPDATE action_intents SET expires_at = now() - interval '1 minute', claim_token = 'new-owner' WHERE id = ?", intent.getId());
+
+        PaymentExecutionResult report = executor.executeActionIntent(intent.getId(), "fence-worker", intent.getClaimToken());
+
+        assertEquals("EXECUTION_HALTED", report.getResponseCode());
+        ActionIntent after = intents.findById(intent.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.CLAIMED, after.getStatus(), "the new owner's claim must stay intact");
+        assertEquals("new-owner", after.getClaimToken());
+        assertFalse(audited(c[0].getId(), "ACTION_EXPIRED"), "no expiry audit when the expiry did not apply");
+    }
+
+    @Test
+    @DisplayName("stale worker hitting a compliance block cannot FAIL an intent another worker now owns")
+    void staleWorkerCannotFailAnotherOwnersClaimOnComplianceBlock() {
+        Campaign[] c = new Campaign[1];
+        ActionIntent intent = claimedLinkIntent(c);
+        jdbc.update("UPDATE compliance_decisions SET status = 'COMPLIANCE_BLOCKED' WHERE id = ?", intent.getComplianceDecisionId());
+        jdbc.update("UPDATE action_intents SET claim_token = 'new-owner' WHERE id = ?", intent.getId());
+
+        assertThrows(com.mend.exception.ComplianceBlockedException.class,
+                () -> executor.executeActionIntent(intent.getId(), "fence-worker", intent.getClaimToken()));
+
+        ActionIntent after = intents.findById(intent.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.CLAIMED, after.getStatus());
+        assertEquals("new-owner", after.getClaimToken());
+        assertEquals(0, provider.createCalls(ProviderAttemptKey.forIntent(intent.getId())));
+    }
+
+    @Test
+    @DisplayName("executor refuses to run without the caller's claim token (fail closed)")
+    void executorRequiresClaimToken() {
+        Campaign[] c = new Campaign[1];
+        ActionIntent intent = claimedLinkIntent(c);
+        assertThrows(NullPointerException.class, () -> executor.executeActionIntent(intent.getId(), "fence-worker", null));
+        assertEquals(ActionIntentStatus.CLAIMED, intents.findById(intent.getId()).orElseThrow().getStatus());
+    }
 }
