@@ -87,4 +87,30 @@ public class ActionIntentTransitions {
     public boolean cancelNonTerminal(UUID id, Instant now) {
         return repository.cancelNonTerminal(id, now) == 1;
     }
+
+    private static final Set<ActionIntentStatus> EVIDENCE_FROM = EnumSet.of(
+            ActionIntentStatus.EXECUTING, ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.NEEDS_RECONCILIATION);
+    private static final Set<ActionIntentStatus> EVIDENCE_TARGETS = EnumSet.of(ActionIntentStatus.SUCCEEDED, ActionIntentStatus.FAILED);
+
+    /**
+     * Provider evidence (webhook / reconciler) → SUCCEEDED or FAILED, only from one of {@code expected} (a subset of
+     * EXECUTING, AWAITING_PAYMENT, NEEDS_RECONCILIATION). No claim token: evidence is not worker-owned.
+     */
+    @Transactional
+    public boolean recordEvidence(UUID id, Set<ActionIntentStatus> expected, ActionIntentStatus newStatus, String responseReference,
+                                  Instant completedAt) {
+        if (expected.isEmpty() || !EVIDENCE_FROM.containsAll(expected)) {
+            throw new IllegalArgumentException("recordEvidence expected statuses not allowed: " + expected);
+        }
+        if (!EVIDENCE_TARGETS.contains(newStatus)) {
+            throw new IllegalArgumentException("recordEvidence target not allowed: " + newStatus);
+        }
+        return repository.recordEvidence(id, expected, newStatus, responseReference, completedAt) == 1;
+    }
+
+    /** PENDING/SCHEDULED/READY → CANCELLED (campaign cancellation of not-yet-claimed work). */
+    @Transactional
+    public boolean cancelIfExecutable(UUID id, Instant now) {
+        return repository.cancelIfExecutable(id, now) == 1;
+    }
 }

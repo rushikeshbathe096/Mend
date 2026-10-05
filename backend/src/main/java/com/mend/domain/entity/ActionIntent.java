@@ -87,6 +87,11 @@ public class ActionIntent {
     @Column(name = "execution_attempts", nullable = false)
     private int executionAttempts;
 
+    /** M2: optimistic lock; conditional transitions bump it too, so a stale entity save fails instead of overwriting. */
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
+
     /** M2: copied from the campaign (U6); nullable until then. */
     @Column(name = "invoice_key", length = 120)
     private String invoiceKey;
@@ -310,5 +315,9 @@ public class ActionIntent {
 
     public void setInvoiceKey(String invoiceKey) {
         this.invoiceKey = invoiceKey;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 }

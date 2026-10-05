@@ -67,6 +67,7 @@ public class DemoController {
     private final WebhookEventRepository webhookEventRepository;
     private final AuditService auditService;
     private final com.mend.service.ActionIntentClaimService actionIntentClaimService;
+    private final com.mend.service.ActionIntentTransitions actionIntentTransitions;
 
     public DemoController(
             CampaignLifecycleService campaignLifecycleService,
@@ -79,7 +80,8 @@ public class DemoController {
             ActionIntentRepository actionIntentRepository,
             WebhookEventRepository webhookEventRepository,
             AuditService auditService,
-            com.mend.service.ActionIntentClaimService actionIntentClaimService) {
+            com.mend.service.ActionIntentClaimService actionIntentClaimService,
+            com.mend.service.ActionIntentTransitions actionIntentTransitions) {
         this.campaignLifecycleService = campaignLifecycleService;
         this.actionIntentService = actionIntentService;
         this.actionExecutionService = actionExecutionService;
@@ -91,6 +93,7 @@ public class DemoController {
         this.webhookEventRepository = webhookEventRepository;
         this.auditService = auditService;
         this.actionIntentClaimService = actionIntentClaimService;
+        this.actionIntentTransitions = actionIntentTransitions;
     }
 
     public static class DemoTriggerRequest {
@@ -255,11 +258,14 @@ public class DemoController {
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
                 "Payment link dispatched for customer action (intent " + intent.getId() + ")");
-        steps.add("Compliance ALLOWED and ActionIntent " + intent.getId() + " created; payment update link dispatched to the customer.");
+        steps.add("Compliance ALLOWED and ActionIntent " + intent.getId() + " created.");
+        // M2: execute through the real claim + executor; the mock provider issues a (SYNTHETIC) payment link -> AWAITING_PAYMENT.
+        claimAndExecute(merchantId, intent, response, steps);
+        steps.add("Payment update link issued to the customer (intent AWAITING_PAYMENT).");
 
-        steps.add("Simulating the customer completing payment: a payment.captured webhook is delivered through the real reconciliation service.");
+        steps.add("Simulating the customer completing payment: a payment.captured webhook for the link payment is delivered through the real reconciliation service.");
         String capturedEventId = "evt_" + UUID.randomUUID();
-        reconcileCapturedPayment(merchantId, setup.campaignId(), setup.paymentId(), capturedEventId, amount, response, steps);
+        reconcileCapturedPayment(merchantId, setup.campaignId(), setup.paymentId(), intent.getId(), capturedEventId, amount, response, steps);
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
@@ -284,15 +290,22 @@ public class DemoController {
         transitionToActionPending(merchantId, setup.campaignId(),
                 "Retry dispatched toward the provider; response window open (intent " + intent.getId() + ")");
 
-        steps.add("ActionIntent " + intent.getId() + " claimed for execution; provider request dispatched.");
-        actionIntentClaimService.claimSpecificIntent(intent.getId(), "demo-worker");
+        ActionIntent claimed = actionIntentClaimService.claimSpecificIntent(intent.getId(), "demo-worker")
+                .orElseThrow(() -> new IllegalStateException("Demo intent " + intent.getId() + " could not be claimed"));
+        // M2: record the dispatch (CLAIMED -> EXECUTING) exactly as the executor does before a provider call, then the
+        // simulated timeout as an unknown outcome (NEEDS_RECONCILIATION). No provider call is made in this demo step.
+        Instant now = Instant.now();
+        actionIntentTransitions.dispatch(claimed.getId(), claimed.getClaimToken(), now);
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXECUTING,
                 "Provider execution in flight with ambiguous outcome; awaiting reconciliation", "SYSTEM", null);
-        steps.add("Provider response timed out - execution state is UNKNOWN (ambiguous). No terminal state assumed.");
+        actionIntentTransitions.finalizeFromExecuting(claimed.getId(), claimed.getClaimToken(), ActionIntentStatus.NEEDS_RECONCILIATION,
+                null, null, now);
+        steps.add("ActionIntent " + intent.getId() + " claimed and dispatch recorded (simulated provider call).");
+        steps.add("Provider response timed out - execution state is UNKNOWN (NEEDS_RECONCILIATION). No terminal state assumed.");
 
         steps.add("Authoritative provider event arrives: reconciling via DefaultPaymentReconciliationService.");
         String capturedEventId = "evt_" + UUID.randomUUID();
-        reconcileCapturedPayment(merchantId, setup.campaignId(), setup.paymentId(), capturedEventId, amount, response, steps);
+        reconcileCapturedPayment(merchantId, setup.campaignId(), setup.paymentId(), intent.getId(), capturedEventId, amount, response, steps);
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
@@ -450,11 +463,13 @@ public class DemoController {
         actionExecutionService.executeActionIntent(intent.getId(), "demo-worker", claimed.get().getClaimToken());
     }
 
-    private void reconcileCapturedPayment(UUID merchantId, UUID campaignId, String paymentId,
+    /** Delivers a captured webhook for the recovery payment, correlated to the intent (intent-specific, M2 invariant 15). */
+    private void reconcileCapturedPayment(UUID merchantId, UUID campaignId, String paymentId, UUID intentId,
                                           String eventId, BigDecimal amount,
                                           DemoTriggerResponse response, List<String> steps) {
-        WebhookEvent captured = buildWebhookEvent(merchantId, eventId, "payment.captured", paymentId,
-                amount, "captured", null);
+        String recoveryPaymentId = demoRef("pay_demo_recovery");
+        WebhookEvent captured = buildWebhookEvent(merchantId, eventId, "payment.captured", recoveryPaymentId,
+                amount, "captured", null, intentId);
         webhookEventRepository.saveAndFlush(captured);
 
         var result = paymentReconciliationService.reconcileWebhookEvent(captured);
@@ -468,12 +483,18 @@ public class DemoController {
 
     private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
                                            String paymentId, BigDecimal amount, String status, String failureCode) {
+        return buildWebhookEvent(merchantId, externalEventId, eventType, paymentId, amount, status, failureCode, null);
+    }
+
+    private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
+                                           String paymentId, BigDecimal amount, String status, String failureCode, UUID mendIntentId) {
         String payload = """
-                {"entity":"event","event":"%s","payload":{"payment":{"entity":{"id":"%s","amount":%d,"currency":"INR","status":"%s","method":"card"%s}}}}
+                {"entity":"event","event":"%s","payload":{"payment":{"entity":{"id":"%s","amount":%d,"currency":"INR","status":"%s","method":"card"%s%s}}}}
                 """.formatted(
                 eventType, paymentId,
                 amount.movePointRight(2).longValueExact(), status,
-                failureCode != null ? ",\"error_code\":\"" + failureCode + "\",\"error_description\":\"demo failure: " + failureCode + "\"" : ""
+                failureCode != null ? ",\"error_code\":\"" + failureCode + "\",\"error_description\":\"demo failure: " + failureCode + "\"" : "",
+                mendIntentId != null ? ",\"notes\":{\"mend_intent_id\":\"" + mendIntentId + "\"}" : ""
         );
 
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), externalEventId, eventType, "RAZORPAY", payload);

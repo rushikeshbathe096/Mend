@@ -57,6 +57,8 @@ class ExecutionFenceTest extends AbstractIntegrationTest {
     @Autowired private AuditLogRepository audit;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private BlockingPaymentProvider provider;
+    @Autowired private com.mend.service.PaymentReconciliationService reconciliationService;
+    @Autowired private com.mend.service.ActionIntentTransitions transitions;
 
     private ExecutorService threads;
     private UUID merchantId;
@@ -181,5 +183,47 @@ class ExecutionFenceTest extends AbstractIntegrationTest {
         ActionIntent intent = claimedLinkIntent(c);
         assertThrows(NullPointerException.class, () -> executor.executeActionIntent(intent.getId(), "fence-worker", null));
         assertEquals(ActionIntentStatus.CLAIMED, intents.findById(intent.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    @DisplayName("U4: captured webhook while the worker is mid-call wins; the worker's later result is discarded")
+    void webhookWinsOverWorkerMidCall() throws Exception {
+        Campaign[] c = new Campaign[1];
+        ActionIntent intent = claimedLinkIntent(c);
+        ProviderAttemptKey key = ProviderAttemptKey.forIntent(intent.getId());
+        provider.blockFirstCreate(key);
+        Future<PaymentExecutionResult> worker = threads.submit(() -> executor.executeActionIntent(intent.getId(), "fence-worker", intent.getClaimToken()));
+        assertTrue(provider.awaitEntered(key));
+
+        WebhookEvent captured = new WebhookEvent(UUID.randomUUID(), "evt_m2u4_" + UUID.randomUUID(), "payment.captured", "RAZORPAY",
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2u4Captured\",\"status\":\"captured\","
+                        + "\"notes\":{\"mend_intent_id\":\"" + intent.getId() + "\"}}}}}");
+        captured.setMerchantId(merchantId);
+        try {
+            reconciliationService.reconcileWebhookEvent(webhooks.save(captured));
+        } finally {
+            provider.release(key);
+        }
+        worker.get(10, TimeUnit.SECONDS);
+
+        ActionIntent after = intents.findById(intent.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.SUCCEEDED, after.getStatus());
+        assertEquals("pay_m2u4Captured", after.getResponseReference());
+        assertEquals(CampaignStatus.RECOVERED, campaigns.findById(c[0].getId()).orElseThrow().getCurrentState());
+        assertTrue(audited(c[0].getId(), "STALE_WORKER_RESULT_DISCARDED"), "the worker's link result must be discarded, not applied");
+    }
+
+    @Test
+    @DisplayName("U4: an entity save that raced a conditional transition fails loudly (optimistic lock), no silent overwrite")
+    void staleEntitySaveFailsWithOptimisticLock() {
+        Campaign[] c = new Campaign[1];
+        ActionIntent stale = claimedLinkIntent(c);
+        assertTrue(transitions.dispatch(stale.getId(), stale.getClaimToken(), Instant.now()));
+
+        stale.setResponseReference("overwrite-attempt");
+        assertThrows(org.springframework.orm.ObjectOptimisticLockingFailureException.class, () -> intents.saveAndFlush(stale));
+        ActionIntent current = intents.findById(stale.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.EXECUTING, current.getStatus());
+        assertNull(current.getResponseReference());
     }
 }
