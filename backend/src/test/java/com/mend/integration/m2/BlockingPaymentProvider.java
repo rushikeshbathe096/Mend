@@ -64,10 +64,11 @@ public class BlockingPaymentProvider implements PaymentProvider {
     public RequestResult<PaymentLinkSnapshot> createPaymentLink(MerchantRef merchant, CreatePaymentLink command) {
         int call = createCalls.computeIfAbsent(command.key(), k -> new AtomicInteger()).incrementAndGet();
         CountDownLatch enteredLatch = entered.get(command.key());
-        if (call == 1 && enteredLatch != null) {
+        CountDownLatch releaseLatch = release.get(command.key());
+        if (call == 1 && enteredLatch != null && releaseLatch != null) {
             enteredLatch.countDown();
             try {
-                release.get(command.key()).await(10, TimeUnit.SECONDS);
+                releaseLatch.await(10, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
