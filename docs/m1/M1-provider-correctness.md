@@ -326,7 +326,16 @@ Legacy tests (rule 7 — documented behaviour change): assertions on `/v1/paymen
 
 ## 12. Actual test results
 
-| Run | Result |
-|---|---|
-| Existing suite on this snapshot | **TBD** — not run in this session (my sandbox cannot reach Maven Central). Run `cd backend && ./mvnw test` and paste the summary here **before U1** as the baseline. |
-| Test-mode recordings | **TBD** — none exist. U0 produces them. |
+Numbers copied from the summary files (raw Maven logs are local-only; see owner decision D5).
+
+| Run | Commit | Result | Source |
+|---|---|---|---|
+| Baseline (before M1) | `839f049` | `Tests run: 320, Failures: 0, Errors: 0, Skipped: 0` · BUILD SUCCESS · 58 classes | `docs/m1/baseline-test-run-summary.txt` |
+| Pre-M1 health check (after 3 tenant-isolation fixes) | `5052719` | `Tests run: 323, Failures: 0, Errors: 0, Skipped: 0` · BUILD SUCCESS · 59 classes | `docs/health-check-after-summary.txt` |
+| M1 final (U9) | `b5077c9` | `Tests run: 516, Failures: 0, Errors: 0, Skipped: 1` · BUILD SUCCESS · 78 classes | `docs/m1/m1-final-test-run-summary.txt` |
+
+Skipped 1 = `PaymentReconciliationTest.originalPaymentFailureMustNotFailNonLinkIntent`, the `@Disabled("M2: correlation of original-payment failures")` test required by U7 (verified to fail when force-enabled).
+
+**Test-mode recordings** (2026-10-05, `backend/src/test/resources/razorpay/recorded/`, 14 files): `01`–`06` payment links (create ok, duplicate reference 400, extra fields 400, missing amount 400, fetch by id, fetch by reference), `07`–`09` orders (two creates with the same receipt → two distinct orders; order payments), `10`–`12` the three legacy endpoints (404 "no Route matched with those values"), `13` GET unknown payment → 400 `BAD_REQUEST_ERROR` / `input_validation_failed`, `14` bad credentials → 401. Not recorded: `20`–`24` (paid link, captured payment, link webhooks), `30`–`33` (recurring). Doc-derived fixtures (`doc-derived/`, each with `_source`): failed payment entity, 2xx without id, empty lookup, two links for one reference, paid link with a captured payment.
+
+**Documentation re-check (U9, 2026-10-05):** create-standard payment link page re-opened; DOC #7 and #10 unchanged (integer `amount` ≥ 100 paise for INR; `reference_id` unique, ≤ 40 chars; "extra fields sent"; documented fields include `notify`, `reminder_enable`, `notes`, `expire_by`, `description`, `currency`; no idempotency header). Payments entity and fetch-all-links pages were fetched the same day during U4/U5. One text difference: the docs give the duplicate-reference error as "payment link creation with reference ID already attempted", while recording `02` returned "payment link with given reference_id: … already exists". Classification is unaffected because §9 never trusts the text; lookup-by-reference decides.
