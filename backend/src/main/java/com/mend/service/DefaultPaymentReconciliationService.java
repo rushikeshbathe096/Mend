@@ -15,7 +15,7 @@ import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.provider.PaymentEvidenceStatus;
 import com.mend.provider.PaymentLinkState;
-import com.mend.provider.razorpay.RazorpayEvidenceMapper;
+import com.mend.provider.PaymentStatusInterpreter;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,7 +40,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
     /** Single interpreter of provider status strings (M1 U5): only captured is money. */
-    private final RazorpayEvidenceMapper evidenceMapper = new RazorpayEvidenceMapper();
+    private final PaymentStatusInterpreter evidenceMapper;
 
     public DefaultPaymentReconciliationService(
             ActionIntentRepository actionIntentRepository,
@@ -50,7 +50,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             CampaignLifecycleService campaignLifecycleService,
             CampaignStateMachine campaignStateMachine,
             AuditService auditService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            PaymentStatusInterpreter evidenceMapper) {
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -59,6 +60,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         this.campaignStateMachine = campaignStateMachine;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.evidenceMapper = evidenceMapper;
     }
 
     @Override

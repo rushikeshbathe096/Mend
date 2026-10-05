@@ -3,6 +3,7 @@ package com.mend.provider.razorpay;
 import com.mend.provider.PaymentEvidence;
 import com.mend.provider.PaymentEvidenceStatus;
 import com.mend.provider.PaymentLinkState;
+import com.mend.provider.PaymentStatusInterpreter;
 import com.mend.provider.razorpay.dto.RazorpayPayment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,10 +15,11 @@ import java.util.Locale;
  * The single place where Razorpay status strings are interpreted. Only {@code captured} is money;
  * anything unknown is {@code UNRECOGNIZED}, never success or failure.
  */
-public class RazorpayEvidenceMapper {
+public class RazorpayEvidenceMapper implements PaymentStatusInterpreter {
 
     private static final Logger log = LoggerFactory.getLogger(RazorpayEvidenceMapper.class);
 
+    @Override
     public PaymentEvidenceStatus mapPaymentStatus(String status) {
         return switch (normalize(status)) {
             case "captured" -> PaymentEvidenceStatus.CAPTURED;
@@ -33,6 +35,7 @@ public class RazorpayEvidenceMapper {
         };
     }
 
+    @Override
     public PaymentLinkState mapLinkStatus(String status) {
         return switch (normalize(status)) {
             case "paid" -> PaymentLinkState.PAID;
