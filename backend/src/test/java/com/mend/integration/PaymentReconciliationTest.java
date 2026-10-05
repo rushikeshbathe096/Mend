@@ -11,6 +11,7 @@ import com.mend.security.RazorpaySignatureVerifier;
 import com.mend.service.PaymentReconciliationService;
 import com.mend.service.ReconciliationResult;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -656,7 +657,7 @@ class PaymentReconciliationTest {
     }
 
     @Test
-    @org.junit.jupiter.api.Disabled("M2: correlation of original-payment failures")
+    @Disabled("M2: correlation of original-payment failures")
     @DisplayName("Known gap (M2): payment.failed for the ORIGINAL payment must not fail the latest recovery intent")
     void originalPaymentFailureMustNotFailLatestIntent() {
         // Strategy 4 correlates by campaign.paymentId and picks the latest intent, so a (late/duplicate) payment.failed for
@@ -669,5 +670,80 @@ class PaymentReconciliationTest {
         reconciliationService.reconcileWebhookEvent(event);
 
         assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    @DisplayName("M1: correlation via payment_link.entity.notes.mend_intent_id")
+    void linkNotesMendIntentIdCorrelates() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_linknotes_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, null);
+        WebhookEvent event = stored("payment_link.paid", String.format(
+                "{\"payload\":{\"payment_link\":{\"entity\":{\"id\":\"plink_M1notesOnly1\",\"status\":\"paid\",\"notes\":{\"mend_intent_id\":\"%s\"}}},"
+                        + "\"payment\":{\"entity\":{\"id\":\"pay_m1_linknotes\",\"status\":\"captured\"}}}}", intent.getId()));
+
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ReconciliationResult.Status.RECONCILED_SUCCESS, result.getStatus());
+        assertEquals(intent.getId(), result.getActionIntentId());
+    }
+
+    @Test
+    @DisplayName("M1: mend_intent_id takes precedence over legacy action_intent_id; legacy still works alone; junk is ignored")
+    void mendIntentIdPrecedenceAndLegacyFallback() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_prec_orig");
+        ActionIntent current = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, null);
+        Campaign other = campaignIn(CampaignStatus.EXECUTING, "pay_m1_prec_other");
+        ActionIntent legacy = intentFor(other, "RETRY_PAYMENT", ActionIntentStatus.EXECUTING, null);
+
+        WebhookEvent both = stored("payment.captured", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_prec1\",\"status\":\"captured\",\"notes\":{\"mend_intent_id\":\"%s\",\"action_intent_id\":\"%s\"}}}}}",
+                current.getId(), legacy.getId()));
+        assertEquals(current.getId(), reconciliationService.reconcileWebhookEvent(both).getActionIntentId());
+
+        WebhookEvent legacyOnly = stored("payment.captured", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_prec2\",\"status\":\"captured\",\"notes\":{\"mend_intent_id\":null,\"action_intent_id\":\"%s\"}}}}}",
+                legacy.getId()));
+        assertEquals(legacy.getId(), reconciliationService.reconcileWebhookEvent(legacyOnly).getActionIntentId());
+    }
+
+    @Test
+    @DisplayName("M1 behaviour change: payment.captured with no status is a no-op (event type is not evidence)")
+    void capturedEventTypeWithoutStatusIsNoOp() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_nostatus_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, null);
+        WebhookEvent event = stored("payment.captured", String.format(
+                "{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_nostatus\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_UNSUPPORTED_EVENT, reconciliationService.reconcileWebhookEvent(event).getStatus());
+        assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"refunded", "created", "late_authorized", "something_new"})
+    @DisplayName("M1: refunded / created / unrecognised payment statuses change nothing")
+    void nonMoneyStatusesChangeNothing(String status) {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_st_" + status);
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.EXECUTING, null);
+        WebhookEvent event = stored("payment.updated", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_st\",\"status\":\"%s\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                status, intent.getId()));
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_UNSUPPORTED_EVENT, reconciliationService.reconcileWebhookEvent(event).getStatus());
+        assertEquals(ActionIntentStatus.EXECUTING, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.EXECUTING, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
+
+    @Test
+    @DisplayName("M1: failed payment correlated via mend_intent_id -> FAILED (current U7 rule; see open design question)")
+    void failedPaymentCorrelatedByMendIntentIdFails() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m1_fail_orig");
+        ActionIntent intent = intentFor(campaign, "RETRY_PAYMENT", ActionIntentStatus.EXECUTING, null);
+        WebhookEvent event = stored("payment.failed", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m1_fail\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        assertEquals(ReconciliationResult.Status.RECONCILED_FAILURE, reconciliationService.reconcileWebhookEvent(event).getStatus());
+        assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
     }
 }
