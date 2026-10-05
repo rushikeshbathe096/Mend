@@ -141,7 +141,7 @@ class RazorpayPaymentLinkContractTest {
         assertEquals(Set.of("mend_intent_id", "mend_merchant_id"), keys(sent.get("notes")));
         assertEquals(INTENT.toString(), sent.get("notes").get("mend_intent_id").asString());
         assertEquals(MERCHANT.merchantId().toString(), sent.get("notes").get("mend_merchant_id").asString());
-        // Same key set as the body Razorpay accepted in the recording (plus mend_merchant_id in notes).
+        // Same top-level key set as the body Razorpay accepted in the recording.
         assertEquals(keys(RazorpayFixture.recorded("01_create_link_ok").requestBody()), keys(sent));
         server.verify();
     }
@@ -181,6 +181,22 @@ class RazorpayPaymentLinkContractTest {
     }
 
     @Test
+    void twoXxWithOtherCurrencyIsOutcomeUnknown() {
+        String body = RazorpayFixture.recorded("01_create_link_ok").responseBody().replace("\"currency\":\"INR\"", "\"currency\":\"USD\"");
+        server.expect(requestTo(BASE + "/v1/payment_links")).andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+        assertEquals(new RequestResult.OutcomeUnknown<>("MALFORMED_2XX", 200), provider.createPaymentLink(MERCHANT, command(100)));
+        server.verify();
+    }
+
+    @Test
+    void twoXxWithNonLinkShapedIdIsOutcomeUnknown() {
+        String body = RazorpayFixture.recorded("01_create_link_ok").responseBody().replace("plink_TjzX37EuRv8krS", "../orders/x");
+        server.expect(requestTo(BASE + "/v1/payment_links")).andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+        assertEquals(new RequestResult.OutcomeUnknown<>("MALFORMED_2XX", 200), provider.createPaymentLink(MERCHANT, command(100)));
+        server.verify();
+    }
+
+    @Test
     void unparseableTwoXxIsOutcomeUnknown() {
         server.expect(requestTo(BASE + "/v1/payment_links")).andRespond(withSuccess("<html>ok</html>", MediaType.TEXT_HTML));
         assertEquals(new RequestResult.OutcomeUnknown<>("MALFORMED_2XX", 200), provider.createPaymentLink(MERCHANT, command(100)));
@@ -198,6 +214,28 @@ class RazorpayPaymentLinkContractTest {
 
         assertEquals("plink_TjzX37EuRv8krS", link.providerLinkId());
         assertEquals(PaymentLinkState.CREATED, link.state());
+        server.verify();
+    }
+
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void dedupIsSignalledInTheStructuredCallLine(org.springframework.boot.test.system.CapturedOutput output) {
+        respondCreate(RazorpayFixture.recorded("02_create_link_duplicate_ref"));
+        respondLookup(RazorpayFixture.recorded("06_fetch_link_by_reference"));
+
+        provider.createPaymentLink(MERCHANT, command(100));
+
+        assertTrue(output.getOut().contains("result=Accepted provider_link_id=plink_TjzX37EuRv8krS dedup=true"));
+        server.verify();
+    }
+
+    @Test
+    void duplicateReferenceWithDifferentCurrencyIsDuplicateReferenceRejection() {
+        respondCreate(RazorpayFixture.recorded("02_create_link_duplicate_ref"));
+        String lookup = RazorpayFixture.recorded("06_fetch_link_by_reference").responseBody().replace("\"currency\":\"INR\"", "\"currency\":\"USD\"");
+        server.expect(requestTo(BASE + LOOKUP_PATH)).andRespond(withSuccess(lookup, MediaType.APPLICATION_JSON));
+
+        assertEquals(RejectionKind.DUPLICATE_REFERENCE, rejected(provider.createPaymentLink(MERCHANT, command(100))).kind());
         server.verify();
     }
 
@@ -297,6 +335,14 @@ class RazorpayPaymentLinkContractTest {
     }
 
     @Test
+    void readTimeoutIsOutcomeUnknownAndPostIsNotRetried() {
+        server.expect(times(1), requestTo(BASE + "/v1/payment_links")).andRespond(withException(new java.net.SocketTimeoutException("Read timed out")));
+        assertInstanceOf(RequestResult.OutcomeUnknown.class, provider.createPaymentLink(MERCHANT, command(100)));
+        assertTrue(sleeps.isEmpty());
+        server.verify();
+    }
+
+    @Test
     void connectionRefusedIsNotSent() {
         server.expect(times(1), requestTo(BASE + "/v1/payment_links")).andRespond(withException(new ConnectException("refused")));
         assertEquals(new RequestResult.NotSent<>("CONNECTION_REFUSED"), provider.createPaymentLink(MERCHANT, command(100)));
@@ -385,6 +431,14 @@ class RazorpayPaymentLinkContractTest {
         }
         assertEquals(PaymentLinkState.PAID, found.value().state());
         assertEquals(List.of("pay_KBneB6U4tBMjVm"), found.value().capturedPaymentIds());
+        server.verify();
+    }
+
+    @Test
+    void capturedPaymentWithNonPaymentShapedIdIsMalformed() {
+        String body = RazorpayFixture.docDerived("fetch_link_paid_with_captured_payment").responseBody().replace("pay_KBneB6U4tBMjVm", "pay_x/../y");
+        server.expect(requestTo(BASE + "/v1/payment_links/plink_KBnb7I424Rc1R9")).andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+        assertEquals(new LookupResult.Unavailable<>("MALFORMED", null), provider.getPaymentLink(MERCHANT, "plink_KBnb7I424Rc1R9"));
         server.verify();
     }
 

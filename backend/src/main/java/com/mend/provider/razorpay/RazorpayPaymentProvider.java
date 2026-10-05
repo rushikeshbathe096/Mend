@@ -78,18 +78,20 @@ public class RazorpayPaymentProvider implements PaymentProvider {
     public RequestResult<PaymentLinkSnapshot> createPaymentLink(MerchantRef merchant, CreatePaymentLink command) {
         Optional<RazorpayCredentials> credentials = credentialsResolver.resolve(merchant);
         if (credentials.isEmpty()) {
-            return logged(merchant, command, new RequestResult.Rejected<>(RejectionKind.AUTHENTICATION, "NO_CREDENTIALS_FOR_MERCHANT", null, null), 0);
+            return logged(merchant, command, new RequestResult.Rejected<>(RejectionKind.AUTHENTICATION, "NO_CREDENTIALS_FOR_MERCHANT", null, null), 0, false);
         }
         MoneyMinor amount = command.amount();
+        // Defensive: MoneyMinor is INR-only in M1, so this cannot trigger today.
         if (!"INR".equals(amount.currency())) {
-            return logged(merchant, command, new RequestResult.Rejected<>(RejectionKind.LOCAL_PRECONDITION, "CURRENCY_NOT_SUPPORTED", null, null), 0);
+            return logged(merchant, command, new RequestResult.Rejected<>(RejectionKind.LOCAL_PRECONDITION, "CURRENCY_NOT_SUPPORTED", null, null), 0, false);
         }
         if (amount.amountMinor() < MIN_LINK_AMOUNT_MINOR) {
-            return logged(merchant, command, new RequestResult.Rejected<>(RejectionKind.LOCAL_PRECONDITION, "AMOUNT_BELOW_MINIMUM", null, null), 0);
+            return logged(merchant, command, new RequestResult.Rejected<>(RejectionKind.LOCAL_PRECONDITION, "AMOUNT_BELOW_MINIMUM", null, null), 0, false);
         }
 
         RawResponse response = http.post(credentials.get(), "/v1/payment_links", createRequest(merchant, command));
-        RequestResult<PaymentLinkSnapshot> result = switch (classifier.classifyWrite(response)) {
+        WriteClassification classification = classifier.classifyWrite(response);
+        RequestResult<PaymentLinkSnapshot> result = switch (classification) {
             case WriteClassification.Accepted2xx accepted -> acceptCreated(accepted, command);
             case WriteClassification.Rejected rejected when rejected.kind() == RejectionKind.VALIDATION ->
                     resolveRejectedCreate(credentials.get(), command, rejected);
@@ -98,7 +100,8 @@ public class RazorpayPaymentProvider implements PaymentProvider {
             case WriteClassification.NotSent notSent -> new RequestResult.NotSent<>(notSent.cause());
             case WriteClassification.Unknown unknown -> new RequestResult.OutcomeUnknown<>(unknown.cause(), unknown.status());
         };
-        return logged(merchant, command, result, response.latencyMs());
+        boolean dedup = classification instanceof WriteClassification.Rejected && result instanceof RequestResult.Accepted;
+        return logged(merchant, command, result, response.latencyMs(), dedup);
     }
 
     private static RazorpayCreatePaymentLinkRequest createRequest(MerchantRef merchant, CreatePaymentLink command) {
@@ -113,11 +116,11 @@ public class RazorpayPaymentProvider implements PaymentProvider {
                 new RazorpayCreatePaymentLinkRequest.Notes(command.intentId().toString(), merchant.merchantId().toString()));
     }
 
-    /** A 2xx is only Accepted when the body proves it is our link: id present, same reference, same amount. */
+    /** A 2xx is only Accepted when the body proves it is our link: id present, same reference, amount and currency. */
     private RequestResult<PaymentLinkSnapshot> acceptCreated(WriteClassification.Accepted2xx accepted, CreatePaymentLink command) {
         try {
             PaymentLinkSnapshot snapshot = toSnapshot(responseMapper.readValue(accepted.body(), RazorpayPaymentLink.class));
-            if (!command.key().equals(snapshot.referenceId()) || snapshot.amountMinor() != command.amount().amountMinor()) {
+            if (!command.key().equals(snapshot.referenceId()) || !sameMoney(snapshot, command)) {
                 log.warn("event=provider_malformed_response op=create_payment_link reason=MISMATCH");
                 return new RequestResult.OutcomeUnknown<>("MALFORMED_2XX", accepted.status());
             }
@@ -139,7 +142,7 @@ public class RazorpayPaymentProvider implements PaymentProvider {
                                                                      WriteClassification.Rejected rejected) {
         return switch (lookupByReference(credentials, command.key())) {
             case LookupResult.Found<PaymentLinkSnapshot> found -> {
-                if (found.value().amountMinor() != command.amount().amountMinor()) {
+                if (!sameMoney(found.value(), command)) {
                     yield new RequestResult.Rejected<>(RejectionKind.DUPLICATE_REFERENCE, code(rejected.error()),
                             description(rejected.error()), rejected.status());
                 }
@@ -238,6 +241,9 @@ public class RazorpayPaymentProvider implements PaymentProvider {
         if (link == null || link.id() == null || link.id().isBlank()) {
             throw new MalformedProviderResponse("MISSING_ID");
         }
+        if (!LINK_ID.matcher(link.id()).matches()) {
+            throw new MalformedProviderResponse("INVALID_ID");
+        }
         if (link.amount() == null || link.amount() < 0 || link.amountPaid() == null || link.amountPaid() < 0) {
             throw new MalformedProviderResponse("MISSING_AMOUNT");
         }
@@ -253,12 +259,19 @@ public class RazorpayPaymentProvider implements PaymentProvider {
             }
         }
         List<String> capturedPaymentIds = link.payments() == null ? List.of() : link.payments().stream()
-                .filter(p -> p != null && p.paymentId() != null && !p.paymentId().isBlank())
-                .filter(p -> mapper.mapPaymentStatus(p.status()) == PaymentEvidenceStatus.CAPTURED)
+                .filter(p -> p != null && mapper.mapPaymentStatus(p.status()) == PaymentEvidenceStatus.CAPTURED)
                 .map(RazorpayPaymentLink.Payment::paymentId)
                 .toList();
+        // Provider ids end up in URL paths later: a captured payment id that is not pay_-shaped is malformed.
+        if (capturedPaymentIds.stream().anyMatch(id -> id == null || !PAYMENT_ID.matcher(id).matches())) {
+            throw new MalformedProviderResponse("INVALID_PAYMENT_ID");
+        }
         return new PaymentLinkSnapshot(link.id(), reference, mapper.mapLinkStatus(link.status()), link.amount(),
                 link.amountPaid(), link.currency(), link.shortUrl(), capturedPaymentIds);
+    }
+
+    private static boolean sameMoney(PaymentLinkSnapshot snapshot, CreatePaymentLink command) {
+        return snapshot.amountMinor() == command.amount().amountMinor() && command.amount().currency().equals(snapshot.currency());
     }
 
     private static String code(RazorpayErrorEnvelope.Error error) {
@@ -271,9 +284,10 @@ public class RazorpayPaymentProvider implements PaymentProvider {
 
     /** One structured line per create call (design doc "Metrics"). Ids and codes only. */
     private static RequestResult<PaymentLinkSnapshot> logged(MerchantRef merchant, CreatePaymentLink command,
-                                                             RequestResult<PaymentLinkSnapshot> result, long latencyMs) {
+                                                             RequestResult<PaymentLinkSnapshot> result, long latencyMs, boolean dedup) {
         String outcome = switch (result) {
-            case RequestResult.Accepted<PaymentLinkSnapshot> a -> "result=Accepted provider_link_id=" + a.value().providerLinkId();
+            case RequestResult.Accepted<PaymentLinkSnapshot> a -> "result=Accepted provider_link_id=" + a.value().providerLinkId()
+                    + " dedup=" + dedup;
             case RequestResult.Rejected<PaymentLinkSnapshot> r -> "result=Rejected kind=" + r.kind() + " code=" + r.providerCode()
                     + " http_status=" + r.httpStatus();
             case RequestResult.NotSent<PaymentLinkSnapshot> n -> "result=NotSent cause=" + n.cause();
