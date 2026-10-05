@@ -345,6 +345,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         assertEquals(1, analytics.getTotalCampaigns());
         // M1 behaviour change: nothing was recovered without captured evidence, see ADR-001
         assertEquals(0, analytics.getRecoveredCampaigns());
+        assertEquals(0.0, analytics.getRecoveryRate());
     }
 
     // ==================== SCENARIO 4: RAZORPAY IDEMPOTENCY ====================

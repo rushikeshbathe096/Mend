@@ -45,6 +45,7 @@ public class MockPaymentProviderClientTest {
 
         RequestResult<String> result = client.simulateDebit(merchant, campaignId, intentId, key);
 
+        // M1 behaviour change: the mock now implements the provider port; a synthetic debit is Accepted, see ADR-001
         RequestResult.Accepted<String> accepted = assertInstanceOf(RequestResult.Accepted.class, result);
         // M1 behaviour change: synthetic ids are prefixed pay_mock_ (was mock_ref_), see ADR-001
         assertTrue(accepted.value().startsWith("pay_mock_"));
@@ -57,15 +58,16 @@ public class MockPaymentProviderClientTest {
     @DisplayName("Should simulate provider failure when configured")
     void testSimulatedProviderFailure() {
         client.setSimulatedStatus(PaymentExecutionStatus.FAILURE);
-        client.setSimulatedFailureReason("Insufficient funds");
+        client.setSimulatedFailureReason("Card declined due to insufficient funds");
         UUID intentId = UUID.randomUUID();
 
         RequestResult<String> result = client.simulateDebit(merchant, campaignId, intentId, ProviderAttemptKey.forIntent(intentId));
 
+        // M1 behaviour change: a simulated decline is a Rejected request result (was PaymentExecutionResult FAILURE), see ADR-001
         RequestResult.Rejected<String> rejected = assertInstanceOf(RequestResult.Rejected.class, result);
         assertEquals(RejectionKind.VALIDATION, rejected.kind());
         assertEquals("MOCK_DECLINED", rejected.providerCode());
-        assertEquals("Insufficient funds", rejected.providerReason());
+        assertEquals("Card declined due to insufficient funds", rejected.providerReason());
     }
 
     @Test
@@ -106,6 +108,7 @@ public class MockPaymentProviderClientTest {
         RequestResult<PaymentLinkSnapshot> res1 = client.createPaymentLink(merchant, command);
         RequestResult<PaymentLinkSnapshot> res2 = new MockPaymentProvider().createPaymentLink(merchant, command);
 
+        // M1 behaviour change: determinism is asserted on the synthetic link id derived from the attempt key, see ADR-001
         PaymentLinkSnapshot link1 = ((RequestResult.Accepted<PaymentLinkSnapshot>) res1).value();
         PaymentLinkSnapshot link2 = ((RequestResult.Accepted<PaymentLinkSnapshot>) res2).value();
         assertEquals(link1.providerLinkId(), link2.providerLinkId());

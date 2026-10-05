@@ -34,7 +34,8 @@ public class ProviderActionDispatcher {
     private final PaymentProvider paymentProvider;
     private final ProviderCapabilities capabilities;
     private final WebhookAmountResolver amountResolver;
-    private final ObjectProvider<SyntheticDebitSimulator> syntheticDebitSimulator;
+    /** Mock mode only; resolved once so a wiring mistake fails at startup instead of hiding as an unknown outcome. */
+    private final SyntheticDebitSimulator syntheticDebitSimulator;
 
     public ProviderActionDispatcher(PaymentProvider paymentProvider,
                                     ProviderCapabilities capabilities,
@@ -43,7 +44,7 @@ public class ProviderActionDispatcher {
         this.paymentProvider = paymentProvider;
         this.capabilities = capabilities;
         this.amountResolver = amountResolver;
-        this.syntheticDebitSimulator = syntheticDebitSimulator;
+        this.syntheticDebitSimulator = syntheticDebitSimulator.getIfAvailable();
     }
 
     public ProviderActionOutcome dispatch(ActionIntent intent, Campaign campaign) {
@@ -53,28 +54,41 @@ public class ProviderActionDispatcher {
         }
         MerchantRef merchant = new MerchantRef(intent.getMerchantId());
         ProviderAttemptKey key = ProviderAttemptKey.forIntent(intent.getId());
+        return switch (actionType) {
+            case REQUEST_CUSTOMER_ACTION -> issuePaymentLink(merchant, key, intent, campaign);
+            case RETRY_PAYMENT -> syntheticDebitOrNotSupported(merchant, key, intent, RECURRING_DEBIT_NOT_ENABLED);
+            // Mock mode simulates it as before; Razorpay mode never automates manual review.
+            case MANUAL_REVIEW -> syntheticDebitOrNotSupported(merchant, key, intent, "MANUAL_REVIEW_NOT_AUTOMATED");
+        };
+    }
+
+    /** Only the provider call itself is wrapped: an exception there may come after the request was sent (invariant 4). */
+    private <T> RequestResult<T> callProvider(ActionIntent intent, ProviderAttemptKey key, java.util.function.Supplier<RequestResult<T>> call) {
         try {
-            return switch (actionType) {
-                case REQUEST_CUSTOMER_ACTION -> issuePaymentLink(merchant, key, intent, campaign);
-                case RETRY_PAYMENT -> syntheticDebitOrNotSupported(merchant, key, intent, RECURRING_DEBIT_NOT_ENABLED);
-                // Unchanged behaviour: mock mode simulates it as before; Razorpay mode never automates manual review.
-                case MANUAL_REVIEW -> syntheticDebitOrNotSupported(merchant, key, intent, "MANUAL_REVIEW_NOT_AUTOMATED");
-            };
+            return call.get();
         } catch (RuntimeException e) {
-            // The call may have reached the provider before failing: unknown, never failed (invariant 4).
             log.error("event=provider_dispatch_exception intent_id={} attempt_key={} exception={}",
                     intent.getId(), key.value(), e.getClass().getSimpleName());
-            return new ProviderActionOutcome.Unknown("UNEXPECTED_PROVIDER_EXCEPTION", null);
+            log.debug("provider_dispatch_exception detail intent_id={}", intent.getId(), e);
+            return new RequestResult.OutcomeUnknown<>("UNEXPECTED_PROVIDER_EXCEPTION", null);
         }
     }
 
     private ProviderActionOutcome issuePaymentLink(MerchantRef merchant, ProviderAttemptKey key, ActionIntent intent, Campaign campaign) {
-        Optional<MoneyMinor> amount = amountResolver.resolveOriginalAmount(intent.getMerchantId(), campaign.getPaymentId());
-        if (amount.isEmpty()) {
-            return new ProviderActionOutcome.Rejected(RejectionKind.LOCAL_PRECONDITION, "AMOUNT_UNRESOLVED", null, null);
+        CreatePaymentLink command;
+        try {
+            Optional<MoneyMinor> amount = amountResolver.resolveOriginalAmount(intent.getMerchantId(), campaign.getPaymentId());
+            if (amount.isEmpty()) {
+                return new ProviderActionOutcome.Rejected(RejectionKind.LOCAL_PRECONDITION, "AMOUNT_UNRESOLVED", null, null);
+            }
+            command = new CreatePaymentLink(key, amount.get(), "Payment for campaign " + campaign.getId(), null, intent.getId());
+        } catch (RuntimeException e) {
+            // Nothing has been sent yet: a local failure, not an unknown provider outcome.
+            log.error("event=provider_precall_exception intent_id={} exception={}", intent.getId(), e.getClass().getSimpleName());
+            log.debug("provider_precall_exception detail intent_id={}", intent.getId(), e);
+            return new ProviderActionOutcome.NotSent("PRE_CALL_EXCEPTION");
         }
-        CreatePaymentLink command = new CreatePaymentLink(key, amount.get(), "Payment for campaign " + campaign.getId(), null, intent.getId());
-        RequestResult<PaymentLinkSnapshot> result = paymentProvider.createPaymentLink(merchant, command);
+        RequestResult<PaymentLinkSnapshot> result = callProvider(intent, key, () -> paymentProvider.createPaymentLink(merchant, command));
         return switch (result) {
             case RequestResult.Accepted<PaymentLinkSnapshot> accepted -> new ProviderActionOutcome.LinkIssued(accepted.value());
             case RequestResult.Rejected<PaymentLinkSnapshot> rejected ->
@@ -86,11 +100,11 @@ public class ProviderActionDispatcher {
 
     private ProviderActionOutcome syntheticDebitOrNotSupported(MerchantRef merchant, ProviderAttemptKey key, ActionIntent intent,
                                                                String notSupportedReason) {
-        SyntheticDebitSimulator simulator = capabilities.supportsRecurringDebit() ? syntheticDebitSimulator.getIfAvailable() : null;
+        SyntheticDebitSimulator simulator = capabilities.supportsRecurringDebit() ? syntheticDebitSimulator : null;
         if (simulator == null) {
             return new ProviderActionOutcome.NotSupported(notSupportedReason);
         }
-        RequestResult<String> result = simulator.simulateDebit(merchant, intent.getCampaignId(), intent.getId(), key);
+        RequestResult<String> result = callProvider(intent, key, () -> simulator.simulateDebit(merchant, intent.getCampaignId(), intent.getId(), key));
         return switch (result) {
             case RequestResult.Accepted<String> accepted -> new ProviderActionOutcome.SyntheticCaptured(accepted.value());
             case RequestResult.Rejected<String> rejected ->

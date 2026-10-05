@@ -105,9 +105,9 @@ public class MockPaymentProvider implements PaymentProvider, ProviderCapabilitie
             return new RequestResult.NotSent<>("MOCK_NOT_SENT");
         }
         return switch (simulatedStatus) {
-            case SUCCESS, PENDING -> null;
+            case SUCCESS -> null;
             case FAILURE -> new RequestResult.Rejected<>(RejectionKind.VALIDATION, "MOCK_DECLINED", simulatedFailureReason, null);
-            case ERROR -> {
+            case ERROR, PENDING -> {
                 log.info("SYNTHETIC event=mock_provider simulated_error={}", simulatedErrorMessage);
                 yield new RequestResult.OutcomeUnknown<>("MOCK_PROVIDER_ERROR", null);
             }
