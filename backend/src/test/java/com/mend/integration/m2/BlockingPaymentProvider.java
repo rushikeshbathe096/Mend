@@ -20,18 +20,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  * key, and can hold the FIRST create call for a registered key until the test releases it (a provider call "in flight").
  * Unregistered keys (e.g. leftovers from other test classes sharing the database) are never blocked.
  */
-public class BlockingPaymentProvider implements PaymentProvider {
+public class BlockingPaymentProvider implements PaymentProvider, com.mend.provider.mock.SyntheticDebitSimulator {
 
     private final PaymentProvider delegate;
+    /** M2 U7: the synthetic debit (mock mode) can be held in flight the same way; null when the delegate has none. */
+    private final com.mend.provider.mock.SyntheticDebitSimulator debitDelegate;
+    private final Map<ProviderAttemptKey, AtomicInteger> debitCalls = new ConcurrentHashMap<>();
     private final Map<ProviderAttemptKey, AtomicInteger> createCalls = new ConcurrentHashMap<>();
     private final Map<ProviderAttemptKey, CountDownLatch> entered = new ConcurrentHashMap<>();
     private final Map<ProviderAttemptKey, CountDownLatch> release = new ConcurrentHashMap<>();
 
     public BlockingPaymentProvider(PaymentProvider delegate) {
         this.delegate = delegate;
+        this.debitDelegate = delegate instanceof com.mend.provider.mock.SyntheticDebitSimulator simulator ? simulator : null;
     }
 
-    /** The first create call for {@code key} blocks until {@link #release(ProviderAttemptKey)}. */
+    /** The first create (or synthetic debit) call for {@code key} blocks until {@link #release(ProviderAttemptKey)}. */
     public void blockFirstCreate(ProviderAttemptKey key) {
         entered.put(key, new CountDownLatch(1));
         release.put(key, new CountDownLatch(1));
@@ -53,9 +57,15 @@ public class BlockingPaymentProvider implements PaymentProvider {
         return count == null ? 0 : count.get();
     }
 
+    public int debitCalls(ProviderAttemptKey key) {
+        AtomicInteger count = debitCalls.get(key);
+        return count == null ? 0 : count.get();
+    }
+
     public void reset() {
         release.values().forEach(CountDownLatch::countDown);
         createCalls.clear();
+        debitCalls.clear();
         entered.clear();
         release.clear();
     }
@@ -63,8 +73,23 @@ public class BlockingPaymentProvider implements PaymentProvider {
     @Override
     public RequestResult<PaymentLinkSnapshot> createPaymentLink(MerchantRef merchant, CreatePaymentLink command) {
         int call = createCalls.computeIfAbsent(command.key(), k -> new AtomicInteger()).incrementAndGet();
-        CountDownLatch enteredLatch = entered.get(command.key());
-        CountDownLatch releaseLatch = release.get(command.key());
+        holdIfFirst(command.key(), call);
+        return delegate.createPaymentLink(merchant, command);
+    }
+
+    @Override
+    public RequestResult<String> simulateDebit(MerchantRef merchant, java.util.UUID campaignId, java.util.UUID intentId, ProviderAttemptKey key) {
+        if (debitDelegate == null) {
+            throw new IllegalStateException("delegate has no synthetic debit");
+        }
+        int call = debitCalls.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
+        holdIfFirst(key, call);
+        return debitDelegate.simulateDebit(merchant, campaignId, intentId, key);
+    }
+
+    private void holdIfFirst(ProviderAttemptKey key, int call) {
+        CountDownLatch enteredLatch = entered.get(key);
+        CountDownLatch releaseLatch = release.get(key);
         if (call == 1 && enteredLatch != null && releaseLatch != null) {
             enteredLatch.countDown();
             try {
@@ -73,7 +98,6 @@ public class BlockingPaymentProvider implements PaymentProvider {
                 Thread.currentThread().interrupt();
             }
         }
-        return delegate.createPaymentLink(merchant, command);
     }
 
     @Override
