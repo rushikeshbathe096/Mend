@@ -27,6 +27,15 @@ class IsolatedTestDatabaseTest {
     }
 
     @Test
+    @DisplayName("The database name is replaced in the path; query parameters are kept")
+    void urlKeepsParameters() {
+        assertEquals("jdbc:postgresql://localhost:5433/mend_test_1_a", IsolatedTestDatabase.withDatabase("jdbc:postgresql://localhost:5433/postgres", "mend_test_1_a"));
+        assertEquals("jdbc:postgresql://db.local:5432/x?sslmode=require&options=-c%20a/b",
+                IsolatedTestDatabase.withDatabase("jdbc:postgresql://db.local:5432/postgres?sslmode=require&options=-c%20a/b", "x"));
+        assertThrows(IllegalArgumentException.class, () -> IsolatedTestDatabase.withDatabase("postgres", "x"));
+    }
+
+    @Test
     @DisplayName("This run is using its own database, never the dev database")
     void thisRunUsesItsOwnDatabase() {
         String url = System.getProperty(IsolatedTestDatabase.URL_PROPERTY);

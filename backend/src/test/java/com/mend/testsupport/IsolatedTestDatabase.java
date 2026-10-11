@@ -40,7 +40,21 @@ public final class IsolatedTestDatabase implements BeforeAllCallback {
 
     @Override
     public void beforeAll(ExtensionContext context) {
-        context.getRoot().getStore(NAMESPACE).computeIfAbsent(Session.class, key -> Session.open(), Session.class);
+        context.getRoot().getStore(NAMESPACE).computeIfAbsent(Session.class, key -> {
+            Session session = Session.open();
+            return session != null ? session : Session.NONE;
+        }, Session.class);
+    }
+
+    /** {@code jdbc:postgresql://host:port/<db>?params} with the database replaced; query parameters kept. */
+    static String withDatabase(String jdbcUrl, String database) {
+        int hostStart = jdbcUrl.indexOf("//");
+        int pathStart = jdbcUrl.indexOf('/', hostStart + 2);
+        if (hostStart < 0 || pathStart < 0) {
+            throw new IllegalArgumentException("not a jdbc:postgresql://host[:port]/db URL: " + jdbcUrl);
+        }
+        int query = jdbcUrl.indexOf('?', pathStart);
+        return jdbcUrl.substring(0, pathStart + 1) + database + (query < 0 ? "" : jdbcUrl.substring(query));
     }
 
     /** True only for a name this class creates whose timestamp is older than {@link #STALE_AFTER}; never for other databases. */
@@ -58,6 +72,9 @@ public final class IsolatedTestDatabase implements BeforeAllCallback {
         private final Connection admin;
         private final String database;
 
+        /** No server reachable: nothing to drop (Spring tests fail closed on the unresolved URL). */
+        static final Session NONE = new Session(null, null);
+
         private Session(Connection admin, String database) {
             this.admin = admin;
             this.database = database;
@@ -74,8 +91,10 @@ public final class IsolatedTestDatabase implements BeforeAllCallback {
             try {
                 admin = DriverManager.getConnection(serverUrl, user, password);
             } catch (SQLException e) {
-                throw new IllegalStateException("cannot connect to the test PostgreSQL server " + serverUrl
-                        + " (is docker-compose postgres running?)", e);
+                // Pure unit tests still run; any Spring test fails closed (its datasource URL cannot be resolved).
+                System.err.println("[IsolatedTestDatabase] NO test database: cannot connect to " + serverUrl
+                        + " (is docker-compose postgres running?) - " + e.getMessage());
+                return null;
             }
             try (Statement sql = admin.createStatement()) {
                 for (String stale : staleDatabases(sql)) {
@@ -87,8 +106,16 @@ public final class IsolatedTestDatabase implements BeforeAllCallback {
                 closeQuietly(admin);
                 throw new IllegalStateException("cannot create the isolated test database on " + serverUrl, e);
             }
-            String url = serverUrl.substring(0, serverUrl.lastIndexOf('/') + 1) + database;
+            String url = withDatabase(serverUrl, database);
             System.setProperty(URL_PROPERTY, url);
+            // System properties outrank environment variables and profile files: an exported SPRING_DATASOURCE_URL (e.g.
+            // from .env) or a test without the "test" profile can still never reach the dev database.
+            System.setProperty("spring.datasource.url", url);
+            System.setProperty("spring.datasource.username", user);
+            System.setProperty("spring.datasource.password", password);
+            System.setProperty("spring.flyway.url", url);
+            System.setProperty("spring.flyway.user", user);
+            System.setProperty("spring.flyway.password", password);
             System.out.println("[IsolatedTestDatabase] created " + database);
             return new Session(admin, database);
         }
@@ -110,10 +137,16 @@ public final class IsolatedTestDatabase implements BeforeAllCallback {
         /** FORCE: Spring's cached contexts still hold pooled connections when JUnit finishes (they close at JVM exit). */
         @Override
         public void close() throws SQLException {
+            if (admin == null) {
+                return;
+            }
             try (admin; Statement sql = admin.createStatement()) {
                 sql.execute("DROP DATABASE IF EXISTS \"" + database + "\" WITH (FORCE)");
             }
-            System.clearProperty(URL_PROPERTY);
+            for (String property : new String[] {URL_PROPERTY, "spring.datasource.url", "spring.datasource.username",
+                    "spring.datasource.password", "spring.flyway.url", "spring.flyway.user", "spring.flyway.password"}) {
+                System.clearProperty(property);
+            }
             System.out.println("[IsolatedTestDatabase] dropped " + database);
         }
 
