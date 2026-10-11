@@ -117,7 +117,7 @@ public class ActionIntentClaimService {
             auditService.logEvent(
                     intent.getMerchantId(),
                     intent.getCampaignId(),
-                    "STATE_TRANSITION",
+                    "CLAIM_RELEASED",   // M2 §9 failure table: worker crash before dispatch
                     "SYSTEM",
                     null,
                     "Released expired claim for Action Intent " + intent.getId() + " back to READY"

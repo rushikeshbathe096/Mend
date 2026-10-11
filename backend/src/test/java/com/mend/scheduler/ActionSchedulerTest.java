@@ -123,4 +123,20 @@ public class ActionSchedulerTest {
         assertTrue(results.isEmpty());
         verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), eq("claim-exception-4"));
     }
+
+    @Test
+    @DisplayName("M2 §9 DB down: the poll cycle aborts before claiming or executing anything; the next poll resumes")
+    void databaseDownAbortsThePollAndTheNextPollResumes() {
+        when(claimService.releaseExpiredClaims())
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("connection refused"))
+                .thenReturn(Collections.emptyList());
+        when(claimService.claimDueIntents(eq("test-worker"), eq(50))).thenReturn(Collections.emptyList());
+
+        assertThrows(org.springframework.dao.DataAccessResourceFailureException.class, () -> scheduler.pollAndExecuteDueActions());
+        verify(claimService, never()).claimDueIntents(anyString(), anyInt());
+        verify(actionExecutionService, never()).executeActionIntent(any(), anyString(), any());
+
+        assertTrue(scheduler.pollAndExecuteDueActions().isEmpty(), "next poll runs normally once the database is back");
+        verify(claimService, times(1)).claimDueIntents(eq("test-worker"), eq(50));
+    }
 }
