@@ -5,7 +5,6 @@ public enum ActionIntentStatus {
     SCHEDULED,
     READY,
     CLAIMED,
-    PROCESSING,
     EXECUTING,
     /** M2: provider outcome unknown or worker presumed dead; resolved only from provider evidence (reconciler). */
     NEEDS_RECONCILIATION,

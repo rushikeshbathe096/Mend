@@ -15,7 +15,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | 3 | `572b717` | cleanup: shared payment-link id helper |
 | 4 | `b520e8c` | fix: honest amounts in analytics |
 | — | `8835869` | test: stop the scheduled Redis consumer poll racing consumer tests |
-| 5 | (this commit) | cleanup: remove legacy webhook publish chain |
+| 5 | `3eb13e0` | cleanup: remove legacy webhook publish chain |
+| 6 | (this commit) | cleanup: drop legacy status values + CHECK constraints |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -205,3 +206,40 @@ The enum value is `PUBLISH_FAILED`; there is no `FAILED`. Neither value appears,
 - `TransactionalOutboxIntegrationTest.crashWindowRedeliveryPreservesMetadataAndRemainsConsumerIdempotent`
 
 **Run:** `./mvnw test` → `[INFO] Tests run: 658, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 3933075509317).
+
+## Group 6: drop legacy status values + CHECK constraints (V16)
+
+**Removed enum values** (none was ever written by code; 0 rows in the dev DB and in every `mend_test_*` DB present):
+- `CampaignStatus`: `STRATEGY_ASSIGNED`, `WAITING`, `ACTION_EXECUTING`, `RETRY_SCHEDULED`, `PENDING_REVIEW`, `ESCALATED`, `MANDATE_INVALID`, `STOPPED`
+- `ActionIntentStatus`: `PROCESSING`. Its only read, in `ComplianceService.checkDuplicateActionExists`, is removed.
+- `ReviewQueueStatus`: `IN_REVIEW`, `OVERRIDDEN`. `ESCALATED` stays: `HumanApprovalService` writes it.
+- `WebhookEventStatus`: `PROCESSING`, `IGNORED`, `INVALID_SIGNATURE`
+
+The strings `"ACTION_EXECUTING"` (an audit event type) and `"STOPPED"` (an agent-record status) are unrelated and unchanged.
+
+Data checked before writing V16 (`GROUP BY` on each column):
+
+| database | campaigns.current_state | action_intents.status | review_queue.status | webhook_events.processing_status |
+|---|---|---|---|---|
+| `mend` | ACTION_PENDING, CANCELLED, ELIGIBLE, EXECUTING, EXHAUSTED, RECOVERED | AWAITING_PAYMENT, CANCELLED, CLAIMED, EXECUTING, EXPIRED, FAILED, NEEDS_RECONCILIATION, READY, SUCCEEDED | APPROVED, PENDING | PROCESSED, VERIFIED |
+| `mend_test_1791726135_1b058308` | + CREATED | + SCHEDULED | + CLOSED | PROCESSED, VERIFIED |
+| `mend_test_1791737945_929dc892` | ACTION_PENDING, CANCELLED, ELIGIBLE, EXHAUSTED, RECOVERED | CANCELLED, CLAIMED, FAILED, READY, SUCCEEDED | APPROVED, PENDING | PROCESSED, VERIFIED |
+
+**`V16__status_check_constraints.sql`:**
+- adds `ck_campaigns_current_state`, `ck_review_queue_status` and `ck_webhook_events_processing_status`
+- replaces V12's `ck_action_intents_status` with the same set minus `PROCESSING`
+- the header carries the runbook query
+- a leading `DO` block raises `V16: legacy status values present, no data was changed: …` before any DDL when a stored value is outside the sets; Flyway's per-migration transaction rolls it back, and nothing is ever rewritten
+- V1–V15 untouched
+
+**Tests**
+- New `V16MigrationTest` (throwaway schema migrated to V15, the real V16 file applied):
+  - `legacyRowsMakeV16FailWithoutRewritingData`: a legacy value in each of the 4 columns → V16 fails with that message; all 4 values unchanged, no new constraint, V12's constraint still present, schema still at version 15
+  - `constraintsMatchTheEnums`: after V16 every value of the 4 Java enums is accepted and every removed value is rejected (`DataIntegrityViolationException`)
+- `ActionIntentStateMachineTest`, marked `// cleanup behaviour change`: the `PROCESSING.isTerminal()` assertion became `valueOf("PROCESSING")` throws; the fixed not-in-flight list became an exhaustive check over `ActionIntentStatus.values()`.
+- `./mvnw test` → `[INFO] Tests run: 660, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 4260205406699; +2 = `V16MigrationTest`).
+
+**Frontend.** Removed the `Badge` cases `PENDING_REVIEW`, `IN_REVIEW`, `OVERRIDDEN`, `IGNORED` and the webhook filter options `PROCESSING`, `IGNORED`.
+- `npm test -- --ci` → `Tests: 33 passed, 33 total`
+- `npm run build` → success
+- `eslint` on the two files reports the same 3 problems before and after (pre-existing: `no-explicit-any` and `set-state-in-effect` in `webhooks/page.tsx`, an unused `type` prop in `Badge.tsx`)

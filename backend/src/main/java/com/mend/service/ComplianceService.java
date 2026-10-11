@@ -185,7 +185,6 @@ public class ComplianceService {
                                 intent.getStatus() == ActionIntentStatus.SCHEDULED ||
                                 intent.getStatus() == ActionIntentStatus.READY ||
                                 intent.getStatus() == ActionIntentStatus.CLAIMED ||
-                                intent.getStatus() == ActionIntentStatus.PROCESSING ||
                                 intent.getStatus() == ActionIntentStatus.EXECUTING ||
                                 intent.getStatus() == ActionIntentStatus.SUCCEEDED)
         );

@@ -21,23 +21,19 @@ export const Badge: React.FC<BadgeProps> = ({ status, type = 'general' }) => {
       case 'PENDING':
       case 'SCHEDULED':
       case 'RECEIVED':
-      case 'PENDING_REVIEW':
         return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'CLASSIFIED':
       case 'ELIGIBLE':
       case 'EXECUTING':
       case 'CLAIMED':
-      case 'IN_REVIEW':
       case 'IN_PROGRESS':
         return 'bg-indigo-50 text-indigo-700 border-indigo-200';
       case 'EXHAUSTED':
       case 'FAILED':
       case 'REJECTED':
-      case 'OVERRIDDEN':
       case 'ERROR':
         return 'bg-rose-50 text-rose-700 border-rose-200';
       case 'CANCELLED':
-      case 'IGNORED':
       case 'DUPLICATE':
       case 'ESCALATED':
       case 'WAITING_FOR_APPROVAL':

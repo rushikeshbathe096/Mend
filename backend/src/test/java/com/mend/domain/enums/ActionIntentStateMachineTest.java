@@ -23,7 +23,9 @@ public class ActionIntentStateMachineTest {
         assertFalse(ActionIntentStatus.SCHEDULED.isTerminal());
         assertFalse(ActionIntentStatus.READY.isTerminal());
         assertFalse(ActionIntentStatus.CLAIMED.isTerminal());
-        assertFalse(ActionIntentStatus.PROCESSING.isTerminal());
+        // cleanup behaviour change: PROCESSING was never written and is removed (V16, docs/audit/cleanup-report.md Group 6);
+        // a stored PROCESSING row would now fail the ck_action_intents_status CHECK.
+        assertThrows(IllegalArgumentException.class, () -> ActionIntentStatus.valueOf("PROCESSING"));
 
         assertTrue(ActionIntentStatus.PENDING.isExecutable());
         assertTrue(ActionIntentStatus.SCHEDULED.isExecutable());
@@ -55,10 +57,11 @@ public class ActionIntentStateMachineTest {
         }
         assertTrue(ActionIntentStatus.CLAIMED.isInFlight());
         assertTrue(ActionIntentStatus.EXECUTING.isInFlight());
-        for (ActionIntentStatus status : new ActionIntentStatus[]{ActionIntentStatus.PENDING, ActionIntentStatus.SCHEDULED,
-                ActionIntentStatus.READY, ActionIntentStatus.PROCESSING, ActionIntentStatus.SUCCEEDED, ActionIntentStatus.FAILED,
-                ActionIntentStatus.CANCELLED, ActionIntentStatus.EXPIRED}) {
-            assertFalse(status.isInFlight(), status.name());
+        // cleanup behaviour change: PROCESSING removed (Group 6); every other status is now checked, not a fixed list.
+        java.util.Set<ActionIntentStatus> inFlight = java.util.EnumSet.of(ActionIntentStatus.CLAIMED, ActionIntentStatus.EXECUTING,
+                ActionIntentStatus.NEEDS_RECONCILIATION, ActionIntentStatus.AWAITING_PAYMENT);
+        for (ActionIntentStatus status : ActionIntentStatus.values()) {
+            assertEquals(inFlight.contains(status), status.isInFlight(), status.name());
         }
         // Fits the existing VARCHAR(20) status column.
         assertTrue(ActionIntentStatus.NEEDS_RECONCILIATION.name().length() <= 20);
