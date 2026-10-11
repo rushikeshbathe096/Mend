@@ -62,6 +62,17 @@ class ExecutionReconcilerRazorpayTest extends com.mend.integration.AbstractInteg
 
     private final UUID merchantId = UUID.fromString(SINGLE_TENANT_MERCHANT);
     private ExecutionReconciler reconciler;
+    /** Intents this class created; cancelled afterwards so SAFE_RETRY'd (READY) rows never reach other classes' schedulers. */
+    private final java.util.List<UUID> created = new java.util.ArrayList<>();
+
+    @org.junit.jupiter.api.AfterEach
+    void cancelOwnIntents() {
+        for (UUID id : created) {
+            jdbc.update("UPDATE action_intents SET status = 'CANCELLED', completed_at = now() WHERE id = ? "
+                    + "AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED','EXPIRED')", id);
+        }
+        created.clear();
+    }
 
     @BeforeEach
     void setUp() {
@@ -97,7 +108,9 @@ class ExecutionReconcilerRazorpayTest extends com.mend.integration.AbstractInteg
         intent.setDispatchedAt(dispatchedAt);
         intent.setExecutionAttempts(1);
         intent.setReconcileAfter(Instant.now().minusSeconds(1));
-        return intents.save(intent);
+        intent = intents.save(intent);
+        created.add(intent.getId());
+        return intent;
     }
 
     private static String fixtureBody(String folder, String fixture, ProviderAttemptKey key) throws Exception {

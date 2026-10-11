@@ -27,6 +27,12 @@ import static org.junit.jupiter.api.Assertions.*;
 public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
     @Autowired
+    private com.mend.domain.repository.ReviewQueueRepository reviewQueueRepositoryU9;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplateU9;
+
+    @Autowired
     private ActionIntentService actionIntentService;
 
     @Autowired
@@ -120,6 +126,10 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
         // its independent claim transaction observes production-like data.
         TestTransaction.flagForCommit();
         TestTransaction.end();
+        // Shared database: other merchants' due rows (e.g. other classes' deferred or SAFE_RETRY'd intents) must not be
+        // older in the claim batch than this fixture (same parking pattern as the M2 tests).
+        jdbcTemplateU9.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' "
+                + "WHERE status IN ('READY','SCHEDULED','PENDING') AND merchant_id <> ?", merchantId);
 
         List<ActionIntent> claimed = actionIntentClaimService.claimDueIntents("worker-alpha", 10);
         assertFalse(claimed.isEmpty());
@@ -153,8 +163,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
 
-        assertThrows(ComplianceBlockedException.class, () ->
-                actionIntentService.createActionIntentFromCompliance(merchantId, targetCampaignId));
+        // M2 behaviour change: a MANUAL_REVIEW strategy creates a review item and no intent (returns null) instead of
+        // throwing, see ADR-002 decision 10
+        assertNull(actionIntentService.createActionIntentFromCompliance(merchantId, targetCampaignId));
+        assertTrue(reviewQueueRepositoryU9.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(targetCampaignId,
+                com.mend.domain.enums.ReviewQueueStatus.PENDING).orElseThrow().getReason().startsWith("MANUAL_REVIEW_REQUIRED"));
 
         List<ActionIntent> intents = actionIntentRepository.findByCampaignId(targetCampaignId);
         assertTrue(intents.isEmpty());

@@ -339,7 +339,10 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         // Step 7 (M1 behaviour change): no request outcome may set RECOVERED; the campaign is exhausted, not recovered.
         Campaign finalCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, finalCampaign.getCurrentState());
-        assertEquals(CampaignStatus.EXHAUSTED, finalCampaign.getCurrentState());
+        // M2 behaviour change: a debit that cannot run automatically goes to human review (campaign ELIGIBLE), it no longer
+        // exhausts the campaign, see ADR-002 decision 10
+        assertEquals(CampaignStatus.ELIGIBLE, finalCampaign.getCurrentState());
+        assertNotEquals(CampaignStatus.EXHAUSTED, finalCampaign.getCurrentState());
 
         // Step 8: Revenue Metrics Verification
         AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, null);

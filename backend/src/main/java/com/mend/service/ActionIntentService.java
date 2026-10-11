@@ -41,6 +41,8 @@ public class ActionIntentService {
     private final AuditService auditService;
     private final long defaultRetryDelayMinutes;
     private final ActionIntentTransitions actionIntentTransitions;
+    /** Lazy: HumanApprovalService depends on this service (approval creates the intent). */
+    private final org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService;
 
     public ActionIntentService(
             CampaignRepository campaignRepository,
@@ -49,7 +51,8 @@ public class ActionIntentService {
             ComplianceService complianceService,
             AuditService auditService,
             @Value("${mend.scheduler.default-retry-delay-minutes:15}") long defaultRetryDelayMinutes,
-            ActionIntentTransitions actionIntentTransitions) {
+            ActionIntentTransitions actionIntentTransitions,
+            org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService) {
         this.campaignRepository = campaignRepository;
         this.merchantConfigRepository = merchantConfigRepository;
         this.actionIntentRepository = actionIntentRepository;
@@ -57,10 +60,27 @@ public class ActionIntentService {
         this.auditService = auditService;
         this.defaultRetryDelayMinutes = defaultRetryDelayMinutes;
         this.actionIntentTransitions = actionIntentTransitions;
+        this.humanApprovalService = humanApprovalService;
+    }
+
+    /** True when compliance blocked only because the strategy is MANUAL_REVIEW (a human must decide, ADR-002 decision 10). */
+    public static boolean isManualReviewBlock(ComplianceDecision decision) {
+        return decision != null && decision.isBlocked() && decision.getStrategy() == RecoveryStrategy.MANUAL_REVIEW
+                && decision.getReason() == com.mend.domain.enums.ComplianceReason.STRATEGY_NOT_SUPPORTED;
     }
 
     @Transactional
     public ActionIntent createActionIntentFromCompliance(UUID merchantId, UUID campaignId) {
+        return createActionIntentFromCompliance(merchantId, campaignId, null);
+    }
+
+    /**
+     * {@code approvedStrategyOverride}: M2 U9 / OD-1 — only {@link HumanApprovalService#approveReview} passes it, after a human
+     * approved a MANUAL_REVIEW item (the executed action is then REQUEST_CUSTOMER_ACTION). Compliance is still re-run, for
+     * the override strategy. Without it, a MANUAL_REVIEW strategy creates a review item and no intent (returns null).
+     */
+    @Transactional
+    public ActionIntent createActionIntentFromCompliance(UUID merchantId, UUID campaignId, RecoveryStrategy approvedStrategyOverride) {
         Campaign campaign = campaignRepository.findById(campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
 
@@ -75,7 +95,15 @@ public class ActionIntentService {
         }
 
         // Run Compliance Gate
-        ComplianceDecision complianceDecision = complianceService.evaluateAndPersistCompliance(merchantId, campaignId);
+        ComplianceDecision complianceDecision = complianceService.evaluateAndPersistCompliance(merchantId, campaignId, approvedStrategyOverride);
+        if (approvedStrategyOverride == null && isManualReviewBlock(complianceDecision)) {
+            humanApprovalService.getObject().createReview(merchantId, campaignId,
+                    "MANUAL_REVIEW_REQUIRED: recovery strategy MANUAL_REVIEW needs a human decision; approval issues a payment link");
+            auditService.logEvent(merchantId, campaignId, "MANUAL_REVIEW_ROUTED", "SYSTEM", null,
+                    "strategy=MANUAL_REVIEW compliance_decision=" + complianceDecision.getId() + " intent=none");
+            log.info("Campaign '{}' routed to human review (MANUAL_REVIEW); no Action Intent created", campaignId);
+            return null;
+        }
         if (complianceDecision.isBlocked()) {
             log.info("Action Intent creation blocked for campaign '{}': Compliance status {}", campaignId, complianceDecision.getReason());
             throw new ComplianceBlockedException("Compliance blocked Action Intent creation: " + complianceDecision.getReason() + " - " + complianceDecision.getDetailMessage());

@@ -146,7 +146,10 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
         PaymentExecutionResult report = execute(intent);
 
         assertEquals("AMOUNT_UNRESOLVED", report.getResponseCode());
-        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        // M2 behaviour change: AMOUNT_UNRESOLVED is MEND-side, so the intent is deferred (READY, later), not FAILED, see ADR-002
+        assertEquals(ActionIntentStatus.READY, reload(intent).getStatus());
+        assertNotEquals(CampaignStatus.EXHAUSTED, campaignState());
+        assertTrue(auditTypes().contains("EXECUTION_DEFERRED"));
         assertEquals(0, mockPaymentProvider.getInvocationCount());
     }
 
@@ -159,9 +162,12 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
         PaymentExecutionResult report = execute(intent);
 
         assertEquals(PaymentExecutionStatus.FAILURE, report.getStatus());
-        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
-        assertEquals(CampaignStatus.EXHAUSTED, campaignState());
+        // M2 behaviour change: NotSent is MEND-side and nothing reached the provider: deferred (READY, campaign
+        // ACTION_PENDING), never EXHAUSTED, see ADR-002 decision 10
+        assertEquals(ActionIntentStatus.READY, reload(intent).getStatus());
+        assertEquals(CampaignStatus.ACTION_PENDING, campaignState());
         assertTrue(auditTypes().contains("PROVIDER_REQUEST_NOT_SENT"));
+        assertTrue(auditTypes().contains("EXECUTION_DEFERRED"));
     }
 
     @Test

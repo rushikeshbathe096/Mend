@@ -56,6 +56,16 @@ public class ComplianceService {
 
     @Transactional
     public ComplianceDecision evaluateAndPersistCompliance(UUID merchantId, UUID campaignId) {
+        return evaluateAndPersistCompliance(merchantId, campaignId, null);
+    }
+
+    /**
+     * M2 U9 (OD-1): with {@code strategyOverride} the engine evaluates that strategy instead of the campaign's recovery
+     * decision (used only when a human approved a MANUAL_REVIEW item). Every other rule still runs and the decision is
+     * persisted with the override strategy; the "already evaluated" shortcut applies only to a decision for that strategy.
+     */
+    @Transactional
+    public ComplianceDecision evaluateAndPersistCompliance(UUID merchantId, UUID campaignId, RecoveryStrategy strategyOverride) {
         Campaign campaign = campaignRepository.findById(campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
 
@@ -69,7 +79,8 @@ public class ComplianceService {
                 .findFirstByCampaignIdOrderByEvaluatedAtDesc(campaignId)
                 .orElse(null);
 
-        RecoveryStrategy strategy = recoveryDecisionEntity != null
+        RecoveryStrategy strategy = strategyOverride != null ? strategyOverride
+                : recoveryDecisionEntity != null
                 ? recoveryDecisionEntity.getStrategy()
                 : (campaign.getStrategy() != null ? parseStrategy(campaign.getStrategy()) : null);
 
@@ -80,7 +91,8 @@ public class ComplianceService {
                 .findFirstByCampaignIdOrderByEvaluatedAtDesc(campaignId);
         if (existingComplianceOpt.isPresent()) {
             ComplianceDecisionEntity existingEntity = existingComplianceOpt.get();
-            if (recoveryDecisionId != null && java.util.Objects.equals(existingEntity.getRecoveryDecisionId(), recoveryDecisionId)) {
+            if (recoveryDecisionId != null && java.util.Objects.equals(existingEntity.getRecoveryDecisionId(), recoveryDecisionId)
+                    && (strategyOverride == null || existingEntity.getStrategy() == strategyOverride)) {
                 log.info("Idempotent compliance evaluation: Returning existing ComplianceDecision for campaign '{}'", campaignId);
                 return mapToDecision(existingEntity);
             }

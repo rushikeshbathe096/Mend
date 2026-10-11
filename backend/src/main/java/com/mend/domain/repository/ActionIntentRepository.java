@@ -196,6 +196,22 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                               @Param("responseReference") String responseReference, @Param("completedAt") Instant completedAt,
                               @Param("reconcileAfter") Instant reconcileAfter);
 
+    /**
+     * M2 U9: MEND-side deferral. Only the claim-token holder, only from EXECUTING, and only for outcomes where nothing reached
+     * the provider (the caller's classification): back to READY at {@code scheduledAt}, ownership cleared.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.READY,
+                   a.scheduledAt = :scheduledAt,
+                   a.claimToken = NULL, a.workerId = NULL, a.claimedAt = NULL, a.dispatchedAt = NULL
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING
+               AND a.claimToken = :token
+            """)
+    int deferFromExecuting(@Param("id") UUID id, @Param("token") String token, @Param("scheduledAt") Instant scheduledAt);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
