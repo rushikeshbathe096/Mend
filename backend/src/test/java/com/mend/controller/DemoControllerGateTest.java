@@ -19,4 +19,16 @@ class DemoControllerGateTest extends AbstractIntegrationTest {
     void demoControllerIsAbsentByDefault() {
         assertEquals(0, context.getBeanNamesForType(DemoController.class).length);
     }
+
+    @Test
+    @DisplayName("/api/v1/demo answers 404 (not 500) when the demo is disabled (MVC without the auth filter)")
+    void demoPathIsNotFound() throws Exception {
+        org.springframework.test.web.servlet.MockMvc mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+                .webAppContextSetup((org.springframework.web.context.WebApplicationContext) context).build();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/demo/scenarios"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/demo/trigger-scenario")
+                        .contentType("application/json").content("{\"scenario\":\"LOW_RISK_RETRY\"}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+    }
 }

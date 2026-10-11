@@ -399,6 +399,20 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
         }
         org.junit.jupiter.api.Assertions.assertTrue(steps.stream().noneMatch(step -> step.startsWith("Provider ") || step.startsWith("Authoritative")),
                 "no step narrates a provider event as real: " + steps);
+        for (String scenario : java.util.List.of("LOW_RISK_RETRY", "HIGH_RISK_HUMAN_REVIEW", "CUSTOMER_ACTION", "DUPLICATE_EVENT", "AGENT_FAILURE")) {
+            JsonNode run = runScenarioJson(tokenA, merchantA.getMerchantId(), scenario);
+            org.junit.jupiter.api.Assertions.assertTrue(run.get("simulated").asBoolean(), scenario);
+            org.junit.jupiter.api.Assertions.assertTrue(run.get("message").asText().startsWith("SIMULATED"), scenario);
+            java.util.List<String> runSteps = new java.util.ArrayList<>();
+            run.get("executionSteps").forEach(step -> runSteps.add(step.asText()));
+            org.junit.jupiter.api.Assertions.assertTrue(runSteps.stream().anyMatch(step -> step.startsWith("SIMULATED")), scenario + ": " + runSteps);
+            // The old narration of fabricated inputs as real events must not come back.
+            for (String realSounding : java.util.List.of("Provider webhook ingested", "Six-agent consensus", "Risk agent flagged",
+                    "Customer Engagement agent", "Original webhook delivered", "Duplicate delivery attempt intercepted", "AI service timeout simulated",
+                    "Payment update link issued to the customer")) {
+                org.junit.jupiter.api.Assertions.assertTrue(runSteps.stream().noneMatch(step -> step.startsWith(realSounding)), scenario + ": " + realSounding);
+            }
+        }
 
         MvcResult catalog = mockMvc.perform(get("/api/v1/demo/scenarios")
                 .header("Authorization", "Bearer " + tokenA)

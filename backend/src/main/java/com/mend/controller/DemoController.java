@@ -60,6 +60,8 @@ import java.util.UUID;
 public class DemoController {
 
     static final String SIMULATED = "SIMULATED";
+    /** Source of every webhook row the demo fabricates (real ones are RAZORPAY). */
+    static final String DEMO_SOURCE = "MEND_DEMO_SIMULATED";
 
     private static final Logger log = LoggerFactory.getLogger(DemoController.class);
 
@@ -533,7 +535,8 @@ public class DemoController {
                 mendIntentId != null ? ",\"notes\":{\"mend_intent_id\":\"" + mendIntentId + "\"}" : ""
         );
 
-        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), externalEventId, eventType, "RAZORPAY", payload);
+        // Invariant 3: a fabricated event is never stored as if Razorpay sent it.
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), externalEventId, eventType, DEMO_SOURCE, payload);
         event.setMerchantId(merchantId);
         event.setProcessingStatus(WebhookEventStatus.VERIFIED);
         return event;
