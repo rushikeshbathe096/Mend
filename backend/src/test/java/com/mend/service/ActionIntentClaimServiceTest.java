@@ -137,7 +137,9 @@ public class ActionIntentClaimServiceTest {
         // M2 behaviour change: release is a conditional UPDATE that only applies to undispatched claims, see ADR-002
         verify(repository, times(1)).releaseIfUndispatched(eq(intent.getId()), any(Instant.class));
         verify(repository, never()).save(any());
-        verify(auditService, times(1)).logEvent(any(), any(), eq("STATE_TRANSITION"), eq("SYSTEM"), isNull(), anyString());
+        // M2 behaviour change: the release is audited as CLAIM_RELEASED (M2 §9 failure table), see ADR-002
+        verify(auditService, times(1)).logEvent(any(), any(), eq("CLAIM_RELEASED"), eq("SYSTEM"), isNull(), anyString());
+        verify(auditService, never()).logEvent(any(), any(), eq("STATE_TRANSITION"), any(), any(), anyString());
     }
 
     @Test
