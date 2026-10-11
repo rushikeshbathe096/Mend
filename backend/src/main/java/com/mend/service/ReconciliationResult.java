@@ -10,7 +10,9 @@ public class ReconciliationResult {
         SKIPPED_ALREADY_FINALIZED,
         SKIPPED_UNMATCHED,
         SKIPPED_TENANT_MISMATCH,
-        SKIPPED_UNSUPPORTED_EVENT
+        SKIPPED_UNSUPPORTED_EVENT,
+        /** M2 U8: correlated to a campaign (original payment / subscription) or surfaced for review; handled, never classified. */
+        SKIPPED_CAMPAIGN_LEVEL
     }
 
     private final Status status;
@@ -45,6 +47,10 @@ public class ReconciliationResult {
 
     public static ReconciliationResult tenantMismatch(String msg) {
         return new ReconciliationResult(Status.SKIPPED_TENANT_MISMATCH, msg, null, null, null);
+    }
+
+    public static ReconciliationResult campaignLevel(UUID campaignId, String msg) {
+        return new ReconciliationResult(Status.SKIPPED_CAMPAIGN_LEVEL, msg, null, campaignId, null);
     }
 
     public static ReconciliationResult unsupported(String msg) {

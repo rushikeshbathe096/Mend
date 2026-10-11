@@ -148,6 +148,19 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
 
         // Check if Campaign or Intent is already terminal/finalized (Late Webhook Protection)
         if (campaignStateMachine.isTerminal(campaign.getCurrentState())) {
+            if (Boolean.TRUE.equals(isSuccessEvent) && currentStatus(intent) != ActionIntentStatus.SUCCEEDED) {
+                // Real money on an intent that did not succeed, on a campaign that is over (e.g. the link was paid after the
+                // original payment was captured late, U8): never swallowed — audit and human review (same as the reconciler).
+                String paymentRef = payloadDetails.paymentId() != null ? payloadDetails.paymentId() : event.getExternalEventId();
+                log.warn("event=captured_on_terminal_campaign intent_id={} campaign_id={} campaign_state={} webhook_event_id={}",
+                        intent.getId(), campaign.getId(), campaign.getCurrentState(), event.getId());
+                auditService.logEvent(intent.getMerchantId(), campaign.getId(), "CAPTURED_ON_TERMINAL_CAMPAIGN", "SYSTEM", null,
+                        "intent=" + intent.getId() + " payment=" + paymentRef + " campaign_state=" + campaign.getCurrentState()
+                                + " webhook_event=" + event.getId());
+                humanApprovalService.createReview(intent.getMerchantId(), campaign.getId(), "CAPTURED_ON_TERMINAL_CAMPAIGN: intent "
+                        + intent.getId() + " payment " + paymentRef + " captured while campaign is " + campaign.getCurrentState()
+                        + "; possible double payment, human decision required");
+            }
             log.info("Late webhook received for campaign '{}' which is already in terminal state '{}'. Ignoring reconciliation.",
                     campaign.getId(), campaign.getCurrentState());
             return ReconciliationResult.alreadyFinalized(intent.getId(), campaign.getId(),
@@ -344,7 +357,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                     humanApprovalService.createReview(ids.get(0), ids.get(1), "AMBIGUOUS_PROVIDER_REFERENCE: " + intents.size()
                             + " intents carry provider reference " + reference + "; no state changed; human decision required");
                 });
-        return ReconciliationResult.unsupported("Provider reference " + reference + " matches " + intents.size() + " intents; not applied");
+        return ReconciliationResult.campaignLevel(null, "Provider reference " + reference + " matches " + intents.size() + " intents; not applied");
     }
 
     /**
@@ -358,6 +371,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         Boolean outcome = evidencedOutcome(payload);
         List<Campaign> campaigns = matched.stream()
                 .filter(campaign -> event.getMerchantId().equals(campaign.getMerchantId()))
+                .sorted(java.util.Comparator.comparing(Campaign::getId))   // one lock order for concurrent captures
                 .toList();
         // A captured payment on the subscription may belong to another billing cycle: not evidence for this invoice.
         // The event that created the campaign is not a later capture of it.
@@ -367,7 +381,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         if (!lateCapture) {
             log.info("event=original_payment_event webhook_event_id={} matched_by={} campaigns={} outcome={}",
                     event.getId(), matchedBy, campaigns.size(), outcome == null ? "NONE" : (outcome ? "CAPTURED" : "FAILED"));
-            return ReconciliationResult.unsupported("Campaign-level event (" + matchedBy + "); recovery intents are not changed");
+            return ReconciliationResult.campaignLevel(campaigns.isEmpty() ? null : campaigns.get(0).getId(),
+                    "Campaign-level event (" + matchedBy + "); recovery intents are not changed");
         }
 
         Instant now = Instant.now();
@@ -388,8 +403,12 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                 "Original payment captured late; campaign closed with attribution ORIGINAL_PAYMENT_LATE_CAPTURE");
     }
 
-    /** One campaign, under row locks on the campaign and its intents (no claim or dispatch can slip between read and cancel). */
+    /**
+     * One campaign, under row locks on its intents and then the campaign (no claim or dispatch can slip between read and
+     * cancel). Intents before campaign: the same order as the worker finalize, the reconciler and the webhook intent path.
+     */
     private boolean lateCapture(UUID campaignId, String paymentId, WebhookEvent event, Instant now) {
+        List<ActionIntent> campaignIntents = actionIntentRepository.findByCampaignIdForUpdate(campaignId);
         Campaign campaign = campaignRepository.findByIdForUpdate(campaignId).orElseThrow();
         CampaignStatus state = campaign.getCurrentState();
         if (campaignStateMachine.isTerminal(state)) {
@@ -400,7 +419,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         }
 
         List<String> possiblyLive = new ArrayList<>();
-        for (ActionIntent intent : actionIntentRepository.findByCampaignIdForUpdate(campaignId)) {
+        for (ActionIntent intent : campaignIntents) {
             ActionIntentStatus status = intent.getStatus();
             if (!transitions.cancelNonTerminal(intent.getId(), now)) {
                 continue;   // already terminal
