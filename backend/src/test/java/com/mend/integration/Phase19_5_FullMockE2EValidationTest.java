@@ -277,8 +277,14 @@ public class Phase19_5_FullMockE2EValidationTest {
         // Validate Analytics Service Returns Matching Metrics
         AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, null);
         assertEquals(1, analytics.getTotalCampaigns());
-        assertEquals(1, analytics.getRecoveredCampaigns());
-        assertEquals(100.0, analytics.getRecoveryRate());
+        // cleanup behaviour change: a SYNTHETIC mock capture sets no recovery_attribution, so analytics reports it as
+        // "attribution unknown", not as recovered by MEND (Group 4, docs/audit/cleanup-report.md); was 1 and 100.0.
+        assertEquals(0, analytics.getRecoveredCampaigns());
+        assertEquals(0.0, analytics.getRecoveryRate());
+        assertEquals(1, analytics.getRecoveredAttributionUnknownCount());
+        assertEquals(0, amountAtRisk.compareTo(analytics.getAmountRecoveredAttributionUnknown()));
+        assertEquals(0, amountAtRisk.compareTo(analytics.getRevenueAtRisk()));
+        assertEquals(0, analytics.getAmountUnknownCount());
 
         // Validate Audit Log Entries
         List<AuditLog> auditLogs = auditLogRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId);

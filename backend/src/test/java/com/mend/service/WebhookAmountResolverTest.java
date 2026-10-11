@@ -102,14 +102,29 @@ class WebhookAmountResolverTest {
         stored("{\"amount\":49900,\"currency\":\"INR\"}");
         assertEquals(Optional.of(new BigDecimal("499.00")), resolver.resolveAmount(MERCHANT, PAYMENT_ID));
 
+        // cleanup behaviour change: the display amount is derived from the strict minor-unit parser (Group 4,
+        // docs/audit/cleanup-report.md); a string amount with no currency was shown as 1.00 and is now unknown.
         stored("{\"amount\":\"100\"}");
-        assertEquals(Optional.of(new BigDecimal("1.00")), resolver.resolveAmount(MERCHANT, PAYMENT_ID));
+        assertTrue(resolver.resolveAmount(MERCHANT, PAYMENT_ID).isEmpty());
 
         stored("{\"currency\":\"INR\"}");
         assertTrue(resolver.resolveAmount(MERCHANT, PAYMENT_ID).isEmpty());
 
+        // cleanup behaviour change: a fractional minor-unit amount was truncated to 1.00 and is now unknown (Group 4).
         stored("{\"amount\":100.5}");
-        assertEquals(Optional.of(new BigDecimal("1.00")), resolver.resolveAmount(MERCHANT, PAYMENT_ID));
+        assertTrue(resolver.resolveAmount(MERCHANT, PAYMENT_ID).isEmpty());
+    }
+
+    @Test
+    void resolveAmountIsEmptyWheneverTheStrictAmountIsEmpty() {
+        for (String payload : new String[]{"{\"amount\":49900}", "{\"amount\":49900,\"currency\":\"USD\"}",
+                "{\"amount\":0,\"currency\":\"INR\"}", "{\"amount\":-100,\"currency\":\"INR\"}", "{\"amount\":100.5,\"currency\":\"INR\"}"}) {
+            stored(payload);
+            assertTrue(resolver.resolveOriginalAmount(MERCHANT, PAYMENT_ID).isEmpty(), payload);
+            assertTrue(resolver.resolveAmount(MERCHANT, PAYMENT_ID).isEmpty(), payload);
+        }
+        stored("{\"amount\":1,\"currency\":\"INR\"}");
+        assertEquals(Optional.of(new BigDecimal("0.01")), resolver.resolveAmount(MERCHANT, PAYMENT_ID));
     }
 
     @Test

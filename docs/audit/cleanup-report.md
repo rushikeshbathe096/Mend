@@ -12,7 +12,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | — | `ec78300` | test: capture evidence on randomizedInvoiceRaces timeout |
 | — | `3482f6e` | test: fix randomizedInvoiceRaces observer busy-poll |
 | 2 | `f5892e0` | cleanup: remove unused repository methods |
-| 3 | (this commit) | cleanup: shared payment-link id helper |
+| 3 | `572b717` | cleanup: shared payment-link id helper |
+| 4 | (this commit) | fix: honest amounts in analytics |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -113,3 +114,43 @@ Removed (audit item 2): `ActionIntentRepository.findDueIntents`, `AuditLogReposi
 - `ExecutionReconciler.reconcileAwaitingPayment` and `DefaultPaymentReconciliationService` (2 call sites; its private `isPaymentLinkReference` is removed) use it. `grep -rn 'startsWith("plink_")' backend/src/main` → none left.
 - New test `PaymentLinkSnapshotTest.isLinkIdAcceptsOnlyPaymentLinkIds` (null, empty, `pay_`, upper case, attempt key → false).
 - Tests: `./mvnw test` → `[INFO] Tests run: 655, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 2730759722708; +1 = the new test).
+
+## Group 4: honest amounts in analytics (invariants 1 and 3)
+
+**Amounts.**
+- `WebhookAmountResolver.extractMoneyMinor` (the strict M1 rule: positive integral minor units + supported currency) is now the only amount parser.
+- `resolveAmount` (the `BigDecimal` display path for `PaymentController`, `CustomerController`, `HumanApprovalService`) is `resolveOriginalAmount(...).map(toDisplay)`: an exact paise→rupees conversion (`BigDecimal.valueOf(minor, 2)`), empty under the same conditions as the strict parser.
+- The lenient `extractAmountFromWebhook` (any `asLong`, no currency check) is deleted. Its only caller was `resolveAmount`.
+- `AnalyticsQueryService` no longer parses payloads itself; its copy, with the fabricated `1000.00` default, is deleted. It sums `long` minor units exactly (`Math.addExact`) and converts to display only at the DTO.
+- A campaign with no resolvable amount (missing, non-integral, unsupported currency, no webhook) is left out of every sum and counted in the new `amountUnknownCount` (overview, per failure class, per strategy).
+
+**Attribution.** Every "recovered" metric now means recovered by MEND (`recovery_attribution = MEND`):
+- covered: `recoveredCampaigns`, `successfulRecoveries`, `recoveryRate`, `amountRecovered`; per-class and per-strategy recovered counts, revenue and rates; `recoveryRateByStrategy` / `ByFailureClass`; and the funnel's `RECOVERED` stage
+- reported separately: `recoveredLateCaptureCount` + `amountRecoveredLateCapture` (`ORIGINAL_PAYMENT_LATE_CAPTURE`), and `recoveredAttributionUnknownCount` + `amountRecoveredAttributionUnknown` (NULL on RECOVERED rows from before V15)
+- `amountRemainingAtRisk` is the exact sum over campaigns not in RECOVERED
+- `statusBreakdown` still counts states, so it shows every RECOVERED row
+
+**API shape.** Money fields in `AnalyticsOverviewDto`, `AnalyticsFailureBreakdownDto` and `AnalyticsStrategyPerformanceDto` changed type from `double` to `BigDecimal`, with the same JSON names and the same unit (rupees). This matches the existing display fields from `resolveAmount`. The frontend reads them unchanged. The new fields are additive.
+
+**`double` / `float` left in main (grep gate), all non-money:**
+- recovery / success / conversion percentages (`recoveryRate`, `recoveryRateBy*`, `*RatePercent`, `AnalyticsQueryService.percent` / `roundTwoDecimals`)
+- `OperationalHealthDto.aiFallbackRate`
+- AI confidence averaging (`AnalyticsQueryService` 265–285)
+- `averageAttemptsPerCampaign`
+- the `PageResponse` page count
+- the string literal "possible double payment" in `DefaultPaymentReconciliationService`
+
+**Jackson 2.** `com.fasterxml.jackson.core:jackson-databind` moved to `<scope>test</scope>`. Main compiles without it (`./mvnw compile`, BUILD SUCCESS). It can't be removed entirely: 4 test classes still use its `ObjectMapper` (`AiAgentIntegrationTest`, `Phase19_5_FullMockE2EValidationTest`, `Phase20_RazorpayTestModeE2EValidationTest`, `RazorpayTestModeEndToEndIntegrationTest`). `jackson-annotations` (used by the Razorpay DTOs and by Jackson 3) stays at compile scope.
+
+**Consequence to know.** The SYNTHETIC mock capture path (`ActionExecutionService`, mock provider only) moves a campaign to RECOVERED without setting an attribution. Mock-mode/demo dashboards therefore show those recoveries as "attribution unknown", not as recovered by MEND. That is correct under invariant 3, since a synthetic capture is not provider evidence. The execution path is not changed here.
+
+**Tests**
+- Changed assertions, each marked `// cleanup behaviour change: …`:
+  - `WebhookAmountResolverTest.existingResolveAmountResultsAreUnchanged`: `"100"` without currency and `100.5` were shown as `1.00`; both are now empty.
+  - `AnalyticsObservabilityIntegrationTest.testAnalyticsOverviewMetrics`: the legacy RECOVERED row is attribution-unknown (recovered 1→0, rate 50.0→0.0); revenue at risk was `> 0` only from the 1000.00 default and is now `0.00` with `amountUnknownCount = 2`.
+  - `Phase19_5_FullMockE2EValidationTest` Scenario A: the synthetic recovery is attribution-unknown (recovered 1→0, rate 100.0→0.0); its ₹500.00 is asserted exactly in `amountRecoveredAttributionUnknown` and `revenueAtRisk`.
+- New regression tests:
+  - `AnalyticsAmountAndAttributionIntegrationTest.missingAmountNeverProducesANumber`
+  - `…lateCaptureIsNotCountedAsMend` (also covers NULL attribution, per-class, per-strategy, recovery rates and the funnel)
+  - `WebhookAmountResolverTest.resolveAmountIsEmptyWheneverTheStrictAmountIsEmpty`
+- `./mvnw test` → `[INFO] Tests run: 658, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 3250871087065; +3 = the new tests).

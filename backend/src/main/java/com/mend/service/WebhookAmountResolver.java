@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -32,13 +31,22 @@ public class WebhookAmountResolver {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * Display amount (major units, scale 2) derived from {@link #resolveOriginalAmount}; empty under exactly the same
+     * conditions, never a lenient or default value.
+     */
     public Optional<BigDecimal> resolveAmount(UUID merchantId, String paymentId) {
-        if (merchantId == null || paymentId == null || paymentId.isBlank()) {
-            return Optional.empty();
-        }
-        return webhookEventRepository.findByMerchantIdAndExternalEventId(merchantId, paymentId)
-                .map(this::extractAmountFromWebhook)
-                .filter(amount -> amount != null && amount.signum() > 0);
+        return resolveOriginalAmount(merchantId, paymentId).map(WebhookAmountResolver::toDisplay);
+    }
+
+    /** Minor units to the major-unit display value (paise to rupees, scale 2). Exact: no floating point. */
+    public static BigDecimal toDisplay(MoneyMinor amount) {
+        return toDisplay(amount.amountMinor());
+    }
+
+    /** A sum of minor units to the major-unit display value (scale 2). */
+    public static BigDecimal toDisplay(long amountMinor) {
+        return BigDecimal.valueOf(amountMinor, 2);
     }
 
     /**
@@ -55,24 +63,10 @@ public class WebhookAmountResolver {
     }
 
     /**
-     * Fallback lookup without tenant scoping is intentionally avoided; amounts are
-     * always resolved within the merchant's own event history.
+     * Original payment amount of one stored webhook (the strict rule of {@link #resolveOriginalAmount}): a positive
+     * integral minor-unit amount with a supported currency, otherwise empty.
      */
-    public BigDecimal extractAmountFromWebhook(WebhookEvent event) {
-        try {
-            JsonNode paymentNode = paymentEntity(event);
-            if (paymentNode != null && paymentNode.has("amount") && !paymentNode.get("amount").isNull()) {
-                long amountInPaise = paymentNode.get("amount").asLong();
-                return BigDecimal.valueOf(amountInPaise)
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-            }
-        } catch (Exception e) {
-            log.trace("Error parsing webhook payload amount: {}", e.getMessage());
-        }
-        return null;
-    }
-
-    private Optional<MoneyMinor> extractMoneyMinor(WebhookEvent event) {
+    public Optional<MoneyMinor> extractMoneyMinor(WebhookEvent event) {
         try {
             JsonNode paymentNode = paymentEntity(event);
             if (paymentNode == null) {

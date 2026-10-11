@@ -36,9 +36,11 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!-- Jackson 2: test-only (4 integration tests use its ObjectMapper); main uses Jackson 3 (tools.jackson). -->
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
+			<scope>test</scope>
 		</dependency>
 
 		<!-- Database - JPA and PostgreSQL -->
