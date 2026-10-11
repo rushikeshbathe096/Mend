@@ -49,10 +49,19 @@ import java.util.UUID;
  * Nothing here grants the frontend direct provider access, bypasses compliance,
  * or fabricates metrics: each scenario returns the authoritative campaign/review
  * identifiers produced by the real pipeline.
+ * <p>
+ * Pre-M3 hygiene: the inputs are fabricated (webhooks, classifications, agent decisions, the customer's payment, timeouts),
+ * so every such step is labelled {@value #SIMULATED} in the narration, the stored reasons and the response. The controller
+ * exists only when {@code mend.demo.enabled=true} (default false; true in the dev profile).
  */
 @RestController
 @RequestMapping("/api/v1/demo")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "mend.demo.enabled", havingValue = "true")
 public class DemoController {
+
+    static final String SIMULATED = "SIMULATED";
+    /** Source of every webhook row the demo fabricates (real ones are RAZORPAY). */
+    static final String DEMO_SOURCE = "MEND_DEMO_SIMULATED";
 
     private static final Logger log = LoggerFactory.getLogger(DemoController.class);
 
@@ -68,6 +77,8 @@ public class DemoController {
     private final AuditService auditService;
     private final com.mend.service.ActionIntentClaimService actionIntentClaimService;
     private final com.mend.service.ActionIntentTransitions actionIntentTransitions;
+    /** {@code mock}: provider calls are SIMULATED; {@code razorpay}: they reach Razorpay (test mode) and are labelled so. */
+    private final String providerMode;
 
     public DemoController(
             CampaignLifecycleService campaignLifecycleService,
@@ -81,7 +92,8 @@ public class DemoController {
             WebhookEventRepository webhookEventRepository,
             AuditService auditService,
             com.mend.service.ActionIntentClaimService actionIntentClaimService,
-            com.mend.service.ActionIntentTransitions actionIntentTransitions) {
+            com.mend.service.ActionIntentTransitions actionIntentTransitions,
+            @org.springframework.beans.factory.annotation.Value("${mend.payment.provider:mock}") String providerMode) {
         this.campaignLifecycleService = campaignLifecycleService;
         this.actionIntentService = actionIntentService;
         this.actionExecutionService = actionExecutionService;
@@ -94,6 +106,18 @@ public class DemoController {
         this.auditService = auditService;
         this.actionIntentClaimService = actionIntentClaimService;
         this.actionIntentTransitions = actionIntentTransitions;
+        this.providerMode = providerMode;
+    }
+
+    /** A fabricated step (no real provider, customer, AI or webhook source behind it). */
+    private static String simulated(String text) {
+        return SIMULATED + ": " + text;
+    }
+
+    private String providerStep(String text) {
+        return "mock".equalsIgnoreCase(providerMode)
+                ? simulated(text + " (mock provider: no provider request, no money moves)")
+                : text + " (provider mode " + providerMode + ": a real provider request in Razorpay test mode)";
     }
 
     public static class DemoTriggerRequest {
@@ -114,8 +138,12 @@ public class DemoController {
         private String message;
         private CampaignStatus finalCampaignState;
         private List<String> executionSteps;
+        /** Always true: every scenario runs on fabricated inputs. */
+        private final boolean simulated = true;
 
         public DemoTriggerResponse() { }
+
+        public boolean isSimulated() { return simulated; }
 
         public String getScenario() { return scenario; }
         public void setScenario(String scenario) { this.scenario = scenario; }
@@ -132,7 +160,7 @@ public class DemoController {
         public BigDecimal getAmount() { return amount; }
         public void setAmount(BigDecimal amount) { this.amount = amount; }
         public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
+        public void setMessage(String message) { this.message = message == null || message.startsWith(SIMULATED) ? message : SIMULATED + " demo: " + message; }
         public CampaignStatus getFinalCampaignState() { return finalCampaignState; }
         public void setFinalCampaignState(CampaignStatus finalCampaignState) { this.finalCampaignState = finalCampaignState; }
         public List<String> getExecutionSteps() { return executionSteps; }
@@ -196,7 +224,7 @@ public class DemoController {
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
                 false, "Transient failure detected with high classification confidence; automated retry is safe.", "AUTO_APPROVED");
 
-        steps.add("Six-agent consensus: LOW risk, proposed action RETRY_PAYMENT (confidence 95%).");
+        steps.add(simulated("six-agent consensus (fixed demo values, no AI call): LOW risk, proposed action RETRY_PAYMENT (confidence 95%)."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(), "Action intent " + intent.getId() + " created after compliance approval");
         steps.add("Compliance engine ALLOWED; ActionIntent " + intent.getId() + " created for attempt #" + intent.getAttemptNumber() + ".");
@@ -222,18 +250,18 @@ public class DemoController {
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
                 true, "High-value transaction (₹72,000) exceeds the merchant automated-retry threshold and the customer has prior dispute history; merchant confirmation required before execution.", "REVIEW_REQUIRED");
 
-        steps.add("Risk agent flagged HIGH risk; supervisor consensus REVIEW_REQUIRED with proposed action RETRY_PAYMENT.");
-        steps.add("Compliance strategy is executable but gated on merchant approval - no ActionIntent created yet.");
+        steps.add(simulated("risk agent flagged HIGH risk (fixed demo values, no AI call); supervisor consensus REVIEW_REQUIRED with proposed action RETRY_PAYMENT."));
+        steps.add(simulated("agent gate: executable strategy held for merchant approval - no ActionIntent created yet."));
 
         ReviewQueue review = humanApprovalService.createReview(
                 merchantId, setup.campaignId(),
-                "High-value recovery (₹72,000) requires merchant human approval before execution.");
+                simulated("high-value recovery (₹72,000) requires merchant human approval before execution (demo review)."));
         response.setReviewId(review.getId());
         steps.add("Campaign routed to the merchant human-approval queue (review " + review.getId() + ", status "
                 + review.getStatus() + "). Open Recovery Actions -> Waiting for Approval to decide.");
 
         auditService.logEvent(merchantId, setup.campaignId(), "DEMO_SCENARIO_TRIGGERED", "USER", null,
-                "Demo scenario HIGH_RISK_HUMAN_REVIEW prepared campaign " + setup.campaignId() + " for merchant review");
+                simulated("demo scenario HIGH_RISK_HUMAN_REVIEW prepared campaign " + setup.campaignId() + " for merchant review"));
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
@@ -254,10 +282,10 @@ public class DemoController {
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "REQUEST_CUSTOMER_ACTION", "CUSTOMER_ACTION_REQUIRED",
                 false, "Card expired; a customer action (card update / payment link) is required instead of an automated retry.", "AUTHORIZED");
 
-        steps.add("Customer Engagement agent recommended a payment-update link (REQUEST_CUSTOMER_ACTION).");
+        steps.add(simulated("Customer Engagement agent recommended a payment-update link (fixed demo values, no AI call)."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
-                "Payment link dispatched for customer action (intent " + intent.getId() + ")");
+                simulated("payment link requested for customer action (intent " + intent.getId() + ")"));
         steps.add("Compliance ALLOWED and ActionIntent " + intent.getId() + " created.");
         // M2: execute through the real claim + executor; the mock provider issues a (SYNTHETIC) payment link -> AWAITING_PAYMENT.
         claimAndExecute(merchantId, intent, response, steps);
@@ -265,9 +293,9 @@ public class DemoController {
         if (linkState != ActionIntentStatus.AWAITING_PAYMENT) {
             throw new IllegalStateException("Demo payment link was not issued; intent is " + linkState);
         }
-        steps.add("Payment update link issued to the customer (intent " + linkState + ").");
+        steps.add(providerStep("payment update link issued (intent " + linkState + "); no customer is notified by the demo"));
 
-        steps.add("Simulating the customer completing payment: a payment.captured webhook for the link payment is delivered through the real reconciliation service.");
+        steps.add(simulated("the customer completing payment: a fabricated payment.captured webhook is delivered to the real reconciliation service."));
         String capturedEventId = "evt_" + UUID.randomUUID();
         reconcileCapturedPayment(merchantId, setup.campaignId(), setup.paymentId(), intent.getId(), capturedEventId, amount, response, steps);
 
@@ -292,7 +320,7 @@ public class DemoController {
 
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
-                "Retry dispatched toward the provider; response window open (intent " + intent.getId() + ")");
+                simulated("retry requested; response window open (intent " + intent.getId() + ")"));
 
         ActionIntent claimed = actionIntentClaimService.claimSpecificIntent(intent.getId(), "demo-worker")
                 .orElseThrow(() -> new IllegalStateException("Demo intent " + intent.getId() + " could not be claimed"));
@@ -304,15 +332,15 @@ public class DemoController {
             throw new IllegalStateException("Demo dispatch was not applied for intent " + claimed.getId());
         }
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXECUTING,
-                "Provider execution in flight with ambiguous outcome; awaiting reconciliation", "SYSTEM", null);
+                simulated("provider execution with ambiguous outcome (no provider request made); awaiting reconciliation"), "SYSTEM", null);
         if (!actionIntentTransitions.finalizeFromExecuting(claimed.getId(), claimed.getClaimToken(), ActionIntentStatus.NEEDS_RECONCILIATION,
                 null, null, now)) {
             throw new IllegalStateException("Demo unknown outcome was not recorded for intent " + claimed.getId());
         }
-        steps.add("ActionIntent " + intent.getId() + " claimed and dispatch recorded (simulated provider call).");
-        steps.add("Provider response timed out - execution state is UNKNOWN (NEEDS_RECONCILIATION). No terminal state assumed.");
+        steps.add("ActionIntent " + intent.getId() + " claimed and dispatch recorded; " + simulated("provider call - NO provider request was made."));
+        steps.add(simulated("provider timeout - execution state recorded as UNKNOWN (NEEDS_RECONCILIATION). No terminal state assumed."));
 
-        steps.add("Authoritative provider event arrives: reconciling via DefaultPaymentReconciliationService.");
+        steps.add(simulated("provider event: a fabricated payment.captured webhook is reconciled by the real DefaultPaymentReconciliationService."));
         String capturedEventId = "evt_" + UUID.randomUUID();
         reconcileCapturedPayment(merchantId, setup.campaignId(), setup.paymentId(), intent.getId(), capturedEventId, amount, response, steps);
 
@@ -334,10 +362,10 @@ public class DemoController {
                 new BigDecimal("8999.00"), "failed", "bank timeout");
 
         webhookEventRepository.saveAndFlush(original);
-        steps.add("Original webhook delivered and persisted (external_event_id=" + externalEventId + ").");
+        steps.add(simulated("webhook delivery: a fabricated event was persisted (external_event_id=" + externalEventId + ")."));
 
         boolean duplicateFound = webhookEventRepository.findByMerchantIdAndExternalEventId(merchantId, externalEventId).isPresent();
-        steps.add("Duplicate delivery attempt intercepted: event already present = " + duplicateFound + ".");
+        steps.add(simulated("duplicate delivery: no second request was sent; the stored event was looked up by external_event_id (found = " + duplicateFound + ")."));
         if (!duplicateFound) {
             throw new IllegalStateException("Deduplication check failed to detect the original event");
         }
@@ -346,8 +374,8 @@ public class DemoController {
                 .filter(e -> externalEventId.equals(e.getExternalEventId()))
                 .count();
         auditService.logEvent(merchantId, null, "DUPLICATE_EVENT_INTERCEPTED", "SYSTEM", null,
-                "Duplicate webhook delivery for event " + externalEventId + " intercepted; stored copy count = " + stored);
-        steps.add("Duplicate was NOT persisted: " + stored + " stored copy -> one business event, one recovery path.");
+                simulated("duplicate webhook delivery for event " + externalEventId + " (looked up, not re-sent); stored copy count = " + stored));
+        steps.add(stored + " stored copy for that external_event_id (unique index) -> one business event, one recovery path.");
 
         response.setPaymentId(paymentId);
         response.setFinalCampaignState(null);
@@ -365,11 +393,11 @@ public class DemoController {
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "MANUAL_REVIEW", "FALLBACK_STRATEGY",
                 false, "AI/MCP execution unavailable; deterministic heuristic fallback applied. Low confidence (40%) and unknown failure class mean no automated action is safe.", "SAFE_FALLBACK");
 
-        steps.add("AI service timeout simulated. Heuristic fallback produced a safe decision: no automated retry.");
+        steps.add(simulated("AI service timeout (no AI call was made); heuristic fallback decision: no automated retry."));
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXHAUSTED,
-                "Deterministic fallback: UNKNOWN classification at 40% confidence is not eligible for automated recovery",
+                simulated("deterministic fallback: UNKNOWN classification at 40% confidence is not eligible for automated recovery"),
                 "SYSTEM", null);
-        steps.add("Campaign closed deterministically as EXHAUSTED - no payment action was taken.");
+        steps.add("Campaign set to EXHAUSTED by the demo's " + simulated("fallback decision") + " - no payment action was taken.");
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
@@ -407,8 +435,8 @@ public class DemoController {
         WebhookEvent event = buildWebhookEvent(merchantId, paymentId, "payment.failed", paymentId,
                 amount, "failed", failureClass.toLowerCase());
         webhookEventRepository.saveAndFlush(event);
-        steps.add("Provider webhook ingested for failed payment " + paymentId + " (₹"
-                + amount.toPlainString() + ").");
+        steps.add(simulated("failed-payment webhook (fabricated, not from Razorpay) persisted for " + paymentId + " (₹"
+                + amount.toPlainString() + ")."));
 
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, customerIdHash, null);
         campaign.setFailureClass(failureClass);
@@ -419,13 +447,13 @@ public class DemoController {
         campaignRepository.saveAndFlush(campaign);
 
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED,
-                "AI classification attached: " + failureClass + " (confidence " + confidence + ")", "SYSTEM", null);
-        steps.add("Failure classified as " + failureClass + " (confidence " + confidence + "%).");
+                simulated("classification attached: " + failureClass + " (confidence " + confidence + ")"), "SYSTEM", null);
+        steps.add(simulated("classification " + failureClass + " (confidence " + confidence + ", fixed demo values, no AI call)."));
 
         if (moveToEligible) {
             campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE,
-                    "Campaign eligible for recovery evaluation", "SYSTEM", null);
-            steps.add("Campaign " + campaign.getId() + " evaluated as ELIGIBLE for recovery.");
+                    simulated("campaign eligible for recovery evaluation (demo)"), "SYSTEM", null);
+            steps.add("Campaign " + campaign.getId() + " moved to ELIGIBLE by the demo (" + simulated("eligibility, no strategy evaluation") + ").");
         }
 
         response.setPaymentId(paymentId);
@@ -445,8 +473,8 @@ public class DemoController {
         record.setDecision(decision);
         record.setSelectedAction(selectedAction);
         record.setConfidence(BigDecimal.valueOf(0.90));
-        record.setReasoning(reason);
-        record.setEvidence("Structured agent summary: risk, proposed action and strategy consensus");
+        record.setReasoning(simulated(reason));
+        record.setEvidence(simulated("fixed demo agent summary; no agent or AI call was made"));
         record.setRequiresHumanApproval(humanReview);
         record.setComplianceStatus("ALLOWED");
         record.setExecutionStatus(executionStatus);
@@ -454,7 +482,7 @@ public class DemoController {
         agentDecisionRecordRepository.saveAndFlush(record);
 
         auditService.logEvent(merchantId, campaignId, "AGENT_DECISION_MADE", "AGENT", null,
-                "Decision=" + decision + ", Reason: " + reason);
+                simulated("Decision=" + decision + ", Reason: " + reason));
     }
 
     private void transitionToActionPending(UUID merchantId, UUID campaignId, String reason) {
@@ -468,7 +496,8 @@ public class DemoController {
             steps.add("Claim not acquired (intent not claimable or owned by another worker); left to the scheduler.");
             return;
         }
-        steps.add("Scheduler claim acquired (worker demo-worker); executing through the provider boundary...");
+        steps.add("Claim acquired through the real atomic claim (worker demo-worker); executing through the provider boundary: "
+                + providerStep("provider call"));
         actionExecutionService.executeActionIntent(intent.getId(), "demo-worker", claimed.get().getClaimToken());
     }
 
@@ -487,7 +516,7 @@ public class DemoController {
             throw new IllegalStateException("Reconciliation did not resolve the payment: " + result.getMessage());
         }
         auditService.logEvent(merchantId, campaignId, "DEMO_RECONCILED", "SYSTEM", null,
-                "Demo captured-event reconciliation completed for payment " + paymentId);
+                simulated("captured-event reconciliation completed for payment " + paymentId));
     }
 
     private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
@@ -506,7 +535,8 @@ public class DemoController {
                 mendIntentId != null ? ",\"notes\":{\"mend_intent_id\":\"" + mendIntentId + "\"}" : ""
         );
 
-        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), externalEventId, eventType, "RAZORPAY", payload);
+        // Invariant 3: a fabricated event is never stored as if Razorpay sent it.
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), externalEventId, eventType, DEMO_SOURCE, payload);
         event.setMerchantId(merchantId);
         event.setProcessingStatus(WebhookEventStatus.VERIFIED);
         return event;
