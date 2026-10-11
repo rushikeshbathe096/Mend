@@ -275,3 +275,25 @@ Tests after fixes: `Tests run: 615, Failures: 0, Errors: 0, Skipped: 1`.
 4. U8 uses migration **V15** (V14 is taken by the key rule above).
 2. The concurrency matrix reuses `BlockingPaymentProvider`, the SQL time travel and the reconciler `runCycle`. Each new test parks other classes' reconcile/EXECUTING rows the same way.
 3. Run the full suite 3× for flakes (Phase5 Redis test watched since U4).
+
+## U7 — M2 exit tests (brief §19, §35, §49)
+Built: `M2ExitCriteriaTest` (5): §19 exactly; zero duplicate debits (RETRY_PAYMENT, synthetic debit Unknown → never SAFE_RETRY'd → FAILED + `AMBIGUOUS_DEBIT` review, debit count 1); three schedulers + the manual startRecovery path on two campaigns sharing an invoice, one latch, a 4th observer thread; crash after dispatch → stuck sweep → reconcile → SUCCEEDED within K=3 cycles; 200 seeded randomized races (random release order and provider outcome, seed printed, `-Dm2.exit.seed` to replay). `BlockingPaymentProvider` also holds/counts the synthetic debit. No production changes.
+Hard stop check: no `@Disabled("M2-RED…")` remained at the start (grep). Commit `3f656d6` carries the U7 tests under the message "updated design" (rewording was not permitted in this session; content is U7).
+First full runs (before review fixes): 3 × `Tests run: 620, Failures: 0, Errors: 7, Skipped: 1` — `RedisWebhookEventConsumerTest` (4) and `ClassificationServiceTest` (3) failed to load a context: `FATAL: sorry, too many clients already`. Cause: `M2ExitCriteriaTest` started a 10th application context (10 Hikari pools × 10 + Flyway > `max_connections` 100). It had the same `@Import`/`@MockitoBean` as `ExecutionSafetyScenarioTest`, but the config was a static nested `@TestConfiguration` of that class, which makes it part of the enclosing class's context key.
+Review (fresh subagent): 0 blockers. Fixed in `M2 U7: review fixes`:
+- (context) `BlockingProviderConfig` moved to a top-level test class; the three M2 classes `@Import` it. Verified: `ExecutionSafetyScenarioTest` + `M2ExitCriteriaTest` now start one context (9 contexts in the suite again).
+- MAJOR "distinct resources ≤ 1" was per key (`isFound ? 1 : 0`, never > 1) → counts provider links per **invoice** (x and y) ≤ 1.
+- MAJOR the race asserted nothing ran → asserts ≥ 1 send, and for SUCCESS / UNKNOWN / LOST_RESPONSE exactly one in-flight intent (AWAITING_PAYMENT / NEEDS_RECONCILIATION) and one READY sibling.
+- MAJOR SAFE_RETRY resends were not counted → after the race the provider recovers, rows are time-travelled past the NotFound grace, one reconciler cycle + one poll run; per key `create calls − SAFE_RETRY resends ≤ 1`, resends ≤ 1 and only for UNKNOWN; UNKNOWN ⇒ exactly 1 resend, LOST_RESPONSE ⇒ adopted (AWAITING_PAYMENT, no resend). Crash-after-dispatch asserts exactly 1 SAFE_RETRY and 1 create call (was ≤ 1).
+  - While adding this the check failed on seed `1290251303765` (UNKNOWN, 0 resends): the reconciler correctly defers a NotFound inside `notFoundGrace` (§7). Test fix (time travel), not a production bug; that seed passes now.
+- MINOR `join` swallowed worker crashes → fails the test with the cause.
+- MINOR random release order was effectively simultaneous → < 0.5 ms `parkNanos` head start per gate.
+- MINOR leaked rows → cleanup also closes own campaigns (CANCELLED), PENDING review items (CLOSED) and VERIFIED webhook events (PROCESSED).
+- NIT §19 asserts the intent is still EXECUTING right after lease release (invariant 13). NIT observer limits documented (the DB index is the guarantee).
+Not changed:
+- MINOR manual path stubs the orchestrator to return x's existing intent, so it competes on the claim only. A READY sibling for the same invoice (y) already exists in every race, and creation of a READY sibling is allowed by design (the index covers in-flight states only), so a third creation adds no coverage of the guarantee. Recorded as a deviation.
+- `parkOtherRows` rewriting other classes' schedule columns: same pattern as the U3–U6 tests (U7 adaptation 2); needs an isolated test DB (out-of-scope finding, see U6).
+**Acceptance — three consecutive full-suite runs after fixes:**
+1. `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1` (seed 1420547556647)
+2. `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1` (seed 1485673403837)
+3. `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1` (seed 1541887455792)
