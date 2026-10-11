@@ -18,5 +18,4 @@ public interface ClassificationResultRepository extends JpaRepository<Classifica
 
     Optional<ClassificationResult> findByEventId(UUID eventId);
 
-    boolean existsByEventId(UUID eventId);
 }

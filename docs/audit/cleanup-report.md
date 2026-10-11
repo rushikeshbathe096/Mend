@@ -10,7 +10,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 |---|---|---|
 | 1 | `f4526cc` | cleanup: remove unused enums |
 | — | `ec78300` | test: capture evidence on randomizedInvoiceRaces timeout |
-| — | (next) | test: fix randomizedInvoiceRaces observer busy-poll |
+| — | `3482f6e` | test: fix randomizedInvoiceRaces observer busy-poll |
+| 2 | (this commit) | cleanup: remove unused repository methods |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -92,3 +93,15 @@ Post-fix verification (`./mvnw test`, Group 2 stashed, so the fix alone):
 | 3 | 2349090276975 | `[INFO] Tests run: 654, Failures: 0, Errors: 0, Skipped: 0` |
 
 No evidence file was written. Observer queries for the whole class (both race tests, 201 races) in run 3: 1 865, down from ≈ 65 000 for the randomized test alone before the fix.
+
+## Group 2: remove unused repository methods
+
+Removed (audit item 2): `ActionIntentRepository.findDueIntents`, `AuditLogRepository.findByActorId`,
+`CampaignAttemptRepository.findFirstByCampaignIdOrderByAttemptNumberDesc`,
+`CampaignRepository.{findByPaymentId, findByMerchantIdAndSubscriptionId, findScheduledCampaignsByMerchant}`,
+`ClassificationResultRepository.existsByEventId`, `ComplianceDecisionRepository.existsByCampaignIdAndStatus`,
+`WebhookEventRepository.{findByProcessingStatus ×2, countByMerchantIdAndEventType}`, plus the two imports this left unused
+(`java.time.Instant` in `CampaignRepository`, `ComplianceStatus` in `ComplianceDecisionRepository`).
+
+- Proof of no use: each name has 0 matches in `backend/src`, `frontend/src` and `ai-service` after the change; Spring Data only parses declared methods, so nothing can reach them at runtime.
+- Tests: `./mvnw test` → `[INFO] Tests run: 654, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 2475853721078; after the import cleanup, seed 2584640586156, same totals).

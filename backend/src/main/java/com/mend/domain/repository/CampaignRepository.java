@@ -9,7 +9,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,9 +18,7 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
     List<Campaign> findByMerchantId(UUID merchantId);
     Page<Campaign> findByMerchantId(UUID merchantId, Pageable pageable);
     Page<Campaign> findByMerchantIdAndCurrentState(UUID merchantId, CampaignStatus status, Pageable pageable);
-    Optional<Campaign> findByPaymentId(String paymentId);
     Optional<Campaign> findByMerchantIdAndPaymentId(UUID merchantId, String paymentId);
-    Optional<Campaign> findByMerchantIdAndSubscriptionId(UUID merchantId, String subscriptionId);
     Optional<Campaign> findByMerchantIdAndId(UUID merchantId, UUID id);
     
     long countByMerchantId(UUID merchantId);
@@ -34,8 +31,6 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
     @Query("SELECT DISTINCT c.customerIdHash FROM Campaign c WHERE c.merchantId = :merchantId AND c.customerIdHash IS NOT NULL")
     List<String> findDistinctCustomerIdHashesByMerchantId(@Param("merchantId") UUID merchantId);
 
-    @Query("SELECT c FROM Campaign c WHERE c.merchantId = :merchantId AND c.nextActionAt <= :now AND c.currentState IN :states")
-    List<Campaign> findScheduledCampaignsByMerchant(@Param("merchantId") UUID merchantId, @Param("now") Instant now, @Param("states") List<CampaignStatus> states);
 
     @Query("""
             SELECT c FROM Campaign c
