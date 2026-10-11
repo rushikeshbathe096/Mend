@@ -42,8 +42,10 @@ class RedisWebhookEventPublisherTest {
         publisher = new RedisWebhookEventPublisher(redisTemplate, objectMapper);
     }
 
+    // The legacy publish(WebhookEvent) path was removed in cleanup Group 5; these three cases now cover publishOutbox,
+    // with the payload built exactly as ingestion builds it (WebhookOutboxPayload.forWebhook).
     @Test
-    void publish_PublishesEventWithExpectedFieldsAndNoRawPayload() {
+    void publishOutbox_PublishesEventWithExpectedFieldsAndNoRawPayload() throws Exception {
         UUID eventId = UUID.randomUUID();
         UUID merchantId = UUID.randomUUID();
         String externalEventId = "evt_rzp_998877";
@@ -63,7 +65,7 @@ class RedisWebhookEventPublisherTest {
 
         when(streamOperations.add(any(StringRecord.class))).thenReturn(RecordId.of("1788123456789-0"));
 
-        publisher.publish(event);
+        publisher.publishOutbox(outboxFor(event));
 
         ArgumentCaptor<StringRecord> captor = ArgumentCaptor.forClass(StringRecord.class);
         verify(streamOperations).add(captor.capture());
@@ -86,7 +88,7 @@ class RedisWebhookEventPublisherTest {
     }
 
     @Test
-    void publish_SurfacesRedisFailureAsWebhookPublishException() {
+    void publishOutbox_SurfacesRedisFailureAsWebhookPublishException() throws Exception {
         WebhookEvent event = new WebhookEvent();
         event.setId(UUID.randomUUID());
         event.setExternalEventId("evt_fail_1");
@@ -95,13 +97,19 @@ class RedisWebhookEventPublisherTest {
         when(streamOperations.add(any(StringRecord.class)))
                 .thenThrow(new RedisConnectionFailureException("Simulated Redis Connection Failure"));
 
-        WebhookPublishException exception = assertThrows(WebhookPublishException.class, () -> publisher.publish(event));
-        assertTrue(exception.getMessage().contains("Failed to publish webhook event to Redis stream"));
+        OutboxEvent outbox = outboxFor(event);
+        WebhookPublishException exception = assertThrows(WebhookPublishException.class, () -> publisher.publishOutbox(outbox));
+        assertTrue(exception.getMessage().contains("Failed to publish outbox event to Redis stream"));
     }
 
     @Test
-    void publish_NullEvent_ThrowsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class, () -> publisher.publish(null));
+    void publishOutbox_NullEvent_ThrowsIllegalArgumentException() {
+        assertThrows(IllegalArgumentException.class, () -> publisher.publishOutbox(null));
+    }
+
+    private OutboxEvent outboxFor(WebhookEvent event) throws Exception {
+        return OutboxEvent.pendingWebhook(event.getId(), event.getMerchantId(),
+                objectMapper.writeValueAsString(WebhookOutboxPayload.forWebhook(event)), "trace-1", "corr-1", Instant.now());
     }
 
     @Test

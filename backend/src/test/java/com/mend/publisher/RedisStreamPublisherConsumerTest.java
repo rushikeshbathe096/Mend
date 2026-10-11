@@ -4,13 +4,16 @@ import tools.jackson.databind.ObjectMapper;
 import com.mend.config.RedisStreamProperties;
 import com.mend.consumer.RedisWebhookEventConsumer;
 import com.mend.domain.entity.Merchant;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.MerchantRepository;
+import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.event.WebhookEventEnvelope;
-import com.mend.handler.DefaultWebhookEventHandler;
+import com.mend.dto.event.WebhookOutboxPayload;
+import com.mend.service.OutboxEventStateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,11 +22,14 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Publication through the transactional outbox (the only production path; the legacy publish(WebhookEvent) chain was
+ * removed in cleanup Group 5) into the real Redis stream, consumed by the one active consumer.
+ */
 @SpringBootTest
 @ActiveProfiles("test")
 class RedisStreamPublisherConsumerTest {
@@ -37,10 +43,14 @@ class RedisStreamPublisherConsumerTest {
     @Autowired
     private com.mend.processor.DefaultWebhookEventProcessor processor;
 
-    private DefaultWebhookEventHandler handler;
-
     @Autowired
     private WebhookEventRepository webhookEventRepository;
+
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private OutboxEventStateService outboxStateService;
 
     @Autowired
     private MerchantRepository merchantRepository;
@@ -58,8 +68,6 @@ class RedisStreamPublisherConsumerTest {
 
     @BeforeEach
     void setUp() {
-        handler = new DefaultWebhookEventHandler(webhookEventRepository);
-        handler.setSimulateFailure(false);
         processor.setSimulateFailure(false);
         webhookEventRepository.deleteAll();
         try {
@@ -74,8 +82,20 @@ class RedisStreamPublisherConsumerTest {
         testMerchant = merchantRepository.save(merchant);
     }
 
+    /** OutboxPublisherService.publishOne for one row: committed outbox row, Redis transport, then markPublished. */
+    private void publishThroughOutbox(WebhookOutboxPayload payload, WebhookEvent event) throws Exception {
+        OutboxEvent outbox = outboxEventRepository.saveAndFlush(OutboxEvent.pendingWebhook(event.getId(), event.getMerchantId(),
+                objectMapper.writeValueAsString(payload), "trace-" + event.getId(), "corr-" + event.getId(), Instant.now()));
+        publisher.publishOutbox(outbox);
+        outboxStateService.markPublished(outbox.getId(), Instant.now());
+    }
+
+    private void publishThroughOutbox(WebhookEvent event) throws Exception {
+        publishThroughOutbox(WebhookOutboxPayload.forWebhook(event), event);
+    }
+
     @Test
-    void publish_ValidEventWithKnownMerchant_PublishesToRedisAndUpdateStatus() {
+    void publish_ValidEventWithKnownMerchant_PublishesToRedisAndUpdateStatus() throws Exception {
         String eventId = "evt_pub_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), eventId, "payment.failed");
         event.setSource("RAZORPAY");
@@ -84,7 +104,7 @@ class RedisStreamPublisherConsumerTest {
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
 
-        publisher.publish(event);
+        publishThroughOutbox(event);
 
         // Verify PostgreSQL publication status updated
         WebhookEvent updated = webhookEventRepository.findById(event.getId()).orElseThrow();
@@ -112,7 +132,7 @@ class RedisStreamPublisherConsumerTest {
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
 
-        publisher.publish(event);
+        publishThroughOutbox(event);
 
         WebhookEvent updated = webhookEventRepository.findById(event.getId()).orElseThrow();
         assertEquals(WebhookPublishStatus.PUBLISHED, updated.getPublishStatus());
@@ -128,14 +148,14 @@ class RedisStreamPublisherConsumerTest {
     }
 
     @Test
-    void consumer_UnknownEventType_HandledSafelyWithoutCrashing() {
+    void consumer_UnknownEventType_HandledSafelyWithoutCrashing() throws Exception {
         String eventId = "evt_unknown_type_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), eventId, "custom.unknown.event");
         event.setSource("RAZORPAY");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
 
-        publisher.publish(event);
+        publishThroughOutbox(event);
 
         int count = consumer.pollAndProcessMessages();
         if (count == 0) {
@@ -146,33 +166,39 @@ class RedisStreamPublisherConsumerTest {
     }
 
     @Test
-    void consumer_UnknownSchemaVersion_HandledSafely() {
-        WebhookEventEnvelope envelope = new WebhookEventEnvelope(
-                "evt_future_schema",
-                99, // Unknown high schema version
-                "RAZORPAY",
-                "evt_future_schema",
-                "payment.failed",
-                null,
-                UUID.randomUUID(),
-                Instant.now(),
-                Instant.now(),
-                "hash99"
-        );
+    void consumer_UnknownSchemaVersion_HandledSafely() throws Exception {
+        // Was asserted on the legacy DefaultWebhookEventHandler (removed in cleanup Group 5); now an envelope with an
+        // unknown schema version goes through the outbox transport and the real consumer.
+        String eventId = "evt_future_schema_" + UUID.randomUUID().toString().substring(0, 8);
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), eventId, "payment.failed");
+        event.setSource("RAZORPAY");
+        event.setPublishStatus(WebhookPublishStatus.PENDING);
+        event = webhookEventRepository.save(event);
+        WebhookOutboxPayload current = WebhookOutboxPayload.forWebhook(event);
+        WebhookEventEnvelope e = current.envelope();
+        WebhookEventEnvelope futureSchema = new WebhookEventEnvelope(e.getEventId(), 99, e.getProvider(), e.getProviderEventId(),
+                e.getEventType(), e.getMerchantId(), e.getWebhookDatabaseId(), e.getOccurredAt(), e.getReceivedAt(), e.getPayloadHash());
 
-        boolean result = handler.handle(envelope);
-        assertTrue(result);
+        publishThroughOutbox(new WebhookOutboxPayload(current.message(), futureSchema), event);
+
+        int count = consumer.pollAndProcessMessages();
+        if (count == 0) {
+            count = consumer.processPendingMessages();
+        }
+        assertEquals(1, count);
+        WebhookEvent processed = webhookEventRepository.findById(event.getId()).orElseThrow();
+        assertEquals(WebhookEventStatus.PROCESSED, processed.getProcessingStatus());
     }
 
     @Test
-    void consumer_HandlerFailure_DoesNotAcknowledgeMessageAndSupportsRecovery() {
+    void consumer_HandlerFailure_DoesNotAcknowledgeMessageAndSupportsRecovery() throws Exception {
         String eventId = "evt_fail_test_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), eventId, "payment.failed");
         event.setSource("RAZORPAY");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
 
-        publisher.publish(event);
+        publishThroughOutbox(event);
 
         // Simulate processor failure
         processor.setSimulateFailure(true);

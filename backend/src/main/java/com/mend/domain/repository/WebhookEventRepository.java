@@ -14,7 +14,6 @@ import org.springframework.data.domain.Pageable;
 @Repository
 public interface WebhookEventRepository extends JpaRepository<WebhookEvent, UUID> {
     Optional<WebhookEvent> findByExternalEventId(String externalEventId);
-    List<WebhookEvent> findByPublishStatus(com.mend.domain.enums.WebhookPublishStatus publishStatus);
     
     List<WebhookEvent> findByMerchantId(UUID merchantId);
     long countByMerchantId(UUID merchantId);

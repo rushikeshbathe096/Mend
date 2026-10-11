@@ -99,8 +99,15 @@ public class ConsumerConsolidationTest {
     @Test
     @DisplayName("STEP 7 Regression: Verify ApplicationContext contains exactly ONE active consumer bean for mend:webhooks")
     void testSingleActiveConsumerInContext() {
-        String[] legacyConsumerBeans = applicationContext.getBeanNamesForType(com.mend.consumer.RedisStreamConsumer.class);
-        assertThat(legacyConsumerBeans).isEmpty();
+        // cleanup Group 5: the legacy RedisStreamConsumer class is deleted, so instead of "the legacy class is not a bean"
+        // this asserts that exactly one bean of any com.mend.consumer type exists, and that it is RedisWebhookEventConsumer.
+        java.util.List<Class<?>> consumerBeanTypes = java.util.Arrays.stream(applicationContext.getBeanDefinitionNames())
+                .map(applicationContext::getType)
+                .filter(java.util.Objects::nonNull)
+                .<Class<?>>map(org.springframework.util.ClassUtils::getUserClass)
+                .filter(type -> type.getPackageName().equals("com.mend.consumer"))
+                .toList();
+        assertThat(consumerBeanTypes).containsExactly(RedisWebhookEventConsumer.class);
 
         String[] activeConsumerBeans = applicationContext.getBeanNamesForType(RedisWebhookEventConsumer.class);
         assertThat(activeConsumerBeans).hasSize(1);

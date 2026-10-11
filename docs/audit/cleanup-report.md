@@ -13,7 +13,9 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | — | `3482f6e` | test: fix randomizedInvoiceRaces observer busy-poll |
 | 2 | `f5892e0` | cleanup: remove unused repository methods |
 | 3 | `572b717` | cleanup: shared payment-link id helper |
-| 4 | (this commit) | fix: honest amounts in analytics |
+| 4 | `b520e8c` | fix: honest amounts in analytics |
+| — | `8835869` | test: stop the scheduled Redis consumer poll racing consumer tests |
+| 5 | (this commit) | cleanup: remove legacy webhook publish chain |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -154,3 +156,52 @@ Removed (audit item 2): `ActionIntentRepository.findDueIntents`, `AuditLogReposi
   - `…lateCaptureIsNotCountedAsMend` (also covers NULL attribution, per-class, per-strategy, recovery rates and the funnel)
   - `WebhookAmountResolverTest.resolveAmountIsEmptyWheneverTheStrictAmountIsEmpty`
 - `./mvnw test` → `[INFO] Tests run: 658, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 3250871087065; +3 = the new tests).
+
+## Harness: background Redis consumer poll (`8835869`)
+
+`RedisWebhookEventConsumer.pollAndProcessMessages` was `@Scheduled` (every 2 s) in every test context. While Group 5 was in progress, the full suite failed once in `RedisStreamPublisherConsumerTest.consumer_HandlerFailure_DoesNotAcknowledgeMessageAndSupportsRecovery` (`expected: <1> but was: <0>`, seed 3645313379849). The log shows thread `scheduling-1` consuming the test's message between its publish and `processor.setSimulateFailure(true)`. The race existed before; the outbox publish path (`markPublished` after the Redis add) widened the window.
+
+Fix: the background poll now goes through `scheduledPoll()`, which honours `mend.consumer.scheduled-enabled` (default `true`; production unchanged), the same pattern as the scheduler, outbox publisher and reconciler. `application-test.properties` sets it `false`. No test relies on background consumption: every consumer test calls `pollAndProcessMessages` / `processPendingMessages` itself.
+
+Committed alone, with Group 5 stashed: `./mvnw test` → `[INFO] Tests run: 658, Failures: 0, Errors: 0, Skipped: 0` (seed 3820937730003; 0 consumer log lines from `scheduling-1`).
+
+## Group 5: remove the legacy webhook publish chain
+
+**Precondition.** Before deleting anything, `webhook_events` was grouped by `publish_status` in the dev DB `mend` and in every `mend_test_*` DB present:
+
+| database | publish_status counts |
+|---|---|
+| `mend` | PUBLISHED=991 |
+| `mend_test_1791726135_1b058308` | PENDING=205, PUBLISHED=2 |
+| `mend_test_1791737945_929dc892` | PENDING=202, PUBLISHED=990 |
+
+The enum value is `PUBLISH_FAILED`; there is no `FAILED`. Neither value appears, so no pre-outbox failed publication is left for the retry service.
+
+**Deleted (main):**
+- `consumer/RedisStreamConsumer`
+- `handler/WebhookEventHandler`, `handler/DefaultWebhookEventHandler`
+- `service/WebhookPublisherRetryService`
+- `publisher/NoOpWebhookEventPublisher`, `publisher/WebhookEventPublisher`
+- `RedisWebhookEventPublisher.publish(WebhookEvent)`, with its `WebhookEventRepository` dependency and the duplicate message/envelope builder
+- `WebhookEventRepository.findByPublishStatus` and `OutboxEventRepository.existsByAggregateTypeAndAggregateId`: their only callers were the deleted retry service and test
+
+`RedisWebhookEventPublisher` is now only the `OutboxEventTransport`.
+
+**Moved:** the message/envelope construction from `WebhookService.serializeOutboxPayload` into `WebhookOutboxPayload.forWebhook(WebhookEvent)`. Ingestion and tests now build the identical payload; the deleted `publish()` had a third copy.
+
+**Tests** (net count unchanged, 658 → 658):
+
+| test | before | after |
+|---|---|---|
+| `ConsumerConsolidationTest.testSingleActiveConsumerInContext` | the legacy class is not a bean | exactly one bean of any `com.mend.consumer` type exists, and it is `RedisWebhookEventConsumer` (+ the existing one-bean check) |
+| `RedisStreamPublisherConsumerTest` (5) | legacy `publish()` + legacy handler | `publishThroughOutbox` = outbox row → `publishOutbox` → `markPublished` (the per-row production path), real consumer; the schema-version test now sends a version-99 envelope through the real consumer instead of the deleted handler |
+| `RedisWebhookEventConsumerTest` (2 of 4) | legacy `publish()` | same outbox path |
+| `RedisWebhookEventPublisherTest` (3 of 4) | `publish()` fields / failure / null | `publishOutbox` fields / failure / null, payload from `forWebhook` |
+| `RedisFailureAndRetryTest` (2), moved `publisher` → `service` | retry service (never scheduled in production) | the same two scenarios on the outbox against real PostgreSQL + Redis, via `OutboxPublisherService.publishOne` on the test's own row: Redis down → webhook `PUBLISH_FAILED`, outbox `FAILED` with backoff; Redis back → same row `PUBLISHED`, attempts 2, consumed and `PROCESSED` |
+
+**Outbox publish failure/retry coverage after this group:**
+- `OutboxPublisherServiceTest`: `redisFailureLeavesEventRetryableAndRecordsBackoff`, `redisRecoveryPublishesPreviouslyFailedOutboxEvent`, `crashAfterRedisAcceptsCausesSafeAtLeastOnceRepublish`, `successfulPublicationMarksPublishedOnlyAfterRedisAccepts`
+- `RedisFailureAndRetryTest`: both tests, as integration
+- `TransactionalOutboxIntegrationTest.crashWindowRedeliveryPreservesMetadataAndRemainsConsumerIdempotent`
+
+**Run:** `./mvnw test` → `[INFO] Tests run: 658, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 3933075509317).

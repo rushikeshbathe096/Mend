@@ -1,12 +1,16 @@
 package com.mend.consumer;
 
 import com.mend.client.AiClassificationClient;
+import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.FailureClass;
 import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
+import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
+import com.mend.dto.event.WebhookOutboxPayload;
+import com.mend.service.OutboxEventStateService;
 import com.mend.dto.ai.ClassificationRequestDto;
 import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
@@ -20,7 +24,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import tools.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -45,6 +52,15 @@ class RedisWebhookEventConsumerTest {
 
     @Autowired
     private StringRedisTemplate redisTemplate;
+
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private OutboxEventStateService outboxStateService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @MockitoBean
     private AiClassificationClient aiClassificationClient;
@@ -72,6 +88,15 @@ class RedisWebhookEventConsumerTest {
         }
     }
 
+    /** OutboxPublisherService.publishOne for one row: committed outbox row, Redis transport, then markPublished. */
+    private void publishThroughOutbox(WebhookEvent event) throws Exception {
+        OutboxEvent outbox = outboxEventRepository.saveAndFlush(OutboxEvent.pendingWebhook(event.getId(), event.getMerchantId(),
+                objectMapper.writeValueAsString(WebhookOutboxPayload.forWebhook(event)),
+                "trace-" + event.getId(), "corr-" + event.getId(), Instant.now()));
+        publisher.publishOutbox(outbox);
+        outboxStateService.markPublished(outbox.getId(), Instant.now());
+    }
+
     @Test
     void initConsumerGroup_IsIdempotent() {
         assertDoesNotThrow(() -> {
@@ -84,7 +109,7 @@ class RedisWebhookEventConsumerTest {
     }
 
     @Test
-    void pollAndProcessMessages_ValidMessage_ReadsDeserializesProcessesAndACKs() {
+    void pollAndProcessMessages_ValidMessage_ReadsDeserializesProcessesAndACKs() throws Exception {
         String eventId = "evt_consumer_test_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), eventId, "payment.failed");
         event.setSource("RAZORPAY");
@@ -92,7 +117,7 @@ class RedisWebhookEventConsumerTest {
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
 
-        publisher.publish(event);
+        publishThroughOutbox(event);
 
         int count = consumer.pollAndProcessMessages();
         if (count == 0) {
@@ -105,14 +130,14 @@ class RedisWebhookEventConsumerTest {
     }
 
     @Test
-    void pollAndProcessMessages_ProcessorFailure_DoesNotAcknowledgeMessage() {
+    void pollAndProcessMessages_ProcessorFailure_DoesNotAcknowledgeMessage() throws Exception {
         String eventId = "evt_processor_fail_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), eventId, "payment.failed");
         event.setSource("RAZORPAY");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
 
-        publisher.publish(event);
+        publishThroughOutbox(event);
 
         processor.setSimulateFailure(true);
 
