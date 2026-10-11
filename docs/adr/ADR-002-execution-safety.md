@@ -51,7 +51,7 @@ Background reconciler and more states; slower resolution for ambiguous debits; `
 
 ## Evidence
 RECORDED 02, 08, 20, 21 (M1).
-- Test results: `docs/m2/m2-final-test-run-summary.txt` — `Tests run: 647, Failures: 0, Errors: 0, Skipped: 0` (M1 baseline 519 / 0 / 0 / 1). Exit tests: `M2ExitCriteriaTest` (§19, zero duplicate debits, 3 workers + manual path, crash after dispatch, 200 seeded races), three consecutive green full runs recorded in `docs/m2/m2-progress.md` (U7).
+- Test results: `docs/m2/m2-final-test-run-summary.txt` — `Tests run: 647, Failures: 0, Errors: 0, Skipped: 0` (M1 baseline 519 / 0 / 0 / 1). Exit tests: `M2ExitCriteriaTest` (§19, zero duplicate debits, 3 workers + manual path, crash after dispatch, 200 randomized races — seed printed, reproducible); three consecutive green full runs at U7 (`docs/m2/m2-progress.md`); the final code (U10) has one full run, as the close-out requires.
 - Failure behaviour: every §9 row mapped to a green test in `docs/m2/M2-failure-table-verification.md`.
 - Query plans: `docs/m2/M2-query-plans.md` (MEASURED, 100k intents / 5k merchants, laptop; no targets claimed).
 - Payment-link cancel: `POST /v1/payment_links/{id}/cancel` verified from the official docs in U8 but **not recorded**, so MEND does not call it; the `DUPLICATE_PAYMENT_RISK` review fallback applies. `scripts/record_razorpay_contracts.sh --cancel-link` records it.
@@ -61,6 +61,7 @@ Open evidence: a real `payment.failed` webhook (for `invoice_key` derivation); l
 - Migrations V12–V15: the planned "V14 `provider_payment_id`" is V15 because V14 holds the U6 rule "intent invoice key = campaign invoice key" (FK). V15 also adds `campaigns.recovery_attribution` (`MEND` | `ORIGINAL_PAYMENT_LATE_CAPTURE`) so a late original capture is not credited to MEND.
 - A late original capture on a campaign that has not acted yet (CREATED…SCHEDULED, ELIGIBLE) ends CANCELLED, not RECOVERED: the campaign state machine has no edge to RECOVERED from those states. Attribution is recorded either way.
 - Deferrals and SAFE_RETRY share `execution_attempts` (cap 5 vs 3); both fail closed to review. A separate counter is an M3 candidate.
+- §9 audit codes: a released undispatched claim is audited `CLAIM_RELEASED` (was `STATE_TRANSITION`, U10).
 - Decision 10 / OD-1: a 429 is deferred only for actions with idempotent resend (links); otherwise it goes to review (decision 5). Approval of a MANUAL_REVIEW item re-runs compliance for the approved strategy; that decision is never reused without an approval.
 
 ## Revisit conditions
