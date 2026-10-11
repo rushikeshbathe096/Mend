@@ -16,7 +16,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | 4 | `b520e8c` | fix: honest amounts in analytics |
 | — | `8835869` | test: stop the scheduled Redis consumer poll racing consumer tests |
 | 5 | `3eb13e0` | cleanup: remove legacy webhook publish chain |
-| 6 | (this commit) | cleanup: drop legacy status values + CHECK constraints |
+| 6 | `72a1710` | cleanup: drop legacy status values + CHECK constraints |
+| 7 | (this commit) | config: complete .env.example and safe default profile |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -243,3 +244,39 @@ Data checked before writing V16 (`GROUP BY` on each column):
 - `npm test -- --ci` → `Tests: 33 passed, 33 total`
 - `npm run build` → success
 - `eslint` on the two files reports the same 3 problems before and after (pre-existing: `no-explicit-any` and `set-state-in-effect` in `webhooks/page.tsx`, an unused `type` prop in `Badge.tsx`)
+
+## Group 7: complete .env.example and safe default profile
+
+**Default profile.** `spring.profiles.active=${SPRING_PROFILES_ACTIVE:dev}` is removed from `application.properties`. Without `SPRING_PROFILES_ACTIVE` the app runs Spring's `default` profile, so the dev seed and `/api/v1/demo` are off.
+- `docker-compose.yml` runs only PostgreSQL and Redis, with no backend service, so there is nothing to set there.
+- The README setup section now starts the backend with `SPRING_PROFILES_ACTIVE=dev` explicitly and says the backend has no default profile.
+
+**Proof** (jar from this tree, each run on its own throwaway database, both dropped afterwards; token from `/auth/bootstrap` + `/auth/login`):
+
+| start | profile line in log | `DevDataInitializer` log lines | rows after the HTTP checks | `GET /api/v1/demo/scenarios` no token / with token |
+|---|---|---|---|---|
+| no `SPRING_PROFILES_ACTIVE` | `No active profile set, falling back to 1 default profile: "default"` | 0 | merchants=1 (the bootstrap call), campaigns=0, webhook_events=0, `MEND_DEMO_DATASET_V1`=0 | 401 / **404** |
+| `SPRING_PROFILES_ACTIVE=dev` | `The following 1 profile is active: "dev"` | 2 | merchants=14, campaigns=529, webhook_events=990, `MEND_DEMO_DATASET_V1`=1 | 401 / **200** |
+
+Both runs applied 16 migrations, so V16 also succeeds on a fresh database.
+
+**`.env.example`:**
+- Removed `SPRING_JPA_HIBERNATE_DDL_AUTO`, replaced by a comment: Flyway owns the schema, and `ddl-auto=validate` is fixed in `application.properties`.
+- Added every variable the audit listed as missing, with the code's defaults:
+  - `SPRING_PROFILES_ACTIVE` (empty = `default`)
+  - `MEND_CORS_ALLOWED_ORIGINS`
+  - `MEND_REDIS_RETRY_MAX_ATTEMPTS`
+  - `MEND_OUTBOX_{PUBLISHER_ENABLED, POLL_INTERVAL_MS, BATCH_SIZE, RETRY_BASE_DELAY_SECONDS, RETRY_MAX_DELAY_SECONDS}`
+  - `MEND_AI_{CONNECT,READ}_TIMEOUT_MS`
+  - `POSTGRES_DB_URI` (ai-service)
+  - `RAZORPAY_SINGLE_TENANT_MERCHANT_ID`
+  - `RAZORPAY_API_BASE_URL`
+  - `RAZORPAY_{CONNECT,READ}_TIMEOUT_MS`
+  - `NEXT_PUBLIC_API_URL`
+
+**`application.properties`.** Every property that code read only through an inline `@Value` default is now listed with that same default (computed from all `${…}` keys in main, not copied from the audit):
+- `mend.scheduler.{enabled, scheduled-enabled, poll-interval-ms, batch-size, lease-duration-minutes, default-retry-delay-minutes, worker-id}`; an empty worker id still means a generated `worker-<random>`
+- `mend.consumer.{scheduled-enabled, poll-interval-ms}`
+- `mend.compliance.min-confidence`, `mend.recovery.strategy.min-confidence` (both M3-owned; documented only, values unchanged)
+
+**Tests.** `./mvnw test` → `[INFO] Tests run: 660, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 4494755797558).

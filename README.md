@@ -83,9 +83,14 @@ The demo covers low-risk retry, high-risk human approval, customer action, provi
 
 ```bash
 cp .env.example .env
-docker compose up -d
+docker compose up -d          # PostgreSQL (5433) and Redis (6379) only
 ./scripts/verify.sh
+
+# Run the backend locally with the dev profile (dev seed data and the SIMULATED /api/v1/demo scenarios):
+cd backend && SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
 ```
+
+The backend has **no default profile**. Started without `SPRING_PROFILES_ACTIVE` it runs Spring's `default` profile: no dev seed and no `/api/v1/demo` (404). Set `SPRING_PROFILES_ACTIVE=dev` only for local development.
 
 For separate service startup, environment variables, expected ports, Razorpay TEST MODE, and troubleshooting, see [docs/SETUP.md](docs/SETUP.md).
 
