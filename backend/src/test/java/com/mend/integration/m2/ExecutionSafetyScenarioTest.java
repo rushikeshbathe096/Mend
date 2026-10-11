@@ -34,10 +34,7 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -59,20 +56,11 @@ import static org.mockito.Mockito.when;
  * Scenarios that fail on the current code are @Disabled("M2-RED: ...") until the unit that fixes them enables them.
  * Real PostgreSQL, real threads, latches; lease expiry is simulated with SQL, never by sleeping.
  */
-@Import(ExecutionSafetyScenarioTest.BlockingProviderConfig.class)
+@Import(BlockingProviderConfig.class)
 class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
 
     /** In-flight statuses per M2-execution-safety.md §4 (names, so this compiles before U2 adds the new enum values). */
     private static final Set<String> IN_FLIGHT = Set.of("CLAIMED", "EXECUTING", "NEEDS_RECONCILIATION", "AWAITING_PAYMENT");
-
-    @TestConfiguration
-    static class BlockingProviderConfig {
-        @Bean
-        @Primary
-        BlockingPaymentProvider blockingPaymentProvider(MockPaymentProvider mockPaymentProvider) {
-            return new BlockingPaymentProvider(mockPaymentProvider);
-        }
-    }
 
     @Autowired private ActionScheduler actionScheduler;
     @Autowired private ActionIntentClaimService actionIntentClaimService;

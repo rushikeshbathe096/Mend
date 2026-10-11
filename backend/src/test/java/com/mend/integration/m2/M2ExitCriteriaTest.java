@@ -28,6 +28,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,9 +36,10 @@ import static org.mockito.Mockito.when;
 
 /**
  * M2 U7 — exit criteria (brief §19, §35, §49). Real PostgreSQL, real threads and latches, SQL time travel; no sleeps.
- * Shares ExecutionSafetyScenarioTest's context (same @Import and @MockitoBean) so no extra application context is started.
+ * Shares ExecutionSafetyScenarioTest's context (same @Import and @MockitoBean) so no extra application context is started;
+ * see {@link BlockingProviderConfig} for why that config is top level.
  */
-@Import(ExecutionSafetyScenarioTest.BlockingProviderConfig.class)
+@Import(BlockingProviderConfig.class)
 @DisplayName("M2 exit criteria")
 class M2ExitCriteriaTest extends AbstractIntegrationTest {
 
@@ -91,9 +93,14 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         jdbc.update("UPDATE action_intents SET dispatched_at = now() WHERE status = 'EXECUTING' AND merchant_id <> ?", merchantId);
     }
 
+    /** Leaves nothing of this merchant claimable, reconcilable or pending review for later classes on the shared database. */
     private void cancelOwnRows() {
         jdbc.update("UPDATE action_intents SET status = 'CANCELLED', completed_at = now() WHERE merchant_id = ? "
                 + "AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED','EXPIRED')", merchantId);
+        jdbc.update("UPDATE campaigns SET current_state = 'CANCELLED' WHERE merchant_id = ? "
+                + "AND current_state NOT IN ('RECOVERED','EXHAUSTED','FAILED','CANCELLED')", merchantId);
+        jdbc.update("UPDATE review_queue SET status = 'CLOSED' WHERE merchant_id = ? AND status = 'PENDING'", merchantId);
+        jdbc.update("UPDATE webhook_events SET processing_status = 'PROCESSED' WHERE merchant_id = ? AND processing_status = 'VERIFIED'", merchantId);
     }
 
     // ---- fixtures ----
@@ -159,12 +166,21 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
                 .filter(call -> f.key().equals(call.attemptKey()) && call.operation().equals("synthetic_debit")).count();
     }
 
+    /** Fails the test if a worker thread died: the scheduler handles per-intent errors itself, so anything escaping is a bug. */
     private static void join(Future<?> future) throws Exception {
         try {
             future.get(20, TimeUnit.SECONDS);
-        } catch (ExecutionException ignored) {
-            // a worker's own exception is not what these tests assert
+        } catch (ExecutionException crashed) {
+            throw new AssertionError("worker thread failed", crashed.getCause());
         }
+    }
+
+    private long auditCount(Fixture f, String eventType) {
+        return auditTrail(f).stream().filter(eventType::equals).count();
+    }
+
+    private static boolean linkExists(MockPaymentProvider mock, UUID merchantId, Fixture f) {
+        return mock.findPaymentLinkByReference(new MerchantRef(merchantId), f.key()).isFound();
     }
 
     // ---- 1. §19 exactly ----
@@ -182,6 +198,7 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         try {
             expireLease(f);
             claimService.releaseExpiredClaims();
+            assertEquals(ActionIntentStatus.EXECUTING, reload(f).getStatus(), "lease expiry must not return dispatched work to READY");
             worker("worker-b").pollAndExecuteDueActions();
             bCalls = provider.createCalls(f.key()) - 1;
         } finally {
@@ -268,7 +285,12 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         }
     }
 
-    /** One race: 3 schedulers + the manual path, 2 campaigns sharing an invoice; a 4th thread watches the in-flight count. */
+    /**
+     * One race: 3 schedulers + the manual path, 2 campaigns sharing an invoice; a 4th thread watches the in-flight count.
+     * After the race the provider recovers and one reconciler cycle + one poll run, so SAFE_RETRY resends happen and are
+     * counted separately from first sends. The observer polls in a loop and can miss short states; the database index
+     * (U6) is the real guarantee, the observer only checks that nothing visible contradicts it.
+     */
     private void invoiceRace(Random random, boolean randomReleaseOrder, Outcome outcome) throws Exception {
         provider.reset();
         apply(outcome);
@@ -318,13 +340,40 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         if (randomReleaseOrder) {
             List<CountDownLatch> order2 = new ArrayList<>(gates);
             Collections.shuffle(order2, random);
-            order2.forEach(CountDownLatch::countDown);
+            for (CountDownLatch gate : order2) {
+                gate.countDown();
+                LockSupport.parkNanos(random.nextInt(500_000));   // < 0.5 ms head start, so the order actually varies interleavings
+            }
         } else {
             common.countDown();
         }
         for (Future<Object> task : running) {
             join(task);
         }
+        Map<Fixture, Integer> firstSends = new HashMap<>();
+        for (Fixture f : List.of(x, y)) {
+            firstSends.put(f, provider.createCalls(f.key()));
+        }
+
+        // The race happened: at least one send, and the outcome left the expected state.
+        assertTrue(firstSends.get(x) + firstSends.get(y) >= 1, "nobody executed either intent");
+        List<ActionIntentStatus> afterRace = List.of(reload(x).getStatus(), reload(y).getStatus());
+        if (outcome != Outcome.REJECTED) {
+            ActionIntentStatus expected = outcome == Outcome.SUCCESS ? ActionIntentStatus.AWAITING_PAYMENT : ActionIntentStatus.NEEDS_RECONCILIATION;
+            assertTrue(afterRace.contains(expected) && afterRace.contains(ActionIntentStatus.READY),
+                    "expected one " + expected + " and one READY sibling, got " + afterRace);
+        }
+
+        // The provider recovers; one reconciler cycle and one poll (SAFE_RETRY resends happen here).
+        mock.setSimulatedStatus(PaymentExecutionStatus.SUCCESS);
+        mock.setSimulatedLostResponse(false);
+        for (Fixture f : List.of(x, y)) {
+            dispatchedLongAgo(f);   // past the NotFound grace, so an empty lookup is trusted (§7)
+            due(f);
+        }
+        reconciler.runCycle();
+        worker("worker-1").pollAndExecuteDueActions();
+
         done.set(true);
         observer.get(10, TimeUnit.SECONDS);
 
@@ -332,12 +381,24 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         long finalInFlight = List.of(reload(x), reload(y)).stream().filter(i -> IN_FLIGHT.contains(i.getStatus().name())).count();
         assertTrue(finalInFlight <= 1, "final in-flight intents for one invoice: " + finalInFlight);
         for (Fixture f : List.of(x, y)) {
-            assertTrue(provider.createCalls(f.key()) <= 1, "create calls for " + f.key().value() + ": " + provider.createCalls(f.key()));
+            long resends = auditCount(f, "SAFE_RETRY");
+            assertTrue(firstSends.get(f) <= 1, "first sends for " + f.key().value() + ": " + firstSends.get(f));
+            assertTrue(resends <= 1, "SAFE_RETRY resends for " + f.key().value() + ": " + resends);
+            assertTrue(resends == 0 || outcome == Outcome.UNKNOWN,
+                    "SAFE_RETRY is only for a send that created nothing (" + outcome + ")");
+            assertTrue(provider.createCalls(f.key()) - resends <= 1,
+                    "create calls for " + f.key().value() + ": " + provider.createCalls(f.key()) + " of which SAFE_RETRY resends " + resends);
         }
-        for (Fixture f : List.of(x, y)) {
-            long resources = mock.findPaymentLinkByReference(new MerchantRef(merchantId), f.key()).isFound() ? 1 : 0;
-            assertTrue(resources <= 1);
+        long totalResends = auditCount(x, "SAFE_RETRY") + auditCount(y, "SAFE_RETRY");
+        if (outcome == Outcome.UNKNOWN) {
+            assertEquals(1, totalResends, "the Unknown send created nothing, so the reconciler resends it exactly once");
         }
+        if (outcome == Outcome.LOST_RESPONSE) {
+            assertTrue(List.of(reload(x).getStatus(), reload(y).getStatus()).contains(ActionIntentStatus.AWAITING_PAYMENT),
+                    "the lost response's link exists, so the reconciler adopts it instead of resending");
+        }
+        long linksForInvoice = List.of(x, y).stream().filter(f -> linkExists(mock, merchantId, f)).count();
+        assertTrue(linksForInvoice <= 1, "provider resources for one invoice: " + linksForInvoice);
         cancelOwnRows();
     }
 
@@ -393,6 +454,7 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         assertEquals(ActionIntentStatus.SUCCEEDED, reload(f).getStatus(), "resolved within " + cycles + " cycles");
         assertEquals(CampaignStatus.RECOVERED, campaignState(f));
         assertTrue(auditTrail(f).contains("EXECUTION_STUCK"));
-        assertTrue(provider.createCalls(f.key()) <= 1, "the dead worker never called; one resend after SAFE_RETRY");
+        assertEquals(1, auditCount(f, "SAFE_RETRY"), "nothing was at the provider, so exactly one SAFE_RETRY");
+        assertEquals(1, provider.createCalls(f.key()), "the dead worker never called; exactly one resend after SAFE_RETRY");
     }
 }
