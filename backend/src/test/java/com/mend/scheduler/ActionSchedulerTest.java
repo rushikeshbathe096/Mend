@@ -43,19 +43,21 @@ public class ActionSchedulerTest {
                 ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
                 ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
         );
+        intent.setClaimToken("claim-key-4");
 
         when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
                 .thenReturn(List.of(intent));
 
         PaymentExecutionResult expectedResult = PaymentExecutionResult.success("ref-123", "Success message", "key-4");
-        when(actionExecutionService.executeActionIntent(eq(intentId), anyString()))
+        // M2 behaviour change: the scheduler passes the claim token from its atomic claim to the executor, see ADR-002
+        when(actionExecutionService.executeActionIntent(eq(intentId), anyString(), eq("claim-key-4")))
                 .thenReturn(expectedResult);
 
         List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
 
         assertEquals(1, results.size());
         assertEquals("ref-123", results.get(0).getExternalReference());
-        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString());
+        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), eq("claim-key-4"));
         verify(claimService, times(1)).releaseExpiredClaims();
         verify(claimService, times(1)).processExpiredIntents();
     }
@@ -69,7 +71,7 @@ public class ActionSchedulerTest {
         List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
 
         assertTrue(results.isEmpty());
-        verify(actionExecutionService, never()).executeActionIntent(any(), anyString());
+        verify(actionExecutionService, never()).executeActionIntent(any(), anyString(), any());
         verify(claimService, times(1)).releaseExpiredClaims();
         verify(claimService, times(1)).processExpiredIntents();
     }
@@ -107,16 +109,34 @@ public class ActionSchedulerTest {
                 ActionType.RETRY_PAYMENT.name(), "RETRY_IMMEDIATELY", UUID.randomUUID(),
                 ActionIntentStatus.READY, "key-4", Instant.now().minusSeconds(10)
         );
+        intent.setClaimToken("claim-exception-4");
 
         when(claimService.claimDueIntents(eq("test-worker"), eq(50)))
                 .thenReturn(List.of(intent));
 
-        when(actionExecutionService.executeActionIntent(eq(intentId), anyString()))
+        // M2 behaviour change: the scheduler passes the claim token from its atomic claim to the executor, see ADR-002
+        when(actionExecutionService.executeActionIntent(eq(intentId), anyString(), eq("claim-exception-4")))
                 .thenThrow(new RuntimeException("Provider error"));
 
         List<PaymentExecutionResult> results = scheduler.pollAndExecuteDueActions();
 
         assertTrue(results.isEmpty());
-        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString());
+        verify(actionExecutionService, times(1)).executeActionIntent(eq(intentId), anyString(), eq("claim-exception-4"));
+    }
+
+    @Test
+    @DisplayName("M2 §9 DB down: the poll cycle aborts before claiming or executing anything; the next poll resumes")
+    void databaseDownAbortsThePollAndTheNextPollResumes() {
+        when(claimService.releaseExpiredClaims())
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("connection refused"))
+                .thenReturn(Collections.emptyList());
+        when(claimService.claimDueIntents(eq("test-worker"), eq(50))).thenReturn(Collections.emptyList());
+
+        assertThrows(org.springframework.dao.DataAccessResourceFailureException.class, () -> scheduler.pollAndExecuteDueActions());
+        verify(claimService, never()).claimDueIntents(anyString(), anyInt());
+        verify(actionExecutionService, never()).executeActionIntent(any(), anyString(), any());
+
+        assertTrue(scheduler.pollAndExecuteDueActions().isEmpty(), "next poll runs normally once the database is back");
+        verify(claimService, times(1)).claimDueIntents(eq("test-worker"), eq(50));
     }
 }

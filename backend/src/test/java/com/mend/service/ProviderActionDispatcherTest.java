@@ -77,4 +77,36 @@ class ProviderActionDispatcherTest {
 
         assertInstanceOf(ProviderActionOutcome.Unknown.class, outcome);
     }
+
+    @Test
+    void paymentLinkCarriesExpireByFromTheConfiguredTtl() {
+        PaymentProvider provider = mock(PaymentProvider.class);
+        WebhookAmountResolver resolver = mock(WebhookAmountResolver.class);
+        when(resolver.resolveOriginalAmount(any(), any())).thenReturn(java.util.Optional.of(new com.mend.provider.MoneyMinor(49900, "INR")));
+        when(provider.createPaymentLink(any(), any())).thenReturn(new com.mend.provider.RequestResult.NotSent<>("TEST"));
+        StaticListableBeanFactory beans = new StaticListableBeanFactory();
+        ProviderActionDispatcher dispatcher = new ProviderActionDispatcher(provider, () -> false, resolver,
+                beans.getBeanProvider(SyntheticDebitSimulator.class), 24);
+
+        java.time.Instant before = java.time.Instant.now();
+        dispatcher.dispatch(intent(ActionType.REQUEST_CUSTOMER_ACTION), campaign);
+
+        org.mockito.ArgumentCaptor<com.mend.provider.CreatePaymentLink> command = org.mockito.ArgumentCaptor.forClass(com.mend.provider.CreatePaymentLink.class);
+        verify(provider).createPaymentLink(any(), command.capture());
+        java.time.Instant expireBy = command.getValue().expireBy();
+        assertNotNull(expireBy, "M2: every link must expire so AWAITING_PAYMENT terminates");
+        assertFalse(expireBy.isBefore(before.plus(java.time.Duration.ofHours(24))));
+        assertFalse(expireBy.isAfter(java.time.Instant.now().plus(java.time.Duration.ofHours(24))));
+    }
+
+    @Test
+    void linkTtlOutsideRazorpayBoundsFailsAtStartup() {
+        StaticListableBeanFactory beans = new StaticListableBeanFactory();
+        assertThrows(IllegalStateException.class, () -> new ProviderActionDispatcher(mock(PaymentProvider.class), () -> false,
+                mock(WebhookAmountResolver.class), beans.getBeanProvider(SyntheticDebitSimulator.class), 0));
+        assertThrows(IllegalStateException.class, () -> new ProviderActionDispatcher(mock(PaymentProvider.class), () -> false,
+                mock(WebhookAmountResolver.class), beans.getBeanProvider(SyntheticDebitSimulator.class), 180 * 24 + 1));
+        assertDoesNotThrow(() -> new ProviderActionDispatcher(mock(PaymentProvider.class), () -> false,
+                mock(WebhookAmountResolver.class), beans.getBeanProvider(SyntheticDebitSimulator.class), 180 * 24));
+    }
 }

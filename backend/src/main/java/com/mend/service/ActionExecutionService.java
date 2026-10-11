@@ -46,7 +46,16 @@ public class ActionExecutionService {
     private final CampaignLifecycleService campaignLifecycleService;
     private final ProviderActionDispatcher providerActionDispatcher;
     private final AuditService auditService;
+    private final ActionIntentTransitions transitions;
+    private final java.time.Duration awaitingPaymentFirstCheck;
+    private final java.time.Duration unknownOutcomeGrace;
     private final TransactionTemplate executionTransactionTemplate;
+    /** M2 U9: MEND-side deferral (OD-3 cap 5) and its backoff; review items for what a human must fix or decide. */
+    private final HumanApprovalService humanApprovalService;
+    private final int maxDeferrals;
+    private final ReconcileBackoff deferBackoff;
+    private final java.time.Duration minDeferral;
+    private final com.mend.provider.ProviderCapabilities capabilities;
 
     public ActionExecutionService(
             ActionIntentRepository actionIntentRepository,
@@ -56,7 +65,15 @@ public class ActionExecutionService {
             CampaignLifecycleService campaignLifecycleService,
             ProviderActionDispatcher providerActionDispatcher,
             AuditService auditService,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            ActionIntentTransitions transitions,
+            @org.springframework.beans.factory.annotation.Value("${mend.reconciler.backoff-base-seconds:30}") long backoffBaseSeconds,
+            @org.springframework.beans.factory.annotation.Value("${mend.reconciler.not-found-grace-seconds:120}") long notFoundGraceSeconds,
+            HumanApprovalService humanApprovalService,
+            com.mend.provider.ProviderCapabilities capabilities,
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.max-deferrals:5}") int maxDeferrals,
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-base-seconds:30}") long deferBackoffBaseSeconds,
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-cap-seconds:21600}") long deferBackoffCapSeconds) {
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -64,27 +81,45 @@ public class ActionExecutionService {
         this.campaignLifecycleService = campaignLifecycleService;
         this.providerActionDispatcher = providerActionDispatcher;
         this.auditService = auditService;
+        this.transitions = transitions;
+        this.awaitingPaymentFirstCheck = java.time.Duration.ofSeconds(backoffBaseSeconds);
+        this.unknownOutcomeGrace = java.time.Duration.ofSeconds(notFoundGraceSeconds);
         this.executionTransactionTemplate = new TransactionTemplate(transactionManager);
         this.executionTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.humanApprovalService = humanApprovalService;
+        this.maxDeferrals = maxDeferrals;
+        this.capabilities = capabilities;
+        this.minDeferral = java.time.Duration.ofSeconds(deferBackoffBaseSeconds);
+        this.deferBackoff = new ReconcileBackoff(java.time.Duration.ofSeconds(deferBackoffBaseSeconds),
+                java.time.Duration.ofSeconds(deferBackoffCapSeconds), java.util.random.RandomGenerator.getDefault());
     }
 
-    public PaymentExecutionResult executeActionIntent(UUID intentId, String workerId) {
+    /**
+     * Executes a claimed intent. {@code claimToken} is the token the caller received from the atomic claim; the dispatch
+     * and finalize transitions only apply while the intent still carries it (M2 invariants 11, 12).
+     */
+    public PaymentExecutionResult executeActionIntent(UUID intentId, String workerId, String claimToken) {
         Objects.requireNonNull(intentId, "intentId must not be null");
+        // Fail closed: without the claimer's own token there is no ownership fence.
+        Objects.requireNonNull(claimToken, "claimToken must not be null - pass the token from the atomic claim");
 
         // Step 1: Pre-execution validation & transaction state preparation
         ExecutionPreparation preparation;
         try {
-            preparation = inExecutionTransaction(() -> prepareExecution(intentId, workerId));
+            preparation = inExecutionTransaction(() -> prepareExecution(intentId, workerId, claimToken));
         } catch (ComplianceBlockedException e) {
             log.warn("ActionIntent '{}' execution blocked by compliance: {}", intentId, e.getMessage());
-            executionTransactionTemplate.executeWithoutResult(status -> {
-                actionIntentRepository.findById(intentId).ifPresent(intent -> {
-                    intent.setStatus(ActionIntentStatus.FAILED);
-                    intent.setCompletedAt(Instant.now());
-                    actionIntentRepository.save(intent);
-                });
-            });
+            // Fenced by the caller's token: a stale worker cannot fail someone else's live claim.
+            executionTransactionTemplate.executeWithoutResult(status ->
+                    transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now()));
             throw e;
+        } catch (ClaimLostBeforeDispatch lost) {
+            // The prepare transaction (incl. any campaign transition) rolled back; no provider call is made.
+            executionTransactionTemplate.executeWithoutResult(status -> auditService.logEvent(
+                    lost.merchantId, lost.campaignId, "CLAIM_LOST_BEFORE_DISPATCH", "SYSTEM", null,
+                    "ActionIntent " + intentId + " claim no longer held at dispatch; provider not called"));
+            log.warn("ActionIntent '{}' claim lost before dispatch; provider not called", intentId);
+            return PaymentExecutionResult.failure("Claim lost before dispatch", "CLAIM_LOST_BEFORE_DISPATCH", lost.idempotencyKey);
         }
         if (!preparation.isExecutable()) {
             log.info("ActionIntent '{}' preparation halted: {}", intentId, preparation.getReason());
@@ -93,6 +128,7 @@ public class ActionExecutionService {
 
         ActionIntent intent = preparation.getIntent();
         Campaign campaign = preparation.getCampaign();
+        String heldToken = preparation.getClaimToken();
 
         // Step 2: Dispatch to the provider OUTSIDE any database transaction (no retry of state-changing calls)
         ProviderActionOutcome outcome;
@@ -107,10 +143,10 @@ public class ActionExecutionService {
 
         // Step 3: Transactional persistence of the outcome & state synchronization
         ProviderActionOutcome providerOutcome = outcome;
-        return inExecutionTransaction(() -> finalizeExecution(intent.getId(), workerId, providerOutcome));
+        return inExecutionTransaction(() -> finalizeExecution(intent.getId(), heldToken, providerOutcome));
     }
 
-    private ExecutionPreparation prepareExecution(UUID intentId, String workerId) {
+    private ExecutionPreparation prepareExecution(UUID intentId, String workerId, String callerClaimToken) {
         ActionIntent intent = actionIntentRepository.findById(intentId)
                 .orElseThrow(() -> new ResourceNotFoundException("ActionIntent not found with ID: " + intentId));
 
@@ -126,8 +162,9 @@ public class ActionExecutionService {
 
         // 3. Expiration validation
         if (intent.getExpiresAt() != null && intent.getExpiresAt().isBefore(Instant.now())) {
-            intent.setStatus(ActionIntentStatus.EXPIRED);
-            actionIntentRepository.save(intent);
+            if (!transitions.abandonClaim(intent.getId(), callerClaimToken, ActionIntentStatus.EXPIRED, Instant.now())) {
+                return ExecutionPreparation.halt(intent, "Claim no longer held by this worker (expiry not applied)");
+            }
             auditService.logEvent(
                     intent.getMerchantId(), intent.getCampaignId(),
                     "ACTION_EXPIRED", "SYSTEM", null,
@@ -189,41 +226,101 @@ public class ActionExecutionService {
                 Map.of("idempotencyKey", intent.getIdempotencyKey() != null ? intent.getIdempotencyKey() : "")
         );
 
-        return ExecutionPreparation.proceed(intent, campaign);
+        // 8. Dispatch fence (M2): CLAIMED -> EXECUTING by the claim-token holder, in the same transaction as the
+        // compliance re-check above. Not applied => another actor owns the intent: roll back and make no provider call.
+        if (!transitions.dispatch(intent.getId(), callerClaimToken, Instant.now())) {
+            throw new ClaimLostBeforeDispatch(intent);
+        }
+
+        // Note: the intent/campaign objects were loaded before the dispatch update; only their ids are used afterwards.
+        return ExecutionPreparation.proceed(intent, campaign, callerClaimToken);
+    }
+
+    /** Thrown inside the prepare transaction to roll it back when the dispatch fence does not apply. */
+    private static final class ClaimLostBeforeDispatch extends RuntimeException {
+        private final UUID merchantId;
+        private final UUID campaignId;
+        private final String idempotencyKey;
+
+        private ClaimLostBeforeDispatch(ActionIntent intent) {
+            super("claim lost before dispatch", null, false, false);
+            this.merchantId = intent.getMerchantId();
+            this.campaignId = intent.getCampaignId();
+            this.idempotencyKey = intent.getIdempotencyKey();
+        }
     }
 
     /**
-     * Maps a provider outcome to intent/campaign state (M1 design doc, "Executor mapping"). Only a synthetic mock
-     * capture reaches RECOVERED here; a Razorpay request outcome never does — recovery comes from captured evidence.
+     * Maps a provider outcome to intent/campaign state (M1 design doc "Executor mapping", M2 §4). The intent update is
+     * fenced by status EXECUTING and the worker's claim token; campaign attempts and campaign transitions are written only
+     * if it applied. Only a synthetic mock capture reaches RECOVERED here — recovery otherwise comes from captured evidence.
      */
-    private PaymentExecutionResult finalizeExecution(UUID intentId, String workerId, ProviderActionOutcome outcome) {
+    private PaymentExecutionResult finalizeExecution(UUID intentId, String claimToken, ProviderActionOutcome outcome) {
         ActionIntent intent = actionIntentRepository.findById(intentId)
                 .orElseThrow(() -> new ResourceNotFoundException("ActionIntent not found with ID: " + intentId));
 
-        Campaign campaign = campaignRepository.findById(intent.getCampaignId())
-                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + intent.getCampaignId()));
+        Campaign campaign;
 
         PaymentExecutionResult report = toReport(outcome, intent.getIdempotencyKey());
-
-        // Check if intent was already finalized by a concurrent worker
-        if (intent.getStatus().isTerminal()) {
-            log.warn("ActionIntent '{}' already reached terminal state '{}'. Skipping duplicate finalization.", intentId, intent.getStatus());
-            return report;
-        }
 
         Instant now = Instant.now();
         String attemptKey = ProviderAttemptKey.forIntent(intent.getId()).value();
 
-        // Step 1: Create & Persist CampaignAttempt (Enforcing UK uk_campaign_attempt_number)
-        CampaignAttempt attempt = new CampaignAttempt(
-                UUID.randomUUID(),
-                campaign.getId(),
-                intent.getAttemptNumber()
-        );
+        // M2 U9: a MEND-side failure where nothing reached the provider is deferred (same intent, later), up to the cap.
+        // execution_attempts counts dispatches (incremented by the dispatch fence), so it counts the deferred dispatches too.
+        OutcomeRetryPolicy retry = OutcomeRetryPolicy.classify(outcome);
+        if (retry == OutcomeRetryPolicy.DEFER && outcome instanceof ProviderActionOutcome.Rejected rejected
+                && rejected.kind() == com.mend.provider.RejectionKind.RATE_LIMITED && !resendSafe(intent)) {
+            // A 429 answered a sent POST: resending later is only allowed where the provider dedups the attempt (invariant 5).
+            retry = OutcomeRetryPolicy.REVIEW;
+        }
+        // Deferral needs the campaign in EXECUTING (it goes back to ACTION_PENDING, where the scheduler claims). Anything else
+        // (e.g. the manual path) would leave a READY intent nobody claims: route it to review instead.
+        CampaignStatus stateAtFinalize = campaignRepository.findById(intent.getCampaignId()).map(Campaign::getCurrentState).orElse(null);
+        boolean deferNow = retry == OutcomeRetryPolicy.DEFER && intent.getExecutionAttempts() <= maxDeferrals
+                && stateAtFinalize == CampaignStatus.EXECUTING;
+        // Full jitter, but never sooner than the base delay: a MEND-side cause (e.g. missing credentials) needs time to fix.
+        Instant deferUntil = deferNow ? now.plus(max(minDeferral, deferBackoff.delay(Math.max(0, intent.getExecutionAttempts() - 1)))) : null;
+
+        // Step 0: fenced intent transition. Not applied => this worker no longer owns the intent: discard the result.
+        boolean applied = deferNow ? transitions.deferFromExecuting(intentId, claimToken, deferUntil) : switch (outcome) {
+            case ProviderActionOutcome.SyntheticCaptured captured -> transitions.finalizeFromExecuting(intentId, claimToken,
+                    ActionIntentStatus.SUCCEEDED, captured.reference(), now, null);
+            case ProviderActionOutcome.LinkIssued issued -> transitions.finalizeFromExecuting(intentId, claimToken,
+                    ActionIntentStatus.AWAITING_PAYMENT, issued.link().providerLinkId(), null, now.plus(awaitingPaymentFirstCheck));
+            case ProviderActionOutcome.Unknown unknown -> transitions.finalizeFromExecuting(intentId, claimToken,
+                    ActionIntentStatus.NEEDS_RECONCILIATION, null, null, now.plus(unknownOutcomeGrace));
+            case ProviderActionOutcome.Rejected rejected -> transitions.finalizeFromExecuting(intentId, claimToken,
+                    ActionIntentStatus.FAILED, null, now, null);
+            case ProviderActionOutcome.NotSupported notSupported -> transitions.finalizeFromExecuting(intentId, claimToken,
+                    ActionIntentStatus.FAILED, null, now, null);
+            case ProviderActionOutcome.NotSent notSent -> transitions.finalizeFromExecuting(intentId, claimToken,
+                    ActionIntentStatus.FAILED, null, now, null);
+        };
+        if (!applied) {
+            String currentStatus = actionIntentRepository.findById(intentId).map(i -> i.getStatus().name()).orElse("MISSING");
+            logProviderAudit(intent, "STALE_WORKER_RESULT_DISCARDED", attemptKey,
+                    details("outcome", outcome.getClass().getSimpleName(), "providerReference", providerReference(outcome),
+                            "currentStatus", currentStatus));
+            log.warn("ActionIntent '{}' result discarded: worker no longer owns the intent (current status {})", intentId, currentStatus);
+            return report;
+        }
+        // The conditional update cleared the persistence context: reload the campaign before writing to it.
+        campaign = campaignRepository.findById(intent.getCampaignId())
+                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + intent.getCampaignId()));
+
+        // Step 1: Create & Persist CampaignAttempt (Enforcing UK uk_campaign_attempt_number).
+        // M2: a SAFE_RETRY re-executes the same intent (same attempt number), so the row may already exist: update it.
+        UUID campaignId = campaign.getId();
+        CampaignAttempt attempt = campaignAttemptRepository.findByCampaignIdAndAttemptNumber(campaignId, intent.getAttemptNumber())
+                .orElseGet(() -> new CampaignAttempt(UUID.randomUUID(), campaignId, intent.getAttemptNumber()));
         attempt.setActionType(intent.getActionType());
         attempt.setScheduledAt(intent.getScheduledAt());
         attempt.setStartedAt(intent.getClaimedAt() != null ? intent.getClaimedAt() : now);
-        switch (outcome) {
+        if (deferNow) {
+            attempt.setStatus("DEFERRED");
+            attempt.setFailureReason(OutcomeRetryPolicy.code(outcome));
+        } else switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> {
                 attempt.setStatus("SUCCESS");
                 attempt.setExternalReference(captured.reference());
@@ -260,16 +357,15 @@ public class ActionExecutionService {
 
         // Update Campaign attempt count
         campaign.setAttemptCount(intent.getAttemptNumber());
-        campaignRepository.save(campaign);
+        campaign = campaignRepository.save(campaign);
 
-        // Step 2: Handle Outcome Specific Synchronization
+        // Step 2: Handle Outcome Specific Synchronization (the intent status was already set by the fenced transition)
+        if (deferNow) {
+            deferCampaign(intent, campaign, outcome, deferUntil, attemptKey);
+            return report;
+        }
         switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> {
-                intent.setStatus(ActionIntentStatus.SUCCEEDED);
-                intent.setResponseReference(captured.reference());
-                intent.setCompletedAt(now);
-                actionIntentRepository.save(intent);
-
                 campaignLifecycleService.transitionState(
                         campaign.getMerchantId(),
                         campaign.getId(),
@@ -288,36 +384,29 @@ public class ActionExecutionService {
                 log.info("ActionIntent '{}' SUCCEEDED (SYNTHETIC). Campaign '{}' transitioned to RECOVERED.", intentId, campaign.getId());
             }
             case ProviderActionOutcome.LinkIssued issued -> {
-                // A link is not money: intent waits for captured evidence (reconciliation), campaign stays EXECUTING.
-                intent.setStatus(ActionIntentStatus.EXECUTING);
-                intent.setResponseReference(issued.link().providerLinkId());
-                actionIntentRepository.save(intent);
-
+                // A link is not money: the intent awaits captured evidence; the campaign stays EXECUTING.
                 logProviderAudit(intent, "PROVIDER_REQUEST_ACCEPTED", attemptKey,
                         details("providerReference", issued.link().providerLinkId()));
-                log.info("ActionIntent '{}' payment link issued ({}). Awaiting payment evidence.", intentId, issued.link().providerLinkId());
+                log.info("ActionIntent '{}' payment link issued ({}). AWAITING_PAYMENT.", intentId, issued.link().providerLinkId());
             }
             case ProviderActionOutcome.Unknown unknown -> {
-                // The provider may have acted: never FAILED. EXECUTING is not recycled by releaseExpiredClaims (CLAIMED only).
-                intent.setStatus(ActionIntentStatus.EXECUTING);
-                actionIntentRepository.save(intent);
-
+                // The provider may have acted: never FAILED. Handed to reconciliation (provider lookups decide).
                 logProviderAudit(intent, "PROVIDER_OUTCOME_UNKNOWN", attemptKey,
                         details("cause", unknown.cause(), "httpStatus", unknown.httpStatus()));
-                log.warn("ActionIntent '{}' provider outcome UNKNOWN ({}). Left EXECUTING for reconciliation.", intentId, unknown.cause());
+                log.warn("ActionIntent '{}' provider outcome UNKNOWN ({}). NEEDS_RECONCILIATION.", intentId, unknown.cause());
             }
             case ProviderActionOutcome.Rejected rejected -> {
-                failIntentAndCampaign(intent, campaign, now, "Provider request rejected: " + rejected.kind());
+                failOrRoute(intent, campaign, retry, outcome, "Provider request rejected: " + rejected.kind());
                 logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
                         details("kind", rejected.kind().name(), "code", rejected.code(), "httpStatus", rejected.httpStatus()));
             }
             case ProviderActionOutcome.NotSupported notSupported -> {
-                failIntentAndCampaign(intent, campaign, now, "Provider operation not supported: " + notSupported.reason());
+                failOrRoute(intent, campaign, retry, outcome, "Provider operation not supported: " + notSupported.reason());
                 logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
                         details("kind", "NOT_SUPPORTED", "code", "PROVIDER_OPERATION_NOT_SUPPORTED", "reason", notSupported.reason()));
             }
             case ProviderActionOutcome.NotSent notSent -> {
-                failIntentAndCampaign(intent, campaign, now, "Provider request not sent: " + notSent.cause());
+                failOrRoute(intent, campaign, retry, outcome, "Provider request not sent: " + notSent.cause());
                 logProviderAudit(intent, "PROVIDER_REQUEST_NOT_SENT", attemptKey,
                         details("code", "PROVIDER_UNREACHABLE", "cause", notSent.cause()));
             }
@@ -326,12 +415,78 @@ public class ActionExecutionService {
         return report;
     }
 
-    /** Existing FAILURE path: intent FAILED, campaign EXECUTING -> FAILED -> EXHAUSTED. */
-    private void failIntentAndCampaign(ActionIntent intent, Campaign campaign, Instant completedAt, String reason) {
-        intent.setStatus(ActionIntentStatus.FAILED);
-        intent.setCompletedAt(completedAt);
-        actionIntentRepository.save(intent);
+    private static String providerReference(ProviderActionOutcome outcome) {
+        return switch (outcome) {
+            case ProviderActionOutcome.LinkIssued issued -> issued.link().providerLinkId();
+            case ProviderActionOutcome.SyntheticCaptured captured -> captured.reference();
+            default -> null;
+        };
+    }
 
+    private boolean resendSafe(ActionIntent intent) {
+        try {
+            return capabilities.supportsIdempotentResend(ActionType.valueOf(intent.getActionType()));
+        } catch (IllegalArgumentException | NullPointerException unknownType) {
+            return false;
+        }
+    }
+
+    private static java.time.Duration max(java.time.Duration a, java.time.Duration b) {
+        return a.compareTo(b) >= 0 ? a : b;
+    }
+
+    /** M2 U9: intent already READY again; campaign EXECUTING -> ACTION_PENDING (RETRY_DEFERRED) so the scheduler picks it up. */
+    private void deferCampaign(ActionIntent intent, Campaign campaign, ProviderActionOutcome outcome, Instant deferUntil, String attemptKey) {
+        String code = OutcomeRetryPolicy.code(outcome);
+        // What happened at the provider boundary, then what MEND decided.
+        switch (outcome) {
+            case ProviderActionOutcome.NotSent notSent -> logProviderAudit(intent, "PROVIDER_REQUEST_NOT_SENT", attemptKey,
+                    details("code", "PROVIDER_UNREACHABLE", "cause", notSent.cause()));
+            case ProviderActionOutcome.Rejected rejected -> logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
+                    details("kind", rejected.kind().name(), "code", rejected.code(), "httpStatus", rejected.httpStatus()));
+            default -> { }
+        }
+        if (campaign.getCurrentState() == CampaignStatus.EXECUTING) {
+            campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.ACTION_PENDING,
+                    "RETRY_DEFERRED: " + code + " for ActionIntent " + intent.getId(), "SYSTEM", null);
+        }
+        logProviderAudit(intent, "EXECUTION_DEFERRED", attemptKey, details("code", code,
+                "executionAttempts", intent.getExecutionAttempts(), "maxDeferrals", maxDeferrals, "scheduledAt", deferUntil.toString()));
+        log.warn("ActionIntent '{}' deferred ({}), attempt {}/{}; next try at {}", intent.getId(), code,
+                intent.getExecutionAttempts(), maxDeferrals, deferUntil);
+    }
+
+    /**
+     * M2 U9: a failure that is ours (deferral cap reached) or needs a human (action not automatable) is routed to review:
+     * campaign EXECUTING -> FAILED -> ELIGIBLE (approval requires ELIGIBLE). Only TERMINAL failures exhaust the campaign.
+     */
+    private void failOrRoute(ActionIntent intent, Campaign campaign, OutcomeRetryPolicy retry, ProviderActionOutcome outcome, String reason) {
+        if (retry == OutcomeRetryPolicy.TERMINAL || retry == OutcomeRetryPolicy.NONE) {
+            failCampaign(intent, campaign, reason);
+            return;
+        }
+        String code = OutcomeRetryPolicy.code(outcome);
+        String reviewCode = retry == OutcomeRetryPolicy.DEFER ? "OPERATOR_ACTION_REQUIRED:" + code : "HUMAN_DECISION_REQUIRED:" + code;
+        CampaignStatus state = campaign.getCurrentState();
+        if (state == CampaignStatus.EXECUTING) {
+            campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.FAILED,
+                    "Action execution failed: " + reason, "SYSTEM", null);
+            state = CampaignStatus.FAILED;
+        }
+        if (state == CampaignStatus.FAILED || state == CampaignStatus.ACTION_PENDING) {
+            campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.ELIGIBLE,
+                    reviewCode + ": routed to human review", "SYSTEM", null);
+        }
+        humanApprovalService.createReview(intent.getMerchantId(), campaign.getId(), reviewCode + ": intent " + intent.getId()
+                + (retry == OutcomeRetryPolicy.DEFER ? " deferred " + intent.getExecutionAttempts() + " times; fix the cause, then approve"
+                                                     : " cannot run automatically; human decision required"));
+        auditService.logEvent(intent.getMerchantId(), campaign.getId(), "EXECUTION_ROUTED_TO_REVIEW", "SYSTEM", null,
+                "intent=" + intent.getId() + " code=" + reviewCode + " execution_attempts=" + intent.getExecutionAttempts());
+        log.warn("ActionIntent '{}' FAILED ({}). Campaign '{}' routed to review (ELIGIBLE), not exhausted.", intent.getId(), reviewCode, campaign.getId());
+    }
+
+    /** Existing FAILURE path for the campaign: EXECUTING -> FAILED -> EXHAUSTED (the intent is already FAILED). */
+    private void failCampaign(ActionIntent intent, Campaign campaign, String reason) {
         campaignLifecycleService.transitionState(
                 campaign.getMerchantId(),
                 campaign.getId(),
@@ -412,8 +567,15 @@ public class ActionExecutionService {
         private final Campaign campaign;
         private final String reason;
         private final PaymentExecutionResult haltedResult;
+        private final String claimToken;
 
         private ExecutionPreparation(boolean executable, ActionIntent intent, Campaign campaign, String reason, PaymentExecutionResult haltedResult) {
+            this(executable, intent, campaign, reason, haltedResult, null);
+        }
+
+        private ExecutionPreparation(boolean executable, ActionIntent intent, Campaign campaign, String reason,
+                                     PaymentExecutionResult haltedResult, String claimToken) {
+            this.claimToken = claimToken;
             this.executable = executable;
             this.intent = intent;
             this.campaign = campaign;
@@ -421,8 +583,12 @@ public class ActionExecutionService {
             this.haltedResult = haltedResult;
         }
 
-        public static ExecutionPreparation proceed(ActionIntent intent, Campaign campaign) {
-            return new ExecutionPreparation(true, intent, campaign, null, null);
+        public String getClaimToken() {
+            return claimToken;
+        }
+
+        public static ExecutionPreparation proceed(ActionIntent intent, Campaign campaign, String claimToken) {
+            return new ExecutionPreparation(true, intent, campaign, null, null, claimToken);
         }
 
         public static ExecutionPreparation halt(ActionIntent intent, String reason) {

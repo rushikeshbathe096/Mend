@@ -325,7 +325,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         // RETRY_PAYMENT in razorpay mode is NotSupported locally: zero HTTP calls, intent FAILED. See ADR-001.
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ACTION_PENDING, "Action pending execution", "SYSTEM", null);
         ActionIntent claimed = claim(intent);
-        var report = actionExecutionService.executeActionIntent(claimed.getId(), "worker-phase20");
+        // M2 behaviour change: the executor requires the caller's claim token (fail closed), see ADR-002
+        var report = actionExecutionService.executeActionIntent(claimed.getId(), "worker-phase20", claimed.getClaimToken());
 
         assertEquals(PaymentExecutionStatus.FAILURE, report.getStatus());
         assertEquals("PROVIDER_OPERATION_NOT_SUPPORTED", report.getResponseCode());
@@ -338,7 +339,10 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         // Step 7 (M1 behaviour change): no request outcome may set RECOVERED; the campaign is exhausted, not recovered.
         Campaign finalCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, finalCampaign.getCurrentState());
-        assertEquals(CampaignStatus.EXHAUSTED, finalCampaign.getCurrentState());
+        // M2 behaviour change: a debit that cannot run automatically goes to human review (campaign ELIGIBLE), it no longer
+        // exhausts the campaign, see ADR-002 decision 10
+        assertEquals(CampaignStatus.ELIGIBLE, finalCampaign.getCurrentState());
+        assertNotEquals(CampaignStatus.EXHAUSTED, finalCampaign.getCurrentState());
 
         // Step 8: Revenue Metrics Verification
         AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, null);
@@ -362,12 +366,13 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         RAZORPAY_STUB.stub("POST", "/v1/payment_links", 200, requestBody ->
                 fixture01.replace("mnd_rec_1791176340", readJson(requestBody).get("reference_id").asString()));
 
-        var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20");
+        var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20", fixture.intent().getClaimToken());
 
         assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
         assertEquals("plink_Tk6TAI6WoeOTDh", report.getExternalReference());
         ActionIntent storedIntent = actionIntentRepository.findById(fixture.intent().getId()).orElseThrow();
-        assertEquals(ActionIntentStatus.EXECUTING, storedIntent.getStatus());
+        // M2 behaviour change: a live payment link is AWAITING_PAYMENT (was EXECUTING), see ADR-002
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, storedIntent.getStatus());
         assertEquals("plink_Tk6TAI6WoeOTDh", storedIntent.getResponseReference());
         Campaign storedCampaign = campaignRepository.findById(fixture.campaign().getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, storedCampaign.getCurrentState());
@@ -397,7 +402,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         RAZORPAY_STUB.stub("POST", "/v1/payment_links", 400, recordedBody("03_create_link_extra_fields"));
         RAZORPAY_STUB.stub("GET", "/v1/payment_links?reference_id=" + key, 200, "{\"payment_links\":[]}");
 
-        var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20");
+        var report = actionExecutionService.executeActionIntent(fixture.intent().getId(), "worker-phase20", fixture.intent().getClaimToken());
 
         assertEquals(PaymentExecutionStatus.FAILURE, report.getStatus());
         assertEquals("BAD_REQUEST_ERROR", report.getResponseCode());
@@ -465,6 +470,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
                 ActionIntentStatus.CLAIMED, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION", Instant.now());
         intent.setClaimedAt(Instant.now());
         intent.setWorkerId("worker-phase20");
+        // M2: a CLAIMED intent always carries a claim token (fixture correction; the dispatch fence requires it), see ADR-002
+        intent.setClaimToken(UUID.randomUUID().toString());
         return new LinkFixture(campaign, actionIntentRepository.saveAndFlush(intent));
     }
 
@@ -473,6 +480,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         stored.setStatus(ActionIntentStatus.CLAIMED);
         stored.setClaimedAt(Instant.now());
         stored.setWorkerId("worker-phase20");
+        // M2: a CLAIMED intent always carries a claim token (fixture correction; the dispatch fence requires it), see ADR-002
+        stored.setClaimToken(UUID.randomUUID().toString());
         return actionIntentRepository.saveAndFlush(stored);
     }
 

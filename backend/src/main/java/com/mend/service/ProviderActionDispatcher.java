@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -30,17 +32,37 @@ public class ProviderActionDispatcher {
     private static final Logger log = LoggerFactory.getLogger(ProviderActionDispatcher.class);
 
     static final String RECURRING_DEBIT_NOT_ENABLED = "RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2";
+    static final String MANUAL_REVIEW_NOT_AUTOMATED = "MANUAL_REVIEW_NOT_AUTOMATED";
 
     private final PaymentProvider paymentProvider;
     private final ProviderCapabilities capabilities;
     private final WebhookAmountResolver amountResolver;
     /** Mock mode only; resolved once so a wiring mistake fails at startup instead of hiding as an unknown outcome. */
     private final SyntheticDebitSimulator syntheticDebitSimulator;
+    /** M2: every link expires, so AWAITING_PAYMENT always terminates. Razorpay: expire_by ≥ 15 min ahead, ≤ 6 months (DOC). */
+    private final Duration linkTtl;
 
+    static final Duration MIN_LINK_TTL = Duration.ofMinutes(15);
+    static final Duration MAX_LINK_TTL = Duration.ofDays(180);
+
+    /** Default link TTL (72 h, ADR-002 OD-2). */
     public ProviderActionDispatcher(PaymentProvider paymentProvider,
                                     ProviderCapabilities capabilities,
                                     WebhookAmountResolver amountResolver,
                                     ObjectProvider<SyntheticDebitSimulator> syntheticDebitSimulator) {
+        this(paymentProvider, capabilities, amountResolver, syntheticDebitSimulator, 72);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProviderActionDispatcher(PaymentProvider paymentProvider,
+                                    ProviderCapabilities capabilities,
+                                    WebhookAmountResolver amountResolver,
+                                    ObjectProvider<SyntheticDebitSimulator> syntheticDebitSimulator,
+                                    @org.springframework.beans.factory.annotation.Value("${mend.recovery.link-ttl-hours:72}") long linkTtlHours) {
+        this.linkTtl = Duration.ofHours(linkTtlHours);
+        if (linkTtl.compareTo(MIN_LINK_TTL) < 0 || linkTtl.compareTo(MAX_LINK_TTL) > 0) {
+            throw new IllegalStateException("mend.recovery.link-ttl-hours must be between 15 minutes and 180 days, was " + linkTtlHours + "h");
+        }
         this.paymentProvider = paymentProvider;
         this.capabilities = capabilities;
         this.amountResolver = amountResolver;
@@ -57,8 +79,8 @@ public class ProviderActionDispatcher {
         return switch (actionType) {
             case REQUEST_CUSTOMER_ACTION -> issuePaymentLink(merchant, key, intent, campaign);
             case RETRY_PAYMENT -> syntheticDebitOrNotSupported(merchant, key, intent, RECURRING_DEBIT_NOT_ENABLED);
-            // Mock mode simulates it as before; Razorpay mode never automates manual review.
-            case MANUAL_REVIEW -> syntheticDebitOrNotSupported(merchant, key, intent, "MANUAL_REVIEW_NOT_AUTOMATED");
+            // M2 U9 (design rule 9): manual review never reaches the provider, in any mode; the executor routes it to review.
+            case MANUAL_REVIEW -> new ProviderActionOutcome.NotSupported(MANUAL_REVIEW_NOT_AUTOMATED);
         };
     }
 
@@ -81,7 +103,8 @@ public class ProviderActionDispatcher {
             if (amount.isEmpty()) {
                 return new ProviderActionOutcome.Rejected(RejectionKind.LOCAL_PRECONDITION, "AMOUNT_UNRESOLVED", null, null);
             }
-            command = new CreatePaymentLink(key, amount.get(), "Payment for campaign " + campaign.getId(), null, intent.getId());
+            command = new CreatePaymentLink(key, amount.get(), "Payment for campaign " + campaign.getId(), Instant.now().plus(linkTtl),
+                    intent.getId());
         } catch (RuntimeException e) {
             // Nothing has been sent yet: a local failure, not an unknown provider outcome.
             log.error("event=provider_precall_exception intent_id={} exception={}", intent.getId(), e.getClass().getSimpleName());

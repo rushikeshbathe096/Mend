@@ -191,7 +191,8 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING for reconciliation, see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, updatedIntent.getStatus());
 
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
         assertNotEquals(CampaignStatus.RECOVERED, updatedCampaign.getCurrentState());
@@ -219,7 +220,8 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING, never blindly retried, see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, updatedIntent.getStatus());
 
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
         // M1 behaviour change: campaign stays EXECUTING (not FAILED) while the outcome is unknown, see ADR-001
@@ -265,10 +267,12 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
 
         ActionIntent intent = createActionIntent(ActionIntentStatus.CLAIMED, Instant.now().minusSeconds(5), ActionType.RETRY_PAYMENT.name());
         intent.setComplianceDecisionId(blockedDecision.getId());
+        // M2: a CLAIMED intent always carries a claim token (fixture correction), see ADR-002
+        intent.setClaimToken("phase10-token");
         actionIntentRepository.save(intent);
 
         assertThrows(ComplianceBlockedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), null));
+                actionExecutionService.executeActionIntent(intent.getId(), null, "phase10-token"));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
     }
@@ -278,10 +282,12 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
     void testTenantIsolationEnforcement() {
         ActionIntent intent = createActionIntent(ActionIntentStatus.CLAIMED, Instant.now().minusSeconds(5), ActionType.RETRY_PAYMENT.name());
         intent.setMerchantId(tenantBId); // Mismatched tenant
+        // M2: a CLAIMED intent always carries a claim token (fixture correction), see ADR-002
+        intent.setClaimToken("phase10-token");
         actionIntentRepository.save(intent);
 
         assertThrows(TenantAccessDeniedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), null));
+                actionExecutionService.executeActionIntent(intent.getId(), null, "phase10-token"));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
     }

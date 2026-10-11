@@ -95,6 +95,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         complianceDecision = complianceDecisionRepository.save(complianceDecision);
     }
 
+    // M2 behaviour change: executor calls pass the fixture's claim token ("token-test-1"); the executor fails closed without it, see ADR-002
     private ActionIntent createClaimedIntent(String idempotencyKey) {
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(),
@@ -120,7 +121,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         String key = "intent:camp-1:attempt_1:RETRY_PAYMENT";
         ActionIntent intent = createClaimedIntent(key);
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         // Assert 1: Result is SUCCESS
         assertNotNull(result);
@@ -160,7 +161,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         String key = "intent:camp-2:attempt_1:RETRY_PAYMENT";
         ActionIntent intent = createClaimedIntent(key);
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         // Assert 1: Result is FAILURE
         assertNotNull(result);
@@ -191,7 +192,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         String key = "intent:camp-3:attempt_1:RETRY_PAYMENT";
         ActionIntent intent = createClaimedIntent(key);
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         // Assert 1: Result is not success
         assertNotNull(result);
@@ -201,7 +202,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         // Assert 2: ActionIntent left EXECUTING for reconciliation
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING (was FAILED), see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING, updatedIntent.getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, updatedIntent.getStatus());
 
         // Assert 3: Campaign is not RECOVERED
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();
@@ -231,7 +233,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         actionIntentRepository.save(intent);
 
         assertThrows(ComplianceBlockedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1"));
+                actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken()));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
@@ -246,7 +248,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
 
         ActionIntent intent = createClaimedIntent("intent:camp-5:attempt_1:RETRY_PAYMENT");
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         assertTrue(result.isFailure());
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
@@ -259,7 +261,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         intent.setExpiresAt(Instant.now().minusSeconds(300));
         actionIntentRepository.save(intent);
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         assertTrue(result.isFailure());
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
@@ -275,7 +277,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         actionIntentRepository.save(intent);
 
         assertThrows(TenantAccessDeniedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1"));
+                actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken()));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
     }
@@ -287,7 +289,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         intent.setStatus(ActionIntentStatus.SUCCEEDED);
         actionIntentRepository.save(intent);
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
         assertTrue(result.isFailure());
@@ -303,7 +305,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         complianceDecisionRepository.deleteAll();
 
         assertThrows(ComplianceBlockedException.class, () ->
-                actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1"));
+                actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken()));
 
         assertEquals(0, mockPaymentProviderClient.getInvocationCount());
         ActionIntent updatedIntent = actionIntentRepository.findById(intent.getId()).orElseThrow();
@@ -316,7 +318,7 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         String expectedKey = "intent:custom_camp_key_123:attempt_1:RETRY_PAYMENT";
         ActionIntent intent = createClaimedIntent(expectedKey);
 
-        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1");
+        PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken());
 
         assertNotNull(result);
         assertEquals(expectedKey, result.getIdempotencyKey());
