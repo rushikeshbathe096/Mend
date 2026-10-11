@@ -33,6 +33,7 @@ Out of scope in M2: debit wiring, AI service, CI/deployment, metrics registratio
 - Baseline for M2: 519 run / 0 failures / 0 errors / 1 skipped — `docs/m1/m1-final-test-run-summary.txt` (raw logs are local-only).
 - Never delete or weaken an existing test. If a legitimate behaviour change breaks one: keep it, change the assertion, put `// M2 behaviour change: <reason>, see ADR-002` above it, and add a regression test.
 - Concurrency tests use real PostgreSQL, real threads and latches; simulate time with SQL updates, not long sleeps.
+- Test databases: every `./mvnw test` run creates its own empty database `mend_test_<epoch>_<random>` on the docker-compose Postgres (port 5433), Flyway migrates it from V1, and it is dropped when the run ends (`com.mend.testsupport.IsolatedTestDatabase`, auto-registered via `META-INF/services` + `junit-platform.properties`). Stale `mend_test_*` databases older than 24 h are dropped at the next start. `application-test.properties` has no fallback URL, so tests never touch the dev database `mend`. Override the server with `-Dmend.test.db.server-url=jdbc:postgresql://host:port/postgres` (also `mend.test.db.user` / `.password`, or `MEND_TEST_DB_*` env vars). Never hand-edit a database to make tests pass. Classes within one run still share that run's database, so keep "park other rows" / own-row cleanup patterns.
 - Provider contract fixtures: `backend/src/test/resources/razorpay/recorded/` (real) and `.../doc-derived/` (with `_source`).
 
 ## Code style
