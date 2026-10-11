@@ -8,6 +8,7 @@ import com.mend.domain.entity.CampaignAttempt;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
@@ -16,6 +17,7 @@ import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.provider.PaymentEvidenceStatus;
 import com.mend.provider.PaymentLinkState;
 import com.mend.provider.PaymentStatusInterpreter;
+import com.mend.provider.ProviderAttemptKey;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +25,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,6 +44,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
     private final ActionIntentTransitions transitions;
+    private final HumanApprovalService humanApprovalService;
 
     /** Evidence may move an intent only out of these statuses (M2 §4). */
     private static final java.util.Set<ActionIntentStatus> EVIDENCE_FROM = java.util.EnumSet.of(
@@ -59,7 +64,8 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             AuditService auditService,
             ObjectMapper objectMapper,
             PaymentStatusInterpreter evidenceMapper,
-            ActionIntentTransitions transitions) {
+            ActionIntentTransitions transitions,
+            HumanApprovalService humanApprovalService) {
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -70,7 +76,22 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         this.objectMapper = objectMapper;
         this.evidenceMapper = evidenceMapper;
         this.transitions = transitions;
+        this.humanApprovalService = humanApprovalService;
     }
+
+    /**
+     * M2 U8 (ADR-002 decision 9, invariant 15): what a webhook correlates to. Only {@link Intent} may finalize an intent;
+     * a {@link CampaignLevel} match (the original payment, or the subscription) never does.
+     */
+    private sealed interface Correlation {
+        record Intent(ActionIntent intent) implements Correlation {}
+        /** More than one intent carries the same provider reference: impossible after U6, so surfaced, never guessed. */
+        record Ambiguous(String reference, List<ActionIntent> intents) implements Correlation {}
+        record CampaignLevel(List<Campaign> campaigns, CampaignMatch matchedBy) implements Correlation {}
+        record None() implements Correlation {}
+    }
+
+    private enum CampaignMatch { PROVIDER_PAYMENT_ID, PAYMENT_ID, SUBSCRIPTION_ID }
 
     @Override
     @Transactional
@@ -82,14 +103,21 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         // Parse payload details safely
         PayloadDetails payloadDetails = parsePayloadDetails(event);
 
-        // Correlate execution attempt
-        ActionIntent intent = correlateActionIntent(event, payloadDetails);
-        if (intent == null) {
-            log.debug("No matching ActionIntent found for webhook event [eventId={}, externalEventId={}]",
-                    event.getId(), event.getExternalEventId());
-            return ReconciliationResult.unmatched("No matching ActionIntent found");
-        }
+        return switch (correlate(event, payloadDetails)) {
+            case Correlation.Intent(ActionIntent intent) -> reconcileIntent(event, payloadDetails, intent);
+            case Correlation.Ambiguous(String reference, List<ActionIntent> intents) -> ambiguousReference(event, reference, intents);
+            case Correlation.CampaignLevel(List<Campaign> campaigns, CampaignMatch matchedBy) ->
+                    reconcileCampaignLevel(event, payloadDetails, campaigns, matchedBy);
+            case Correlation.None() -> {
+                log.debug("No matching ActionIntent found for webhook event [eventId={}, externalEventId={}]",
+                        event.getId(), event.getExternalEventId());
+                yield ReconciliationResult.unmatched("No matching ActionIntent found");
+            }
+        };
+    }
 
+    /** Intent-specific evidence (notes, idempotency key, provider reference): the only path that finalizes an intent. */
+    private ReconciliationResult reconcileIntent(WebhookEvent event, PayloadDetails payloadDetails, ActionIntent intent) {
         // Validate Tenant Isolation (Strict Tenant Ownership Check)
         if (event.getMerchantId() != null && !event.getMerchantId().equals(intent.getMerchantId())) {
             log.warn("Tenant mismatch during reconciliation! Event merchantId='{}', Intent merchantId='{}', ActionIntent='{}'",
@@ -237,76 +265,176 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
         }
     }
 
-    private ActionIntent correlateActionIntent(WebhookEvent event, PayloadDetails payload) {
-        // Strategy 1: Mend Idempotency Key
+    private Correlation correlate(WebhookEvent event, PayloadDetails payload) {
+        // 1. Mend idempotency key
         if (payload.idempotencyKey() != null && !payload.idempotencyKey().isBlank()) {
             Optional<ActionIntent> byKey = actionIntentRepository.findByIdempotencyKey(payload.idempotencyKey());
             if (byKey.isPresent()) {
                 log.info("Correlated ActionIntent '{}' by idempotencyKey '{}'", byKey.get().getId(), payload.idempotencyKey());
-                return byKey.get();
+                return new Correlation.Intent(byKey.get());
             }
         }
 
-        // Strategy 2: ActionIntent ID in payload notes
+        // 2. Intent id in payload notes (mend_intent_id, legacy action_intent_id)
         if (payload.actionIntentId() != null) {
             try {
                 UUID intentId = UUID.fromString(payload.actionIntentId());
                 Optional<ActionIntent> byId = actionIntentRepository.findById(intentId);
                 if (byId.isPresent()) {
                     log.info("Correlated ActionIntent '{}' by payload actionIntentId", intentId);
-                    return byId.get();
+                    return new Correlation.Intent(byId.get());
                 }
-            } catch (Exception ignored) {}
+            } catch (IllegalArgumentException ignored) {
+                // untrusted payload: not a UUID, so it identifies nothing
+            }
         }
 
-        // Strategy 3: External Provider Payment Reference
+        // 3. Provider reference the intent recorded (payment id, then payment link id)
+        for (String reference : new String[] {payload.paymentId(), payload.paymentLinkId()}) {
+            if (reference == null || reference.isBlank()) {
+                continue;
+            }
+            List<ActionIntent> byRef = actionIntentRepository.findAllByResponseReference(reference);
+            if (byRef.size() > 1) {
+                return new Correlation.Ambiguous(reference, byRef);
+            }
+            if (byRef.size() == 1) {
+                log.info("Correlated ActionIntent '{}' by provider reference '{}'", byRef.get(0).getId(), reference);
+                return new Correlation.Intent(byRef.get(0));
+            }
+        }
+
+        // Campaign level (old strategies 4 and 5): never an intent.
+        if (event.getMerchantId() == null) {
+            return new Correlation.None();
+        }
         if (payload.paymentId() != null && !payload.paymentId().isBlank()) {
-            Optional<ActionIntent> byRef = actionIntentRepository.findByResponseReference(payload.paymentId());
-            if (byRef.isPresent()) {
-                log.info("Correlated ActionIntent '{}' by provider paymentId '{}'", byRef.get().getId(), payload.paymentId());
-                return byRef.get();
+            List<Campaign> byProviderPayment = campaignRepository.findAllByMerchantIdAndProviderPaymentId(event.getMerchantId(), payload.paymentId());
+            if (!byProviderPayment.isEmpty()) {
+                return new Correlation.CampaignLevel(byProviderPayment, CampaignMatch.PROVIDER_PAYMENT_ID);
             }
         }
-
-        // Strategy 3b: Payment link id (ActionExecutionService stores the issued link id as responseReference)
-        if (payload.paymentLinkId() != null && !payload.paymentLinkId().isBlank()) {
-            Optional<ActionIntent> byLink = actionIntentRepository.findByResponseReference(payload.paymentLinkId());
-            if (byLink.isPresent()) {
-                log.info("Correlated ActionIntent '{}' by payment link id '{}'", byLink.get().getId(), payload.paymentLinkId());
-                return byLink.get();
-            }
-        }
-
-        // Strategy 4: Campaign ID & Payment ID Correlation
         String paymentIdToMatch = payload.paymentId() != null ? payload.paymentId() : event.getExternalEventId();
-        if (paymentIdToMatch != null && !paymentIdToMatch.isBlank() && event.getMerchantId() != null) {
-            Optional<Campaign> campaignOpt = campaignRepository.findByMerchantIdAndPaymentId(event.getMerchantId(), paymentIdToMatch);
-            if (campaignOpt.isPresent()) {
-                UUID campaignId = campaignOpt.get().getId();
-                Optional<ActionIntent> latestIntent = actionIntentRepository.findFirstByCampaignIdOrderByCreatedAtDesc(campaignId);
-                if (latestIntent.isPresent()) {
-                    log.info("Correlated ActionIntent '{}' via Campaign '{}' paymentId '{}'",
-                            latestIntent.get().getId(), campaignId, paymentIdToMatch);
-                    return latestIntent.get();
-                }
+        if (paymentIdToMatch != null && !paymentIdToMatch.isBlank()) {
+            Optional<Campaign> byPaymentId = campaignRepository.findByMerchantIdAndPaymentId(event.getMerchantId(), paymentIdToMatch);
+            if (byPaymentId.isPresent()) {
+                return new Correlation.CampaignLevel(List.of(byPaymentId.get()), CampaignMatch.PAYMENT_ID);
+            }
+        }
+        if (payload.subscriptionId() != null && !payload.subscriptionId().isBlank()) {
+            List<Campaign> bySubscription = campaignRepository.findAllByMerchantIdAndSubscriptionId(event.getMerchantId(), payload.subscriptionId());
+            if (!bySubscription.isEmpty()) {
+                return new Correlation.CampaignLevel(bySubscription, CampaignMatch.SUBSCRIPTION_ID);
+            }
+        }
+        return new Correlation.None();
+    }
+
+    /** >1 intent with one provider reference: change nothing, say so loudly, and hand it to a human (per campaign). */
+    private ReconciliationResult ambiguousReference(WebhookEvent event, String reference, List<ActionIntent> intents) {
+        log.error("event=ambiguous_provider_reference reference={} intent_count={} webhook_event_id={}",
+                reference, intents.size(), event.getId());
+        intents.stream()
+                .filter(intent -> event.getMerchantId() == null || event.getMerchantId().equals(intent.getMerchantId()))
+                .map(intent -> List.of(intent.getMerchantId(), intent.getCampaignId()))
+                .distinct()
+                .forEach(ids -> {
+                    auditService.logEvent(ids.get(0), ids.get(1), "AMBIGUOUS_PROVIDER_REFERENCE", "SYSTEM", null,
+                            "reference=" + reference + " intents=" + intents.size() + " webhook_event=" + event.getId());
+                    humanApprovalService.createReview(ids.get(0), ids.get(1), "AMBIGUOUS_PROVIDER_REFERENCE: " + intents.size()
+                            + " intents carry provider reference " + reference + "; no state changed; human decision required");
+                });
+        return ReconciliationResult.unsupported("Provider reference " + reference + " matches " + intents.size() + " intents; not applied");
+    }
+
+    /**
+     * The original payment (or the subscription) — not a MEND action. A failure changes nothing. A capture of the original
+     * payment is real money that MEND did not recover: the campaign ends with attribution ORIGINAL_PAYMENT_LATE_CAPTURE and
+     * open intents are cancelled; any link or debit that may already exist is flagged DUPLICATE_PAYMENT_RISK, because the
+     * payment-link cancel endpoint is not verified and recorded (ADR-002), so MEND cannot cancel it at the provider.
+     */
+    private ReconciliationResult reconcileCampaignLevel(WebhookEvent event, PayloadDetails payload, List<Campaign> matched,
+                                                        CampaignMatch matchedBy) {
+        Boolean outcome = evidencedOutcome(payload);
+        List<Campaign> campaigns = matched.stream()
+                .filter(campaign -> event.getMerchantId().equals(campaign.getMerchantId()))
+                .toList();
+        // A captured payment on the subscription may belong to another billing cycle: not evidence for this invoice.
+        // The event that created the campaign is not a later capture of it.
+        boolean lateCapture = Boolean.TRUE.equals(outcome) && matchedBy != CampaignMatch.SUBSCRIPTION_ID
+                && payload.paymentId() != null && !campaigns.isEmpty()
+                && campaigns.stream().noneMatch(campaign -> campaign.getPaymentId().equals(event.getExternalEventId()));
+        if (!lateCapture) {
+            log.info("event=original_payment_event webhook_event_id={} matched_by={} campaigns={} outcome={}",
+                    event.getId(), matchedBy, campaigns.size(), outcome == null ? "NONE" : (outcome ? "CAPTURED" : "FAILED"));
+            return ReconciliationResult.unsupported("Campaign-level event (" + matchedBy + "); recovery intents are not changed");
+        }
+
+        Instant now = Instant.now();
+        UUID firstApplied = null;
+        for (Campaign campaign : campaigns) {
+            if (lateCapture(campaign.getId(), payload.paymentId(), event, now)) {
+                firstApplied = firstApplied == null ? campaign.getId() : firstApplied;
+            }
+        }
+        if (firstApplied == null) {
+            return ReconciliationResult.alreadyFinalized(null, campaigns.get(0).getId(),
+                    "Original payment " + payload.paymentId() + " captured; campaign already terminal");
+        }
+        event.setProcessingStatus(WebhookEventStatus.PROCESSED);
+        event.setProcessedAt(now);
+        webhookEventRepository.save(event);
+        return ReconciliationResult.success(null, firstApplied, payload.paymentId(),
+                "Original payment captured late; campaign closed with attribution ORIGINAL_PAYMENT_LATE_CAPTURE");
+    }
+
+    /** One campaign, under row locks on the campaign and its intents (no claim or dispatch can slip between read and cancel). */
+    private boolean lateCapture(UUID campaignId, String paymentId, WebhookEvent event, Instant now) {
+        Campaign campaign = campaignRepository.findByIdForUpdate(campaignId).orElseThrow();
+        CampaignStatus state = campaign.getCurrentState();
+        if (campaignStateMachine.isTerminal(state)) {
+            log.info("event=original_payment_captured_on_terminal_campaign campaign_id={} state={} payment={}", campaignId, state, paymentId);
+            auditService.logEvent(campaign.getMerchantId(), campaignId, "ORIGINAL_PAYMENT_CAPTURED_ON_TERMINAL_CAMPAIGN", "SYSTEM", null,
+                    "payment=" + paymentId + " campaign_state=" + state + " webhook_event=" + event.getId());
+            return false;
+        }
+
+        List<String> possiblyLive = new ArrayList<>();
+        for (ActionIntent intent : actionIntentRepository.findByCampaignIdForUpdate(campaignId)) {
+            ActionIntentStatus status = intent.getStatus();
+            if (!transitions.cancelNonTerminal(intent.getId(), now)) {
+                continue;   // already terminal
+            }
+            auditService.logEvent(intent.getMerchantId(), campaignId, "INTENT_CANCELLED_ORIGINAL_PAYMENT_CAPTURED", "SYSTEM", null,
+                    "intent=" + intent.getId() + " " + status + "->CANCELLED payment=" + paymentId);
+            // CLAIMED cannot dispatch any more (the dispatch fence needs CLAIMED); these may already exist at the provider.
+            if (status == ActionIntentStatus.EXECUTING || status == ActionIntentStatus.NEEDS_RECONCILIATION
+                    || status == ActionIntentStatus.AWAITING_PAYMENT) {
+                possiblyLive.add(isPaymentLinkReference(intent.getResponseReference())
+                        ? intent.getResponseReference()
+                        : "attempt_key=" + ProviderAttemptKey.forIntent(intent.getId()).value() + " (" + intent.getActionType() + ", " + status + ")");
             }
         }
 
-        // Strategy 5: Subscription ID Correlation
-        if (payload.subscriptionId() != null && !payload.subscriptionId().isBlank() && event.getMerchantId() != null) {
-            Optional<Campaign> campaignOpt = campaignRepository.findByMerchantIdAndSubscriptionId(event.getMerchantId(), payload.subscriptionId());
-            if (campaignOpt.isPresent()) {
-                UUID campaignId = campaignOpt.get().getId();
-                Optional<ActionIntent> latestIntent = actionIntentRepository.findFirstByCampaignIdOrderByCreatedAtDesc(campaignId);
-                if (latestIntent.isPresent()) {
-                    log.info("Correlated ActionIntent '{}' via Campaign '{}' subscriptionId '{}'",
-                            latestIntent.get().getId(), campaignId, payload.subscriptionId());
-                    return latestIntent.get();
-                }
-            }
-        }
+        CampaignStatus target = campaignStateMachine.isValidTransition(state, CampaignStatus.RECOVERED)
+                ? CampaignStatus.RECOVERED
+                : CampaignStatus.CANCELLED;   // before any action (e.g. ELIGIBLE): stop, never chase a paid invoice
+        campaignLifecycleService.transitionState(campaign.getMerchantId(), campaignId, target,
+                "ORIGINAL_PAYMENT_LATE_CAPTURE: original payment " + paymentId + " captured; not attributed to MEND", "SYSTEM", null);
+        campaignRepository.setRecoveryAttribution(campaignId, RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE);
+        auditService.logEvent(campaign.getMerchantId(), campaignId, "ORIGINAL_PAYMENT_LATE_CAPTURE", "SYSTEM", null,
+                "payment=" + paymentId + " " + state + "->" + target + " webhook_event=" + event.getId());
 
-        return null;
+        if (!possiblyLive.isEmpty()) {
+            String items = String.join(", ", possiblyLive);
+            log.warn("event=duplicate_payment_risk campaign_id={} items={}", campaignId, items);
+            auditService.logEvent(campaign.getMerchantId(), campaignId, "DUPLICATE_PAYMENT_RISK", "SYSTEM", null,
+                    "payment=" + paymentId + " live_or_unknown=" + items);
+            humanApprovalService.createReview(campaign.getMerchantId(), campaignId, "DUPLICATE_PAYMENT_RISK: original payment "
+                    + paymentId + " was captured while recovery action(s) may still be payable: " + items
+                    + ". Cancel them at Razorpay (MEND cannot: cancel endpoint not verified).");
+        }
+        return true;
     }
 
     /**
@@ -349,6 +477,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
                     "Payment recovery succeeded via webhook reconciliation (Ref: " + providerRef + ")",
                     "SYSTEM", null
             );
+            campaignRepository.setRecoveryAttribution(campaign.getId(), RecoveryAttribution.MEND);
         }
     }
 

@@ -385,6 +385,7 @@ public class ExecutionReconciler {
             CampaignStatus state = campaigns.findByIdForUpdate(intent.getCampaignId()).orElseThrow().getCurrentState();
             if (campaignStateMachine.isValidTransition(state, CampaignStatus.RECOVERED)) {
                 transition(intent, CampaignStatus.RECOVERED, "Captured payment " + paymentId + " confirmed by reconciler");
+                campaigns.setRecoveryAttribution(intent.getCampaignId(), com.mend.domain.enums.RecoveryAttribution.MEND);
             } else {
                 // Real money on a campaign that cannot be RECOVERED (e.g. cancelled while the link was payable): surface it.
                 log.warn("event=captured_on_terminal_campaign intent_id={} campaign_state={}", intent.getId(), state);

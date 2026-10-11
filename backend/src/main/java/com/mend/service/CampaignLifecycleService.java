@@ -89,6 +89,7 @@ public class CampaignLifecycleService {
         newCampaign.setSubscriptionId(subscriptionId);
         newCampaign.setCurrentState(CampaignStatus.CREATED);
         newCampaign.setInvoiceKey(invoiceKeyResolver.resolveForCampaign(effectiveMerchantId, effectivePaymentId, newCampaign.getId()));
+        newCampaign.setProviderPaymentId(invoiceKeyResolver.resolveProviderPaymentId(effectiveMerchantId, effectivePaymentId));
 
         try {
             Campaign saved = campaignRepository.saveAndFlush(newCampaign);

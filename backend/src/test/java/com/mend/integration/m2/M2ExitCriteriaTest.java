@@ -219,6 +219,8 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
 
         assertEquals(ActionIntentStatus.SUCCEEDED, reload(f).getStatus());
         assertEquals(CampaignStatus.RECOVERED, campaignState(f));
+        assertEquals(RecoveryAttribution.MEND, campaigns.findById(f.campaign().getId()).orElseThrow().getRecoveryAttribution(),
+                "U8: recovered through the reconciler on MEND's link");
         assertEquals(1, provider.createCalls(f.key()), "provider create calls for the attempt key");
         LookupResult<?> resource = mock.findPaymentLinkByReference(new MerchantRef(merchantId), f.key());
         assertTrue(resource.isFound(), "exactly one provider resource exists for the attempt key (reference_id is unique)");

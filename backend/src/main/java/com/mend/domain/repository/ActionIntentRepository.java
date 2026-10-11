@@ -21,7 +21,13 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
 
     Optional<ActionIntent> findByIdempotencyKey(String idempotencyKey);
 
-    Optional<ActionIntent> findByResponseReference(String responseReference);
+    /** M2 U8: all intents with this provider reference; more than one is an integrity problem the caller must surface. */
+    List<ActionIntent> findAllByResponseReference(String responseReference);
+
+    /** M2 U8: the campaign's intents, row-locked, so no claim/dispatch can change them between read and cancel. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM ActionIntent a WHERE a.campaignId = :campaignId ORDER BY a.createdAt ASC")
+    List<ActionIntent> findByCampaignIdForUpdate(@Param("campaignId") UUID campaignId);
 
     Optional<ActionIntent> findFirstByCampaignIdOrderByCreatedAtDesc(UUID campaignId);
 

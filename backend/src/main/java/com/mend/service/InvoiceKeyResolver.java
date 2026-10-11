@@ -53,6 +53,32 @@ public class InvoiceKeyResolver {
         }
     }
 
+    /**
+     * M2 U8: the real provider id ({@code pay_…}) of the original failed payment, or null when it is not known for certain.
+     * A raw {@code pay_} campaign payment id is used as is; otherwise the stored failure webhook's payment entity id.
+     */
+    public String resolveProviderPaymentId(UUID merchantId, String paymentId) {
+        if (paymentId == null || paymentId.isBlank()) {
+            return null;
+        }
+        if (PAYMENT_ID.matcher(paymentId).matches()) {
+            return paymentId;
+        }
+        if (merchantId == null) {
+            return null;
+        }
+        try {
+            return webhookEventRepository.findByMerchantIdAndExternalEventId(merchantId, paymentId)
+                    .map(event -> text(objectMapper.readTree(event.getRawPayload()).path("payload").path("payment").path("entity"), "id"))
+                    .filter(id -> PAYMENT_ID.matcher(id).matches())
+                    .orElse(null);
+        } catch (RuntimeException unreadable) {
+            // Unknown is explicit (null); it never breaks campaign creation.
+            log.warn("event=provider_payment_id_unresolved reason=LOOKUP_OR_PARSE_FAILED");
+            return null;
+        }
+    }
+
     /** Pure derivation from a webhook payload root ({@code payload.payment.entity}). */
     public static String fromPayload(JsonNode root, UUID campaignId) {
         JsonNode entity = root == null ? null : root.path("payload").path("payment").path("entity");

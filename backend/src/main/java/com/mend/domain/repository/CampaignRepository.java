@@ -52,6 +52,17 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
                                            @Param("search") String search,
                                            Pageable pageable);
 
+    /** M2 U8: campaign-level correlation by the original payment's real provider id (not unique, see V15). */
+    List<Campaign> findAllByMerchantIdAndProviderPaymentId(UUID merchantId, String providerPaymentId);
+
+    /** M2 U8: campaign-level correlation by subscription (not unique). */
+    List<Campaign> findAllByMerchantIdAndSubscriptionId(UUID merchantId, String subscriptionId);
+
+    /** M2 U8: set by whoever moved the campaign to RECOVERED (or CANCELLED on a late original capture). */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Campaign c SET c.recoveryAttribution = :attribution WHERE c.id = :id")
+    int setRecoveryAttribution(@Param("id") UUID id, @Param("attribution") com.mend.domain.enums.RecoveryAttribution attribution);
+
     /** Row lock for read-decide-transition sequences (M2 reconciler). */
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @org.springframework.data.jpa.repository.Query("SELECT c FROM Campaign c WHERE c.id = :id")
