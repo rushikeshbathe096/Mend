@@ -50,6 +50,10 @@ public class ActionExecutionService {
     private final java.time.Duration awaitingPaymentFirstCheck;
     private final java.time.Duration unknownOutcomeGrace;
     private final TransactionTemplate executionTransactionTemplate;
+    /** M2 U9: MEND-side deferral (OD-3 cap 5) and its backoff; review items for what a human must fix or decide. */
+    private final HumanApprovalService humanApprovalService;
+    private final int maxDeferrals;
+    private final ReconcileBackoff deferBackoff;
 
     public ActionExecutionService(
             ActionIntentRepository actionIntentRepository,
@@ -62,7 +66,11 @@ public class ActionExecutionService {
             PlatformTransactionManager transactionManager,
             ActionIntentTransitions transitions,
             @org.springframework.beans.factory.annotation.Value("${mend.reconciler.backoff-base-seconds:30}") long backoffBaseSeconds,
-            @org.springframework.beans.factory.annotation.Value("${mend.reconciler.not-found-grace-seconds:120}") long notFoundGraceSeconds) {
+            @org.springframework.beans.factory.annotation.Value("${mend.reconciler.not-found-grace-seconds:120}") long notFoundGraceSeconds,
+            HumanApprovalService humanApprovalService,
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.max-deferrals:5}") int maxDeferrals,
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-base-seconds:30}") long deferBackoffBaseSeconds,
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-cap-seconds:21600}") long deferBackoffCapSeconds) {
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -75,6 +83,10 @@ public class ActionExecutionService {
         this.unknownOutcomeGrace = java.time.Duration.ofSeconds(notFoundGraceSeconds);
         this.executionTransactionTemplate = new TransactionTemplate(transactionManager);
         this.executionTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.humanApprovalService = humanApprovalService;
+        this.maxDeferrals = maxDeferrals;
+        this.deferBackoff = new ReconcileBackoff(java.time.Duration.ofSeconds(deferBackoffBaseSeconds),
+                java.time.Duration.ofSeconds(deferBackoffCapSeconds), java.util.random.RandomGenerator.getDefault());
     }
 
     /**
@@ -249,8 +261,14 @@ public class ActionExecutionService {
         Instant now = Instant.now();
         String attemptKey = ProviderAttemptKey.forIntent(intent.getId()).value();
 
+        // M2 U9: a MEND-side failure where nothing reached the provider is deferred (same intent, later), up to the cap.
+        // execution_attempts counts dispatches (incremented by the dispatch fence), so it counts the deferred dispatches too.
+        OutcomeRetryPolicy retry = OutcomeRetryPolicy.classify(outcome);
+        boolean deferNow = retry == OutcomeRetryPolicy.DEFER && intent.getExecutionAttempts() <= maxDeferrals;
+        Instant deferUntil = deferNow ? now.plus(deferBackoff.delay(Math.max(0, intent.getExecutionAttempts() - 1))) : null;
+
         // Step 0: fenced intent transition. Not applied => this worker no longer owns the intent: discard the result.
-        boolean applied = switch (outcome) {
+        boolean applied = deferNow ? transitions.deferFromExecuting(intentId, claimToken, deferUntil) : switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> transitions.finalizeFromExecuting(intentId, claimToken,
                     ActionIntentStatus.SUCCEEDED, captured.reference(), now, null);
             case ProviderActionOutcome.LinkIssued issued -> transitions.finalizeFromExecuting(intentId, claimToken,
@@ -284,7 +302,10 @@ public class ActionExecutionService {
         attempt.setActionType(intent.getActionType());
         attempt.setScheduledAt(intent.getScheduledAt());
         attempt.setStartedAt(intent.getClaimedAt() != null ? intent.getClaimedAt() : now);
-        switch (outcome) {
+        if (deferNow) {
+            attempt.setStatus("DEFERRED");
+            attempt.setFailureReason(OutcomeRetryPolicy.code(outcome));
+        } else switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> {
                 attempt.setStatus("SUCCESS");
                 attempt.setExternalReference(captured.reference());
@@ -324,6 +345,10 @@ public class ActionExecutionService {
         campaign = campaignRepository.save(campaign);
 
         // Step 2: Handle Outcome Specific Synchronization (the intent status was already set by the fenced transition)
+        if (deferNow) {
+            deferCampaign(intent, campaign, outcome, deferUntil, attemptKey);
+            return report;
+        }
         switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> {
                 campaignLifecycleService.transitionState(
@@ -356,17 +381,17 @@ public class ActionExecutionService {
                 log.warn("ActionIntent '{}' provider outcome UNKNOWN ({}). NEEDS_RECONCILIATION.", intentId, unknown.cause());
             }
             case ProviderActionOutcome.Rejected rejected -> {
-                failCampaign(intent, campaign, "Provider request rejected: " + rejected.kind());
+                failOrRoute(intent, campaign, retry, outcome, "Provider request rejected: " + rejected.kind());
                 logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
                         details("kind", rejected.kind().name(), "code", rejected.code(), "httpStatus", rejected.httpStatus()));
             }
             case ProviderActionOutcome.NotSupported notSupported -> {
-                failCampaign(intent, campaign, "Provider operation not supported: " + notSupported.reason());
+                failOrRoute(intent, campaign, retry, outcome, "Provider operation not supported: " + notSupported.reason());
                 logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
                         details("kind", "NOT_SUPPORTED", "code", "PROVIDER_OPERATION_NOT_SUPPORTED", "reason", notSupported.reason()));
             }
             case ProviderActionOutcome.NotSent notSent -> {
-                failCampaign(intent, campaign, "Provider request not sent: " + notSent.cause());
+                failOrRoute(intent, campaign, retry, outcome, "Provider request not sent: " + notSent.cause());
                 logProviderAudit(intent, "PROVIDER_REQUEST_NOT_SENT", attemptKey,
                         details("code", "PROVIDER_UNREACHABLE", "cause", notSent.cause()));
             }
@@ -381,6 +406,50 @@ public class ActionExecutionService {
             case ProviderActionOutcome.SyntheticCaptured captured -> captured.reference();
             default -> null;
         };
+    }
+
+    /** M2 U9: intent already READY again; campaign EXECUTING -> ACTION_PENDING (RETRY_DEFERRED) so the scheduler picks it up. */
+    private void deferCampaign(ActionIntent intent, Campaign campaign, ProviderActionOutcome outcome, Instant deferUntil, String attemptKey) {
+        String code = OutcomeRetryPolicy.code(outcome);
+        // What happened at the provider boundary, then what MEND decided.
+        switch (outcome) {
+            case ProviderActionOutcome.NotSent notSent -> logProviderAudit(intent, "PROVIDER_REQUEST_NOT_SENT", attemptKey,
+                    details("code", "PROVIDER_UNREACHABLE", "cause", notSent.cause()));
+            case ProviderActionOutcome.Rejected rejected -> logProviderAudit(intent, "PROVIDER_REQUEST_REJECTED", attemptKey,
+                    details("kind", rejected.kind().name(), "code", rejected.code(), "httpStatus", rejected.httpStatus()));
+            default -> { }
+        }
+        if (campaign.getCurrentState() == CampaignStatus.EXECUTING) {
+            campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.ACTION_PENDING,
+                    "RETRY_DEFERRED: " + code + " for ActionIntent " + intent.getId(), "SYSTEM", null);
+        }
+        logProviderAudit(intent, "EXECUTION_DEFERRED", attemptKey, details("code", code,
+                "executionAttempts", intent.getExecutionAttempts(), "maxDeferrals", maxDeferrals, "scheduledAt", deferUntil.toString()));
+        log.warn("ActionIntent '{}' deferred ({}), attempt {}/{}; next try at {}", intent.getId(), code,
+                intent.getExecutionAttempts(), maxDeferrals, deferUntil);
+    }
+
+    /**
+     * M2 U9: a failure that is ours (deferral cap reached) or needs a human (action not automatable) is routed to review:
+     * campaign EXECUTING -> FAILED -> ELIGIBLE (approval requires ELIGIBLE). Only TERMINAL failures exhaust the campaign.
+     */
+    private void failOrRoute(ActionIntent intent, Campaign campaign, OutcomeRetryPolicy retry, ProviderActionOutcome outcome, String reason) {
+        if (retry == OutcomeRetryPolicy.TERMINAL || retry == OutcomeRetryPolicy.NONE) {
+            failCampaign(intent, campaign, reason);
+            return;
+        }
+        String code = OutcomeRetryPolicy.code(outcome);
+        String reviewCode = retry == OutcomeRetryPolicy.DEFER ? "OPERATOR_ACTION_REQUIRED:" + code : "HUMAN_DECISION_REQUIRED:" + code;
+        campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.FAILED,
+                "Action execution failed: " + reason, "SYSTEM", null);
+        campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.ELIGIBLE,
+                reviewCode + ": routed to human review", "SYSTEM", null);
+        humanApprovalService.createReview(intent.getMerchantId(), campaign.getId(), reviewCode + ": intent " + intent.getId()
+                + (retry == OutcomeRetryPolicy.DEFER ? " deferred " + intent.getExecutionAttempts() + " times; fix the cause, then approve"
+                                                     : " cannot run automatically; human decision required"));
+        auditService.logEvent(intent.getMerchantId(), campaign.getId(), "EXECUTION_ROUTED_TO_REVIEW", "SYSTEM", null,
+                "intent=" + intent.getId() + " code=" + reviewCode + " execution_attempts=" + intent.getExecutionAttempts());
+        log.warn("ActionIntent '{}' FAILED ({}). Campaign '{}' routed to review (ELIGIBLE), not exhausted.", intent.getId(), reviewCode, campaign.getId());
     }
 
     /** Existing FAILURE path for the campaign: EXECUTING -> FAILED -> EXHAUSTED (the intent is already FAILED). */

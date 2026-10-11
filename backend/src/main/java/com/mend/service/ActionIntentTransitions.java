@@ -88,6 +88,15 @@ public class ActionIntentTransitions {
                 && repository.finalizeFromExecuting(id, token, newStatus, responseReference, completedAt, reconcileAfter) == 1;
     }
 
+    /**
+     * M2 U9: EXECUTING → READY at {@code scheduledAt} for a MEND-side outcome where nothing reached the provider
+     * ({@link OutcomeRetryPolicy#DEFER}). Fenced by status and claim token; not a lease expiry (invariant 13 holds).
+     */
+    @Transactional
+    public boolean deferFromExecuting(UUID id, String token, Instant scheduledAt) {
+        return token != null && repository.deferFromExecuting(id, token, scheduledAt) == 1;
+    }
+
     /** Any non-terminal status → CANCELLED (campaign cancellation). */
     @Transactional
     public boolean cancelNonTerminal(UUID id, Instant now) {

@@ -32,6 +32,7 @@ public class ProviderActionDispatcher {
     private static final Logger log = LoggerFactory.getLogger(ProviderActionDispatcher.class);
 
     static final String RECURRING_DEBIT_NOT_ENABLED = "RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2";
+    static final String MANUAL_REVIEW_NOT_AUTOMATED = "MANUAL_REVIEW_NOT_AUTOMATED";
 
     private final PaymentProvider paymentProvider;
     private final ProviderCapabilities capabilities;
@@ -78,8 +79,8 @@ public class ProviderActionDispatcher {
         return switch (actionType) {
             case REQUEST_CUSTOMER_ACTION -> issuePaymentLink(merchant, key, intent, campaign);
             case RETRY_PAYMENT -> syntheticDebitOrNotSupported(merchant, key, intent, RECURRING_DEBIT_NOT_ENABLED);
-            // Mock mode simulates it as before; Razorpay mode never automates manual review.
-            case MANUAL_REVIEW -> syntheticDebitOrNotSupported(merchant, key, intent, "MANUAL_REVIEW_NOT_AUTOMATED");
+            // M2 U9 (design rule 9): manual review never reaches the provider, in any mode; the executor routes it to review.
+            case MANUAL_REVIEW -> new ProviderActionOutcome.NotSupported(MANUAL_REVIEW_NOT_AUTOMATED);
         };
     }
 

@@ -29,6 +29,8 @@ public class BlockingPaymentProvider implements PaymentProvider, com.mend.provid
     private final Map<ProviderAttemptKey, AtomicInteger> createCalls = new ConcurrentHashMap<>();
     private final Map<ProviderAttemptKey, CountDownLatch> entered = new ConcurrentHashMap<>();
     private final Map<ProviderAttemptKey, CountDownLatch> release = new ConcurrentHashMap<>();
+    /** M2 U9: a create call for the key answers this result instead of reaching the delegate (e.g. RATE_LIMITED). */
+    private final Map<ProviderAttemptKey, RequestResult<PaymentLinkSnapshot>> createAnswers = new ConcurrentHashMap<>();
 
     public BlockingPaymentProvider(PaymentProvider delegate) {
         this.delegate = delegate;
@@ -62,7 +64,13 @@ public class BlockingPaymentProvider implements PaymentProvider, com.mend.provid
         return count == null ? 0 : count.get();
     }
 
+    /** Every create call for {@code key} returns {@code answer} (counted, never forwarded to the delegate). */
+    public void answerCreate(ProviderAttemptKey key, RequestResult<PaymentLinkSnapshot> answer) {
+        createAnswers.put(key, answer);
+    }
+
     public void reset() {
+        createAnswers.clear();
         release.values().forEach(CountDownLatch::countDown);
         createCalls.clear();
         debitCalls.clear();
@@ -74,7 +82,8 @@ public class BlockingPaymentProvider implements PaymentProvider, com.mend.provid
     public RequestResult<PaymentLinkSnapshot> createPaymentLink(MerchantRef merchant, CreatePaymentLink command) {
         int call = createCalls.computeIfAbsent(command.key(), k -> new AtomicInteger()).incrementAndGet();
         holdIfFirst(command.key(), call);
-        return delegate.createPaymentLink(merchant, command);
+        RequestResult<PaymentLinkSnapshot> answer = createAnswers.get(command.key());
+        return answer != null ? answer : delegate.createPaymentLink(merchant, command);
     }
 
     @Override
