@@ -181,6 +181,14 @@ public class HumanApprovalService {
         }
 
         ComplianceDecision compliance = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId());
+        // M2 U9 / OD-1: a human approving a MANUAL_REVIEW item authorises a payment link (debits stay disabled).
+        // The override is explicit and compliance is re-run for it; every other compliance rule still applies.
+        com.mend.domain.enums.RecoveryStrategy approvedOverride = null;
+        if (ActionIntentService.isManualReviewBlock(compliance)) {
+            approvedOverride = com.mend.domain.enums.RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
+            compliance = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId(), approvedOverride);
+            validation.add("OD-1: MANUAL_REVIEW approved as REQUEST_CUSTOMER_ACTION (payment link); compliance re-evaluated for it");
+        }
         if (compliance.getStatus() != ComplianceStatus.COMPLIANCE_ALLOWED) {
             log.info("Approval of review '{}' blocked by compliance revalidation: {} - {}",
                     reviewId, compliance.getReason(), compliance.getDetailMessage());
@@ -195,7 +203,7 @@ public class HumanApprovalService {
         validation.add("No duplicate/in-flight ActionIntent exists for the current attempt");
 
         // Create the ActionIntent through the authoritative boundary
-        ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId());
+        ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId(), approvedOverride);
         if (intent == null) {
             throw new InvalidRequestException("No executable action is available for the approved recovery (strategy maps to NO_ACTION)");
         }

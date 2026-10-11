@@ -40,6 +40,9 @@ public class ActionIntentService {
     private final ComplianceService complianceService;
     private final AuditService auditService;
     private final long defaultRetryDelayMinutes;
+    private final ActionIntentTransitions actionIntentTransitions;
+    /** Lazy: HumanApprovalService depends on this service (approval creates the intent). */
+    private final org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService;
 
     public ActionIntentService(
             CampaignRepository campaignRepository,
@@ -47,17 +50,41 @@ public class ActionIntentService {
             ActionIntentRepository actionIntentRepository,
             ComplianceService complianceService,
             AuditService auditService,
-            @Value("${mend.scheduler.default-retry-delay-minutes:15}") long defaultRetryDelayMinutes) {
+            @Value("${mend.scheduler.default-retry-delay-minutes:15}") long defaultRetryDelayMinutes,
+            ActionIntentTransitions actionIntentTransitions,
+            org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService) {
         this.campaignRepository = campaignRepository;
         this.merchantConfigRepository = merchantConfigRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.complianceService = complianceService;
         this.auditService = auditService;
         this.defaultRetryDelayMinutes = defaultRetryDelayMinutes;
+        this.actionIntentTransitions = actionIntentTransitions;
+        this.humanApprovalService = humanApprovalService;
+    }
+
+    /** Intents that ended without recovering money; a new attempt may follow them. */
+    private static final java.util.Set<ActionIntentStatus> ENDED = java.util.EnumSet.of(
+            ActionIntentStatus.FAILED, ActionIntentStatus.CANCELLED, ActionIntentStatus.EXPIRED);
+
+    /** True when compliance blocked only because the strategy is MANUAL_REVIEW (a human must decide, ADR-002 decision 10). */
+    public static boolean isManualReviewBlock(ComplianceDecision decision) {
+        return decision != null && decision.isBlocked() && decision.getStrategy() == RecoveryStrategy.MANUAL_REVIEW
+                && decision.getReason() == com.mend.domain.enums.ComplianceReason.STRATEGY_NOT_SUPPORTED;
     }
 
     @Transactional
     public ActionIntent createActionIntentFromCompliance(UUID merchantId, UUID campaignId) {
+        return createActionIntentFromCompliance(merchantId, campaignId, null);
+    }
+
+    /**
+     * {@code approvedStrategyOverride}: M2 U9 / OD-1 — only {@link HumanApprovalService#approveReview} passes it, after a human
+     * approved a MANUAL_REVIEW item (the executed action is then REQUEST_CUSTOMER_ACTION). Compliance is still re-run, for
+     * the override strategy. Without it, a MANUAL_REVIEW strategy creates a review item and no intent (returns null).
+     */
+    @Transactional
+    public ActionIntent createActionIntentFromCompliance(UUID merchantId, UUID campaignId, RecoveryStrategy approvedStrategyOverride) {
         Campaign campaign = campaignRepository.findById(campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
 
@@ -72,7 +99,15 @@ public class ActionIntentService {
         }
 
         // Run Compliance Gate
-        ComplianceDecision complianceDecision = complianceService.evaluateAndPersistCompliance(merchantId, campaignId);
+        ComplianceDecision complianceDecision = complianceService.evaluateAndPersistCompliance(merchantId, campaignId, approvedStrategyOverride);
+        if (approvedStrategyOverride == null && isManualReviewBlock(complianceDecision)) {
+            humanApprovalService.getObject().createReview(merchantId, campaignId,
+                    "MANUAL_REVIEW_REQUIRED: recovery strategy MANUAL_REVIEW needs a human decision; approval issues a payment link");
+            auditService.logEvent(merchantId, campaignId, "MANUAL_REVIEW_ROUTED", "SYSTEM", null,
+                    "strategy=MANUAL_REVIEW compliance_decision=" + complianceDecision.getId() + " intent=none");
+            log.info("Campaign '{}' routed to human review (MANUAL_REVIEW); no Action Intent created", campaignId);
+            return null;
+        }
         if (complianceDecision.isBlocked()) {
             log.info("Action Intent creation blocked for campaign '{}': Compliance status {}", campaignId, complianceDecision.getReason());
             throw new ComplianceBlockedException("Compliance blocked Action Intent creation: " + complianceDecision.getReason() + " - " + complianceDecision.getDetailMessage());
@@ -93,6 +128,14 @@ public class ActionIntentService {
 
         // Check if intent already exists (Task 6 idempotency)
         Optional<ActionIntent> existingIntent = actionIntentRepository.findByIdempotencyKey(idempotencyKey);
+        // M2 U9 review: the campaign is ELIGIBLE again only after an attempt ended without recovery (deferral cap, routed
+        // to review, escalation). Returning that ended intent would leave the approved campaign with nothing to run, so the
+        // next attempt gets its own key (and attempt key). A live intent is still returned as is (idempotency).
+        while (existingIntent.isPresent() && ENDED.contains(existingIntent.get().getStatus())) {
+            attemptNumber++;
+            idempotencyKey = "intent:" + campaignId + ":attempt_" + attemptNumber + ":" + actionType.name();
+            existingIntent = actionIntentRepository.findByIdempotencyKey(idempotencyKey);
+        }
         if (existingIntent.isPresent()) {
             log.info("Action Intent already exists for key '{}'. Returning existing intent.", idempotencyKey);
             return existingIntent.get();
@@ -118,6 +161,8 @@ public class ActionIntentService {
 
         // Expiration Window: 24 hours window
         intent.setExpiresAt(scheduledAt.plus(Duration.ofHours(24)));
+        // M2 U6: one in-flight intent per invoice — the intent carries its campaign's invoice key.
+        intent.setInvoiceKey(java.util.Objects.requireNonNull(campaign.getInvoiceKey(), "campaign invoice_key (NOT NULL since V13)"));
 
         try {
             intent = actionIntentRepository.saveAndFlush(intent);
@@ -154,10 +199,8 @@ public class ActionIntentService {
 
         List<ActionIntent> intents = actionIntentRepository.findByCampaignId(campaignId);
         for (ActionIntent intent : intents) {
-            if (intent.getStatus().isExecutable()) {
-                intent.setStatus(ActionIntentStatus.CANCELLED);
-                intent.setCompletedAt(Instant.now());
-                actionIntentRepository.save(intent);
+            // M2: conditional update (PENDING/SCHEDULED/READY only), so work claimed in the meantime is never cancelled blindly.
+            if (intent.getStatus().isExecutable() && actionIntentTransitions.cancelIfExecutable(intent.getId(), Instant.now())) {
 
                 auditService.logEvent(
                         merchantId,

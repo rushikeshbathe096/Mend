@@ -21,7 +21,9 @@ public class CampaignStateMachine {
         allowedTransitions.put(CampaignStatus.ELIGIBLE, EnumSet.of(CampaignStatus.SCHEDULED, CampaignStatus.ACTION_PENDING, CampaignStatus.CANCELLED));
         allowedTransitions.put(CampaignStatus.SCHEDULED, EnumSet.of(CampaignStatus.ACTION_PENDING, CampaignStatus.CANCELLED));
         allowedTransitions.put(CampaignStatus.ACTION_PENDING, EnumSet.of(CampaignStatus.EXECUTING, CampaignStatus.ELIGIBLE, CampaignStatus.RECOVERED, CampaignStatus.CANCELLED));
-        allowedTransitions.put(CampaignStatus.EXECUTING, EnumSet.of(CampaignStatus.RECOVERED, CampaignStatus.FAILED, CampaignStatus.CANCELLED));
+        // M2: EXECUTING -> ACTION_PENDING is the reconciler's SAFE_RETRY (reason code RETRY_DEFERRED).
+        allowedTransitions.put(CampaignStatus.EXECUTING, EnumSet.of(CampaignStatus.RECOVERED, CampaignStatus.FAILED, CampaignStatus.CANCELLED,
+                CampaignStatus.ACTION_PENDING));
         allowedTransitions.put(CampaignStatus.FAILED, EnumSet.of(CampaignStatus.SCHEDULED, CampaignStatus.ELIGIBLE, CampaignStatus.ACTION_PENDING, CampaignStatus.EXHAUSTED, CampaignStatus.CANCELLED, CampaignStatus.RECOVERED));
 
         // Terminal states explicitly have empty transition sets

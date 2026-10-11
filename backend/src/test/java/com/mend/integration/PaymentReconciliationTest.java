@@ -11,7 +11,6 @@ import com.mend.security.RazorpaySignatureVerifier;
 import com.mend.service.PaymentReconciliationService;
 import com.mend.service.ReconciliationResult;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -94,10 +93,11 @@ class PaymentReconciliationTest {
         campaign.setCurrentState(CampaignStatus.FAILED);
         campaign = campaignRepository.save(campaign);
 
+        // M2 behaviour change (fixture): pre-M2 "provider ERROR" (FAILED) is NEEDS_RECONCILIATION in M2; evidence only moves in-flight intents (§4), see ADR-002
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(), merchantA.getId(), campaign.getId(),
                 1, "RETRY_PAYMENT", "STRATEGY_A", null,
-                ActionIntentStatus.FAILED, idempotencyKey, Instant.now()
+                ActionIntentStatus.NEEDS_RECONCILIATION, idempotencyKey, Instant.now()
         );
         intent = actionIntentRepository.save(intent);
 
@@ -152,10 +152,11 @@ class PaymentReconciliationTest {
         campaign.setCurrentState(CampaignStatus.FAILED);
         campaign = campaignRepository.save(campaign);
 
+        // M2 behaviour change (fixture): pre-M2 "provider ERROR" (FAILED) is NEEDS_RECONCILIATION in M2; evidence only moves in-flight intents (§4), see ADR-002
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(), merchantA.getId(), campaign.getId(),
                 1, "RETRY_PAYMENT", "STRATEGY_A", null,
-                ActionIntentStatus.FAILED, idempotencyKey, Instant.now()
+                ActionIntentStatus.NEEDS_RECONCILIATION, idempotencyKey, Instant.now()
         );
         intent = actionIntentRepository.save(intent);
 
@@ -206,10 +207,11 @@ class PaymentReconciliationTest {
         campaign.setCurrentState(CampaignStatus.EXECUTING);
         campaign = campaignRepository.save(campaign);
 
+        // M2 behaviour change (fixture): pre-M2 "in flight during the provider call" (CLAIMED) is EXECUTING (dispatched) in M2; evidence only moves in-flight intents (§4), see ADR-002
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(), merchantA.getId(), campaign.getId(),
                 1, "RETRY_PAYMENT", "STRATEGY_A", null,
-                ActionIntentStatus.CLAIMED, idempotencyKey, Instant.now()
+                ActionIntentStatus.EXECUTING, idempotencyKey, Instant.now()
         );
         intent = actionIntentRepository.save(intent);
 
@@ -258,10 +260,11 @@ class PaymentReconciliationTest {
         campaign.setCurrentState(CampaignStatus.EXECUTING);
         campaign = campaignRepository.save(campaign);
 
+        // M2 behaviour change (fixture): pre-M2 "in flight during the provider call" (CLAIMED) is EXECUTING (dispatched) in M2; evidence only moves in-flight intents (§4), see ADR-002
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(), merchantA.getId(), campaign.getId(),
                 1, "RETRY_PAYMENT", "STRATEGY_A", null,
-                ActionIntentStatus.CLAIMED, idempotencyKey, Instant.now()
+                ActionIntentStatus.EXECUTING, idempotencyKey, Instant.now()
         );
         intent = actionIntentRepository.save(intent);
 
@@ -420,10 +423,11 @@ class PaymentReconciliationTest {
         campaign.setCurrentState(CampaignStatus.EXECUTING);
         campaign = campaignRepository.save(campaign);
 
+        // M2 behaviour change (fixture): pre-M2 "in flight during the provider call" (CLAIMED) is EXECUTING (dispatched) in M2; evidence only moves in-flight intents (§4), see ADR-002
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(), merchantA.getId(), campaign.getId(),
                 1, "RETRY_PAYMENT", "STRATEGY_A", null,
-                ActionIntentStatus.CLAIMED, idempotencyKey, Instant.now()
+                ActionIntentStatus.EXECUTING, idempotencyKey, Instant.now()
         );
         intent = actionIntentRepository.save(intent);
 
@@ -502,10 +506,11 @@ class PaymentReconciliationTest {
         campaign.setCurrentState(CampaignStatus.EXECUTING);
         campaign = campaignRepository.save(campaign);
 
+        // M2 behaviour change (fixture): pre-M2 "in flight during the provider call" (CLAIMED) is EXECUTING (dispatched) in M2; evidence only moves in-flight intents (§4), see ADR-002
         ActionIntent intent = new ActionIntent(
                 UUID.randomUUID(), merchantA.getId(), campaign.getId(),
                 1, "RETRY_PAYMENT", "STRATEGY_A", null,
-                ActionIntentStatus.CLAIMED, idempotencyKey, Instant.now()
+                ActionIntentStatus.EXECUTING, idempotencyKey, Instant.now()
         );
         intent.setResponseReference(paymentId);
         intent = actionIntentRepository.save(intent);
@@ -747,8 +752,8 @@ class PaymentReconciliationTest {
     }
 
     @Test
-    @Disabled("M2: correlation of original-payment failures")
-    @DisplayName("Known gap (M2): payment.failed for the ORIGINAL payment must not fail an in-flight NON-link intent")
+    // Enabled in M2 U8: campaign-level (original payment) events never finalize an intent (invariant 15).
+    @DisplayName("M2 U8: payment.failed for the ORIGINAL payment must not fail an in-flight NON-link intent")
     void originalPaymentFailureMustNotFailNonLinkIntent() {
         // Strategy 4 correlates by campaign.paymentId and picks the latest intent, so a (late/duplicate) payment.failed for
         // the original payment marks an in-flight non-link intent (e.g. outcome unknown) FAILED. Asserts the desired behaviour.
@@ -837,5 +842,73 @@ class PaymentReconciliationTest {
         assertEquals(ReconciliationResult.Status.RECONCILED_SUCCESS, result.getStatus());
         assertEquals(ActionIntentStatus.SUCCEEDED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
         assertEquals(CampaignStatus.RECOVERED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
+
+    @Test
+    @DisplayName("M2: captured evidence for an undispatched CLAIMED intent is not applied")
+    void evidenceForClaimedIntentIsNotApplied() {
+        Campaign campaign = campaignIn(CampaignStatus.ACTION_PENDING, "pay_m2_claimed_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.CLAIMED, null);
+        WebhookEvent event = stored("payment.captured", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2_claimed\",\"status\":\"captured\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_ALREADY_FINALIZED, result.getStatus());
+        assertEquals(ActionIntentStatus.CLAIMED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.ACTION_PENDING, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
+
+    @Test
+    @DisplayName("M2: evidence never revives a terminal FAILED intent")
+    void evidenceForTerminalFailedIntentIsNotApplied() {
+        Campaign campaign = campaignIn(CampaignStatus.FAILED, "pay_m2_failed_orig");
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.FAILED, null);
+        WebhookEvent event = stored("payment.captured", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2_failed\",\"status\":\"captured\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_ALREADY_FINALIZED, result.getStatus());
+        assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.FAILED, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
+
+    @Autowired private AuditLogRepository auditLogRepositoryM2;
+
+    @Test
+    @DisplayName("M2: captured evidence for a FAILED intent on a live campaign keeps the intent FAILED but is surfaced (audit)")
+    void capturedEvidenceForFailedIntentIsAuditedNotDropped() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m2_live_orig");
+        ActionIntent intent = intentFor(campaign, "RETRY_PAYMENT", ActionIntentStatus.FAILED, null);
+        WebhookEvent event = stored("payment.captured", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2_late\",\"status\":\"captured\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        ReconciliationResult result = reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ReconciliationResult.Status.SKIPPED_ALREADY_FINALIZED, result.getStatus());
+        assertEquals(ActionIntentStatus.FAILED, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.EXECUTING, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
+        assertTrue(auditLogRepositoryM2.findByCampaignIdOrderByCreatedAtAsc(campaign.getId()).stream()
+                .anyMatch(a -> "CAPTURED_EVIDENCE_NOT_APPLIED".equals(a.getEventType())));
+    }
+
+    @Test
+    @DisplayName("M2 / D1: a failed payment never ends an AWAITING_PAYMENT intent, even when read before its link reference")
+    void failedEvidenceNeverEndsAwaitingPayment() {
+        Campaign campaign = campaignIn(CampaignStatus.EXECUTING, "pay_m2_await_orig");
+        // responseReference null models the race where the webhook read the intent before the link reference was written.
+        ActionIntent intent = intentFor(campaign, "REQUEST_CUSTOMER_ACTION", ActionIntentStatus.AWAITING_PAYMENT, null);
+        WebhookEvent event = stored("payment.failed", String.format(
+                "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_m2_await_fail\",\"status\":\"failed\",\"notes\":{\"mend_intent_id\":\"%s\"}}}}}",
+                intent.getId()));
+
+        reconciliationService.reconcileWebhookEvent(event);
+
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, actionIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+        assertEquals(CampaignStatus.EXECUTING, campaignRepository.findById(campaign.getId()).orElseThrow().getCurrentState());
     }
 }

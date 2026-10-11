@@ -74,11 +74,14 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
                 "intent:" + campaign.getId() + ":attempt_1:" + actionType, Instant.now());
         intent.setClaimedAt(Instant.now());
         intent.setWorkerId("worker-outcome");
+        // M2: a CLAIMED intent always carries a claim token (fixture correction; the dispatch fence requires it), see ADR-002
+        intent.setClaimToken(UUID.randomUUID().toString());
         return actionIntentRepository.save(intent);
     }
 
     private PaymentExecutionResult execute(ActionIntent intent) {
-        return actionExecutionService.executeActionIntent(intent.getId(), "worker-outcome");
+        // M2 behaviour change: the executor requires the caller's claim token (fail closed), see ADR-002
+        return actionExecutionService.executeActionIntent(intent.getId(), "worker-outcome", intent.getClaimToken());
     }
 
     private ActionIntent reload(ActionIntent intent) {
@@ -108,7 +111,8 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
 
         String expectedLink = "plink_mock_" + ProviderAttemptKey.forIntent(intent.getId()).value().replace("mnd_", "");
         assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
-        assertEquals(ActionIntentStatus.EXECUTING, reload(intent).getStatus());
+        // M2 behaviour change: a live payment link is AWAITING_PAYMENT (was EXECUTING), see ADR-002
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, reload(intent).getStatus());
         assertEquals(expectedLink, reload(intent).getResponseReference());
         assertEquals(CampaignStatus.EXECUTING, campaignState());
         assertEquals("ISSUED", onlyAttempt().getStatus());
@@ -142,7 +146,10 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
         PaymentExecutionResult report = execute(intent);
 
         assertEquals("AMOUNT_UNRESOLVED", report.getResponseCode());
-        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        // M2 behaviour change: AMOUNT_UNRESOLVED is MEND-side, so the intent is deferred (READY, later), not FAILED, see ADR-002
+        assertEquals(ActionIntentStatus.READY, reload(intent).getStatus());
+        assertNotEquals(CampaignStatus.EXHAUSTED, campaignState());
+        assertTrue(auditTypes().contains("EXECUTION_DEFERRED"));
         assertEquals(0, mockPaymentProvider.getInvocationCount());
     }
 
@@ -155,9 +162,12 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
         PaymentExecutionResult report = execute(intent);
 
         assertEquals(PaymentExecutionStatus.FAILURE, report.getStatus());
-        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
-        assertEquals(CampaignStatus.EXHAUSTED, campaignState());
+        // M2 behaviour change: NotSent is MEND-side and nothing reached the provider: deferred (READY, campaign
+        // ACTION_PENDING), never EXHAUSTED, see ADR-002 decision 10
+        assertEquals(ActionIntentStatus.READY, reload(intent).getStatus());
+        assertEquals(CampaignStatus.ACTION_PENDING, campaignState());
         assertTrue(auditTypes().contains("PROVIDER_REQUEST_NOT_SENT"));
+        assertTrue(auditTypes().contains("EXECUTION_DEFERRED"));
     }
 
     @Test
@@ -169,7 +179,8 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
         PaymentExecutionResult report = execute(intent);
 
         assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
-        assertEquals(ActionIntentStatus.EXECUTING, reload(intent).getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, reload(intent).getStatus());
         assertNull(reload(intent).getResponseReference());
         assertNull(reload(intent).getCompletedAt());
         assertEquals(CampaignStatus.EXECUTING, campaignState());
@@ -189,7 +200,8 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
         PaymentExecutionResult report = execute(intent);
 
         assertEquals(PaymentExecutionStatus.PENDING, report.getStatus());
-        assertEquals(ActionIntentStatus.EXECUTING, reload(intent).getStatus());
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, reload(intent).getStatus());
         assertTrue(auditTypes().contains("PROVIDER_OUTCOME_UNKNOWN"));
     }
 

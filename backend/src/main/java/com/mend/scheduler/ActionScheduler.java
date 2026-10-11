@@ -80,7 +80,8 @@ public class ActionScheduler {
                 continue;
             }
             try {
-                PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), workerId);
+                // Pass the claim token from the atomic claim: the executor's fences only apply while this worker holds it.
+                PaymentExecutionResult result = actionExecutionService.executeActionIntent(intent.getId(), workerId, intent.getClaimToken());
                 if (result != null) {
                     results.add(result);
                 }

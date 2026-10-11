@@ -14,6 +14,60 @@ Brief references quoted so this document stands alone:
 
 ---
 
+## §0 Verification on main (27658bb)
+
+U0, 2026-10-05, branch `m2/execution-safety` cut from `main` @ `27658bb`. Paths are relative to `backend/src/main/java/com/mend/` unless they start with `resources/`. Baseline: `Tests run: 519, Failures: 0, Errors: 0, Skipped: 1` (`docs/m2/m2-baseline-test-run-summary.txt`).
+
+### §1 rows
+
+| Row | Evidence | Verdict |
+|---|---|---|
+| Claim | `service/ActionIntentClaimService.java:61-99` (`claimDueIntents`, `REQUIRES_NEW`; promote, then select up to batch READY intents with campaign ACTION_PENDING; per-intent `claimIntentAtomic` with a fresh UUID token at :73-82). Predicate `domain/repository/ActionIntentRepository.java:78-106`: `status = :expected AND scheduledAt <= :claimedAt AND EXISTS (campaign with same merchant AND currentState = :expectedCampaignStatus)`. | CONFIRMED (predicate also requires `scheduledAt <= claimedAt` and campaign merchant = intent merchant) |
+| Lease release | `ActionIntentClaimService.java:101-128`: `findExpiredClaims` (`ActionIntentRepository.java:72-73`, `status='CLAIMED' AND claimedAt < threshold`), then unconditional `setStatus(READY)` + `save` per row, audit `STATE_TRANSITION`. Lease `mend.scheduler.lease-duration-minutes`, default 5 (:35). | CONFIRMED |
+| Window expiry | `ActionIntentClaimService.java:130-156`, query `ActionIntentRepository.java:75-76`. | CONFIRMED |
+| Scheduler | `scheduler/ActionScheduler.java:49-93`: release, expire, claim, then serial execute; `fixedDelay` `mend.scheduler.poll-interval-ms` 5000; worker id per instance (:44-46). | CONFIRMED |
+| Executor | `service/ActionExecutionService.java`: prepare :113-197 (CLAIMED check :118; worker check only when both ids are non-null :123; non-executable campaign set CANCELLED/EXHAUSTED/RECOVERED/FAILED :149-151; compliance re-check :154-167; campaign ACTION_PENDING to EXECUTING :169-178; returns `proceed` without changing intent status); provider dispatch outside tx :101; finalize :199+ with only an `isTerminal()` guard :209. | CHANGED-BY-M1 (call + outcome mapping; prepare unchanged) |
+| Manual path | `controller/CampaignController.java:164-178`: sets CLAIMED + new worker id + `claimedAt` via `actionIntentRepository.save` (:168-171), then executes synchronously. No `claimIntentAtomic`. | CONFIRMED |
+| Webhook reconciliation | `service/DefaultPaymentReconciliationService.java:142-147` (SUCCEEDED) and :183-185 (FAILED) via `setStatus` + `save`. | CHANGED-BY-M1 (U7 evidence rules + D1) |
+| Row concurrency control | `domain/entity/Campaign.java:54` has `@Version`; `domain/entity/ActionIntent.java` has none. Status column `resources/db/migration/V1__create_initial_schema.sql:122` `VARCHAR(20) NOT NULL DEFAULT 'PENDING'`, no CHECK. | CONFIRMED |
+| DB uniqueness | V1:123 `idempotency_key ... UNIQUE`; V1:108 `UNIQUE(campaign_id, attempt_number)`; `V5__campaign_idempotency_and_relations.sql:5-7` partial unique `(merchant_id, payment_id) WHERE payment_id IS NOT NULL`. No one-in-flight constraint. | CONFIRMED |
+| Intent statuses | `domain/enums/ActionIntentStatus.java:3-21`: 10 values; terminal SUCCEEDED, FAILED, CANCELLED, EXPIRED (:15-17). | CONFIRMED |
+| Campaign transitions | `statemachine/CampaignStateMachine.java:19-30`. ACTION_PENDING to EXECUTING/ELIGIBLE/RECOVERED/CANCELLED (:23); EXECUTING to RECOVERED/FAILED/CANCELLED (:24), no EXECUTING to ACTION_PENDING yet; FAILED includes ACTION_PENDING (:25). | CONFIRMED |
+| Since M1 | EXECUTING set for LinkIssued at `ActionExecutionService.java:292` and Unknown at :302; only a webhook moves it out. | CONFIRMED (CHANGED-BY-M1) |
+
+### Specific checks (a)–(h)
+
+| # | Question | Finding |
+|---|---|---|
+| a | Intent CLAIMED during the provider call? | Yes. `prepareExecution` (:113-197) never changes the intent status; the dispatch at :101 runs while it is CLAIMED. |
+| b | Ownership check in finalize? | None. `finalizeExecution(..., workerId, ...)` ignores `workerId`; the only guard is `isTerminal()` (:209). |
+| c | Manual claim via plain save? | Yes, `CampaignController.java:168-171`. |
+| d | `@Version` on `ActionIntent`? | No. |
+| e | Highest Flyway migration? | `V11__create_transactional_outbox.sql`, so M2 starts at **V12**. Timestamp types: V8 added `scheduled_at`, `claimed_at`, `expires_at` as `TIMESTAMP WITH TIME ZONE` (V8:7-11); V1 `created_at`/`completed_at` are `TIMESTAMP`. *Recommendation (not a verification):* new M2 columns follow V8 (`TIMESTAMPTZ`). |
+| f | Where M1 sets EXECUTING | `ActionExecutionService.java:292` (LinkIssued) and :302 (Unknown). |
+| g | Mock repeated `reference_id`? | `provider/mock/MockPaymentProvider.java:58` uses `linksByReference.computeIfAbsent(key, ...)`: a second create with the same key returns `Accepted(existing snapshot)` directly. It does **not** emulate fixture 02's 400-then-lookup path, but the observable result (same link, no second resource) matches. U5 makes it explicit. |
+| h | `ProviderCapabilities` methods | Only `supportsRecurringDebit()` (`provider/ProviderCapabilities.java:6`). `supportsIdempotentResend` is new in U5. |
+
+### Scenarios S1–S11
+
+| S | Evidence on main | Verdict |
+|---|---|---|
+| S1 manual vs scheduler | The controller overwrites CLAIMED + worker via save (`CampaignController.java:168-171`). Its `prepareExecution` passes: the intent is CLAIMED (`ActionExecutionService.java:118`), the worker id is its own (:123), EXECUTING is not in the non-executable campaign set (:149-151), and compliance is still ALLOWED (:154-167). A second dispatch is possible while the scheduler's call is in flight. U1 reproduced it: 2 create calls. | CONFIRMED |
+| S2 crash after prepare | Intent CLAIMED with campaign EXECUTING (`ActionExecutionService.java:169-178`); release sets READY (`ActionIntentClaimService.java:101-128`); the claim predicate needs campaign ACTION_PENDING (`ActionIntentRepository.java:78-106`), so it is never claimable again; nothing reconciles it. | CONFIRMED |
+| S3 unknown outcome | Unknown sets EXECUTING (`ActionExecutionService.java:302`); no scheduled job reads EXECUTING intents (only `ActionScheduler`, which claims READY). | CONFIRMED |
+| S4 link never paid | LinkIssued sets EXECUTING (:292); the M1 dispatcher passes `expireBy = null` (`service/ProviderActionDispatcher.java:84`, `new CreatePaymentLink(..., null, ...)`). | CONFIRMED |
+| S5 stale READY re-claimed | Release sets READY with campaign EXECUTING; FAILED to ACTION_PENDING is allowed (`CampaignStateMachine.java:25`), after which the READY intent satisfies the claim predicate again. | CONFIRMED (needs a path back to ACTION_PENDING; U1 drives it explicitly) |
+| S6 stale finalize | Because the intent stays CLAIMED during the call, `releaseExpiredClaims` can flip it to READY mid-call (the §2 trace); finalize then sees a non-terminal status and writes A's outcome onto an intent whose claim is gone (token null) (:209). The root harm is the release, which §4/§5's `dispatched_at` closes; the finalize write is the second symptom (an unowned write). U1 S6b asserts "no write by an actor that no longer owns the claim". A webhook that moves the intent to a *terminal* state is already safe (U1 S6a). | CONFIRMED |
+| S7 two in flight per invoice | No one-in-flight constraint (see "DB uniqueness" row); campaign key `(merchant_id, payment_id)` (`V5:5-7`) with the composite `payment_id`. | CONFIRMED |
+| S8 original payment failed correlates to latest intent | Strategy 4 (`DefaultPaymentReconciliationService.java:257-263`) matches `campaign.paymentId` against the payload's raw `pay_` id. For webhook-created campaigns `paymentId` is the composite `payment.failed_pay_x`, so strategy 4 **never matches real webhooks**. It bites campaigns created with a raw id (manual start-recovery and `POST /campaigns` use `request.paymentId` verbatim) and dev seed data. Link intents are already protected by M1 D1. | WRONG (scope: only raw-id campaigns today) |
+| S9 late original capture | Same strategy-4 condition as S8; when it matches, captured sets the latest intent SUCCEEDED and the campaign RECOVERED (wrong attribution). For **webhook-created** campaigns a late capture of the original payment matches no strategy and returns `unmatched` (`DefaultPaymentReconciliationService.java:81`): the campaign is not RECOVERED and a live recovery link stays payable — the same customer harm as §2 S9 (possible double payment), reached differently. Owner: **U8** task 2 (`campaigns.provider_payment_id`, migration V14, plus late-capture handling: campaign RECOVERED with non-MEND attribution, in-flight intents CANCELLED, link cancel or `DUPLICATE_PAYMENT_RISK` review item). Ordering rule: V14 and the "campaign-level events never finalize an intent" rule land in the same unit (U8), so campaign-level matching never becomes effective without that rule. | WRONG (mechanism differs by campaign origin; harm stands) |
+| S10 MEND-side errors exhaust | `ActionExecutionService.failIntentAndCampaign` (:330) takes FAILED then EXHAUSTED for Rejected, NotSupported and NotSent. `NO_CREDENTIALS_FOR_MERCHANT` arrives as `Rejected(AUTHENTICATION, "NO_CREDENTIALS_FOR_MERCHANT")` (`provider/razorpay/RazorpayPaymentProvider.java:81`); `AMOUNT_UNRESOLVED` as `Rejected(LOCAL_PRECONDITION)` from the dispatcher; RATE_LIMITED as `Rejected(RATE_LIMITED)`. | CONFIRMED |
+| S11 MANUAL_REVIEW | **Wrong mechanism.** `compliance/ComplianceEngine.java:107-113` blocks strategy MANUAL_REVIEW, so `ActionIntentService.createActionIntentFromCompliance` (:75-79) throws `ComplianceBlockedException` and creates **no** intent. All runtime intents are created there (the only other `new ActionIntent` is dev seed data). Approving a review for a MANUAL_REVIEW-strategy campaign re-runs the same check (`service/HumanApprovalService.java:198`) and fails the same way, so the case can be neither executed nor approved. The orchestrator catches the exception (`service/RecoveryOrchestratorService.java:204-209`), records BLOCKED and returns null: the campaign **stays ELIGIBLE** with no intent. Open for U9 (not verified here): §9's escalation relies on approving a review item for a FAILED→ELIGIBLE campaign; that approval re-runs `createActionIntentFromCompliance`, so it creates a **new** intent (new attempt key) — U9's OD-1 override must make it a payment link, never a debit. | WRONG (no MANUAL_REVIEW intent at runtime; U9/OD-1 still valid; the executor NotSupported path today is RETRY_PAYMENT in razorpay mode) |
+
+**Design impact:** no finding reverses a design decision in §4–§7. S8 is narrower than stated; S9's harm stands for webhook-created campaigns via a different mechanism (uncorrelated late capture) and is owned by U8 (V14 + late-capture handling, landing together); S11's mechanism differs and U9/OD-1 still applies (approval creates a new intent, which must be a link). S6's finalize write is a second symptom of the release mid-call, closed by U3. Verdict vocabulary per U0: CONFIRMED / CHANGED-BY-M1 / WRONG.
+
+---
+
 ## 1. Current execution machinery
 
 | Piece | Where | Behaviour |

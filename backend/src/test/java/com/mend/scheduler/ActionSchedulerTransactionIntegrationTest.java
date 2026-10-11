@@ -168,7 +168,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
 
         assertEquals(1, results.size());
         assertFalse(paymentProvider.transactionActiveDuringCall);
-        assertTrue(paymentProvider.claimWasCommitted);
+        assertTrue(paymentProvider.dispatchWasCommitted);
         assertTrue(paymentProvider.executingTransitionWasCommitted);
         assertEquals(ActionIntentStatus.SUCCEEDED,
                 actionIntentRepository.findById(fixture.intent().getId()).orElseThrow().getStatus());
@@ -190,7 +190,8 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         assertEquals(PaymentExecutionStatus.PENDING, results.get(0).getStatus());
         assertEquals(1, paymentProvider.invocations);
         // M1 behaviour change: unknown outcome leaves the intent EXECUTING (was FAILED); still no blind retry, see ADR-001
-        assertEquals(ActionIntentStatus.EXECUTING,
+        // M2 behaviour change: an unknown outcome is NEEDS_RECONCILIATION (was EXECUTING), handed to the reconciler, see ADR-002
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION,
                 actionIntentRepository.findById(fixture.intent().getId()).orElseThrow().getStatus());
         // M1 behaviour change: campaign stays EXECUTING (was FAILED) while the outcome is unknown, see ADR-001
         assertEquals(CampaignStatus.EXECUTING,
@@ -342,7 +343,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         private final CampaignRepository campaignRepository;
         private int invocations;
         private boolean transactionActiveDuringCall;
-        private boolean claimWasCommitted;
+        private boolean dispatchWasCommitted;
         private boolean executingTransitionWasCommitted;
         private boolean throwProviderException;
         private ProviderAttemptKey lastAttemptKey;
@@ -357,8 +358,10 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         public RequestResult<String> simulateDebit(MerchantRef merchant, UUID campaignId, UUID intentId, ProviderAttemptKey key) {
             invocations++;
             transactionActiveDuringCall = TransactionSynchronizationManager.isActualTransactionActive();
-            claimWasCommitted = actionIntentRepository.findById(intentId)
-                    .map(intent -> intent.getStatus() == ActionIntentStatus.CLAIMED)
+            // M2 behaviour change: the committed claim is observed as the committed dispatch (CLAIMED -> EXECUTING, written
+            // before the provider call in the prepare transaction), see ADR-002
+            dispatchWasCommitted = actionIntentRepository.findById(intentId)
+                    .map(intent -> intent.getStatus() == ActionIntentStatus.EXECUTING && intent.getDispatchedAt() != null)
                     .orElse(false);
             executingTransitionWasCommitted = campaignRepository.findById(campaignId)
                     .map(campaign -> campaign.getCurrentState() == CampaignStatus.EXECUTING)
@@ -373,7 +376,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         void reset() {
             invocations = 0;
             transactionActiveDuringCall = false;
-            claimWasCommitted = false;
+            dispatchWasCommitted = false;
             executingTransitionWasCommitted = false;
             throwProviderException = false;
             lastAttemptKey = null;

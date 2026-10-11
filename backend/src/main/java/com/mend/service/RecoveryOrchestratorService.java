@@ -176,6 +176,11 @@ public class RecoveryOrchestratorService {
             record.setComplianceStatus("COMPLIANCE_BLOCKED");
             record.setExecutionStatus("BLOCKED");
             agentDecisionRecordRepository.save(record);
+            if (ActionIntentService.isManualReviewBlock(complianceDecision)) {
+                // M2 U9: MANUAL_REVIEW goes to the review queue (no intent); approval issues a payment link (OD-1).
+                humanApprovalService.createReview(merchantId, campaignId,
+                        "MANUAL_REVIEW_REQUIRED: recovery strategy MANUAL_REVIEW needs a human decision; approval issues a payment link");
+            }
             return null;
         }
 

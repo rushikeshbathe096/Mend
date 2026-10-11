@@ -23,20 +23,20 @@ U1's RED tests are un-disabled by the unit that fixes them, and every one must b
 
 | # | Criterion | Unit | Status |
 |---|---|---|---|
-| 1 | Fencing where required (`claim_token` conditional writes) | U3 | ☐ |
-| 2 | Claim expiry cannot return in-flight work to READY | U3 | ☐ |
-| 3 | NEEDS_RECONCILIATION implemented | U2, U5 | ☐ |
-| 4 | Reconciliation determines retry safety (capability gate) | U5 | ☐ |
-| 5 | One-in-flight DB-enforced | U6 | ☐ |
-| 6 | Concurrency test exists (3 workers) | U7 | ☐ |
-| 7 | Lease-expiry-during-provider-call test exists | U7 | ☐ |
-| 8 | Zero duplicate debit executions in the tests (mock debit, no provider idempotency) | U7 | ☐ |
-| 9 | Existing tests still pass, count ≥ 519, Skipped ≤ 1 (the M1 `@Disabled` is fixed in U8 → Skipped 0) | every unit | ☐ |
-| 10 | Failure behaviour documented | U10 (§9 table, verified) | ☐ |
-| E1 | Manual path uses the atomic claim | U3 | ☐ |
-| E2 | Every intent eventually leaves EXECUTING/NEEDS_RECONCILIATION/AWAITING_PAYMENT (resolved or escalated) | U5 | ☐ |
-| E3 | Links have bounded TTL | U5 | ☐ |
-| E4 | M1 `@Disabled("M2: correlation …")` test enabled and green | U8 | ☐ |
-| E5 | MEND-side errors don't exhaust campaigns | U9 | ☐ |
-| E6 | MANUAL_REVIEW never reaches the executor | U9 | ☐ |
-| E7 | Hot-query plans recorded (`EXPLAIN ANALYZE`, seeded data) | U10 | ☐ |
+| 1 | Fencing where required (`claim_token` conditional writes) | U3 | ☑ `8531b9b`, `d900140` |
+| 2 | Claim expiry cannot return in-flight work to READY | U3 | ☑ `8531b9b` |
+| 3 | NEEDS_RECONCILIATION implemented | U2, U5 | ☑ `fe353fd`, `65a9a2c` |
+| 4 | Reconciliation determines retry safety (capability gate) | U5 | ☑ `65a9a2c`, `48dd5e4` |
+| 5 | One-in-flight DB-enforced | U6 | ☑ `6468cbd`, `bf55a37` (V13 + V14) |
+| 6 | Concurrency test exists (3 workers) | U7 | ☑ `3f656d6`, `0a03c66` |
+| 7 | Lease-expiry-during-provider-call test exists | U7 | ☑ `3f656d6` (`M2ExitCriteriaTest.brief19`) |
+| 8 | Zero duplicate debit executions in the tests (mock debit, no provider idempotency) | U7 | ☑ `3f656d6` (`zeroDuplicateDebits`) |
+| 9 | Existing tests still pass, count ≥ 519, Skipped ≤ 1 (the M1 `@Disabled` is fixed in U8 → Skipped 0) | every unit | ☑ final 647 / 0 / 0 / 0 (`m2-final-test-run-summary.txt`) |
+| 10 | Failure behaviour documented | U10 (§9 table, verified) | ☑ `M2-failure-table-verification.md`, `3a303bb` |
+| E1 | Manual path uses the atomic claim | U3 | ☑ `8531b9b` |
+| E2 | Every intent eventually leaves EXECUTING/NEEDS_RECONCILIATION/AWAITING_PAYMENT (resolved or escalated) | U5 | ☑ `65a9a2c`, `48dd5e4` |
+| E3 | Links have bounded TTL | U5 | ☑ `65a9a2c` |
+| E4 | M1 `@Disabled("M2: correlation …")` test enabled and green | U8 | ☑ `97b170d` |
+| E5 | MEND-side errors don't exhaust campaigns | U9 | ☑ `78f7d7d`, `2ecf102` |
+| E6 | MANUAL_REVIEW never reaches the executor | U9 | ☑ `78f7d7d` (no intent is created; legacy intents get NotSupported without a provider call) |
+| E7 | Hot-query plans recorded (`EXPLAIN ANALYZE`, seeded data) | U10 | ☑ `M2-query-plans.md` |

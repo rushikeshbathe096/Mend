@@ -1,0 +1,12 @@
+# M2 summary — execution safety (complete)
+- **Built:** fenced intent state machine (claim token, dispatch fence, `@Version`), CLAIMED→EXECUTING before any provider call, stuck sweep + `SKIP LOCKED` reconciler with SAFE_RETRY only for resend-safe links, 72 h link TTL, DB-enforced one in flight per (merchant, invoice_key) (V13/V14), campaign-level events never finalize intents + late-capture handling (V15), MEND-side deferral and MANUAL_REVIEW → review queue (OD-1).
+- **Evidence:** `m2-final-test-run-summary.txt` (647 / 0 / 0 / 0; M1 519 / 0 / 0 / 1), `M2ExitCriteriaTest` + 3 green full runs (U7), `M2-failure-table-verification.md`, `M2-query-plans.md` (MEASURED), ADR-002 Accepted. Unit log: `m2-progress.md`.
+- **Deviations:** V15 not V14; late capture before any action → CANCELLED (not RECOVERED); deferrals share `execution_attempts` with SAFE_RETRY; `ComplianceService`/orchestrator touched for OD-1; claim-release audit now `CLAIM_RELEASED`.
+- **M3 inputs:**
+  - Analytics counts every RECOVERED campaign as MEND's — exclude `ORIGINAL_PAYMENT_LATE_CAPTURE`.
+  - `createReview` keeps one PENDING review per campaign, so later reasons only reach the audit log.
+  - Q1 due-claim plan: seq scan of `campaigns` + full sort of READY rows (27.458 ms at 100k).
+  - Separate deferral counter; `invoice_key` from a real `payment.failed` recording.
+  - Approval re-runs compliance, so low-confidence MANUAL_REVIEW items stay blocked after approval — owner to decide.
+  - Integration tests share one database (leaks fixed case by case) — isolate it.
+- **Still deferred:** debit wiring and order-based debit reconciliation; payment-link cancel call (docs-verified, needs `--cancel-link` recording); metrics/alerts (M5); AI (M3); frontend mapping for AWAITING_PAYMENT / NEEDS_RECONCILIATION.

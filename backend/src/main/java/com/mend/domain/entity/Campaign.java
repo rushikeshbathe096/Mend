@@ -71,6 +71,50 @@ public class Campaign {
         this.updatedAt = Instant.now();
     }
 
+    /** M2 U8: real provider id (pay_…) of the original failed payment, or null when unknown. Used by campaign-level correlation. */
+    @Column(name = "provider_payment_id", length = 64)
+    private String providerPaymentId;
+
+    /** M2 U8: who recovered the money; null if not recovered or recovered before V15. */
+    @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+    @Column(name = "recovery_attribution", length = 40)
+    private com.mend.domain.enums.RecoveryAttribution recoveryAttribution;
+
+    public String getProviderPaymentId() {
+        return providerPaymentId;
+    }
+
+    public void setProviderPaymentId(String providerPaymentId) {
+        this.providerPaymentId = providerPaymentId;
+    }
+
+    public com.mend.domain.enums.RecoveryAttribution getRecoveryAttribution() {
+        return recoveryAttribution;
+    }
+
+    public void setRecoveryAttribution(com.mend.domain.enums.RecoveryAttribution recoveryAttribution) {
+        this.recoveryAttribution = recoveryAttribution;
+    }
+
+    /** M2 U6: invoice identity (§6); defaults to the per-campaign fallback so every campaign has one. */
+    @Column(name = "invoice_key", length = 120, nullable = false)
+    private String invoiceKey;
+
+    @PrePersist
+    public void prePersistInvoiceKey() {
+        if (invoiceKey == null && id != null) {
+            invoiceKey = "cmp:" + id;
+        }
+    }
+
+    public String getInvoiceKey() {
+        return invoiceKey;
+    }
+
+    public void setInvoiceKey(String invoiceKey) {
+        this.invoiceKey = invoiceKey;
+    }
+
     @PreUpdate
     public void preUpdate() {
         this.updatedAt = Instant.now();

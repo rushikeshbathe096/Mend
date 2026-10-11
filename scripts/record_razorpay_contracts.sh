@@ -6,6 +6,7 @@
 #   PLINK_ID=plink_x PAY_ID=pay_x ... bash scripts/record_razorpay_contracts.sh --after-payment
 #   RZP_TEST_CUSTOMER_ID=cust_x RZP_TEST_TOKEN_ID=token_x RZP_TEST_EMAIL=a@b.c RZP_TEST_CONTACT=9000000000 \
 #     ... bash scripts/record_razorpay_contracts.sh --recurring
+#   ... bash scripts/record_razorpay_contracts.sh --cancel-link      (M2 U8; creates 1 link and cancels it)
 #
 # Requires: bash, curl, jq. Refuses live keys. Redacts customer PII before writing.
 # Creates 2 payment links per default run (Razorpay test mode allows 30 per business).
@@ -142,6 +143,22 @@ elif [[ "$MODE" == "--recurring" ]]; then
     rec 33_fetch_order_payments_after_debit GET "/v1/orders/$DOID/payments" >/dev/null
     echo "Re-run fixture 33 later (or manually) to capture the terminal state of the debit."
   fi
+elif [[ "$MODE" == "--cancel-link" ]]; then
+  # M2 U8: POST /v1/payment_links/{id}/cancel, verified from the official docs
+  # (razorpay.com/docs/api/payments/payment-links/cancel-standard: no body; 400 for paid/partially paid,
+  # expired/cancelled, unknown id, "an update is already in progress"). MEND calls it only after this is recorded.
+  CREF="mnd_rec_c_${RUN_ID}"
+  CLINK=$(jq -n --arg ref "$CREF" '{amount:100, currency:"INR", reference_id:$ref,
+      description:"MEND M2 cancel recording", notify:{sms:false,email:false}, reminder_enable:false,
+      notes:{mend_intent_id:"recording"}}')
+  rec 40_create_link_for_cancel POST "/v1/payment_links" "$CLINK" >/dev/null
+  CPLINK=$(field 40_create_link_for_cancel '.id // empty')
+  if [[ -n "$CPLINK" ]]; then
+    rec 41_cancel_link_ok             POST "/v1/payment_links/$CPLINK/cancel" >/dev/null
+    rec 42_cancel_link_already_cancelled POST "/v1/payment_links/$CPLINK/cancel" >/dev/null
+    rec 43_fetch_link_cancelled       GET  "/v1/payment_links/$CPLINK" >/dev/null
+  fi
+  rec 44_cancel_link_not_found        POST "/v1/payment_links/plink_M2doesnotexist/cancel" >/dev/null
 else
   echo "unknown mode: $MODE"; exit 1
 fi

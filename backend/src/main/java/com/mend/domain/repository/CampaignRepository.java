@@ -51,4 +51,23 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
                                            @Param("failureClass") String failureClass,
                                            @Param("search") String search,
                                            Pageable pageable);
+
+    /** M2 U8: campaign-level correlation by the original payment's real provider id (not unique, see V15). */
+    List<Campaign> findAllByMerchantIdAndProviderPaymentId(UUID merchantId, String providerPaymentId);
+
+    /** M2 U8: campaign-level correlation by subscription (not unique). */
+    List<Campaign> findAllByMerchantIdAndSubscriptionId(UUID merchantId, String subscriptionId);
+
+    /**
+     * M2 U8: set by whoever moved the campaign to RECOVERED (or CANCELLED on a late original capture). Bumps @Version so a
+     * stale entity save fails loudly; clears the persistence context, so callers must reload entities they use afterwards.
+     */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Campaign c SET c.recoveryAttribution = :attribution, c.version = c.version + 1 WHERE c.id = :id")
+    int setRecoveryAttribution(@Param("id") UUID id, @Param("attribution") com.mend.domain.enums.RecoveryAttribution attribution);
+
+    /** Row lock for read-decide-transition sequences (M2 reconciler). */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("SELECT c FROM Campaign c WHERE c.id = :id")
+    Optional<Campaign> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") UUID id);
 }

@@ -38,6 +38,7 @@ public class CampaignController {
     private final CampaignRepository campaignRepository;
     private final ActionIntentRepository actionIntentRepository;
     private final AuditService auditService;
+    private final com.mend.service.ActionIntentClaimService actionIntentClaimService;
 
     public CampaignController(
             CampaignQueryService campaignQueryService,
@@ -48,7 +49,8 @@ public class CampaignController {
             AgentDecisionRecordRepository agentDecisionRecordRepository,
             CampaignRepository campaignRepository,
             ActionIntentRepository actionIntentRepository,
-            AuditService auditService) {
+            AuditService auditService,
+            com.mend.service.ActionIntentClaimService actionIntentClaimService) {
         this.campaignQueryService = campaignQueryService;
         this.campaignLifecycleService = campaignLifecycleService;
         this.recoveryOrchestratorService = recoveryOrchestratorService;
@@ -58,6 +60,7 @@ public class CampaignController {
         this.campaignRepository = campaignRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.auditService = auditService;
+        this.actionIntentClaimService = actionIntentClaimService;
     }
 
     public static class CreateCampaignRequest {
@@ -161,19 +164,21 @@ public class CampaignController {
         // 2. Execute 6-Agent Orchestration, Compliance, Strategy, and ActionIntent Creation
         ActionIntent actionIntent = recoveryOrchestratorService.orchestrateRecovery(effectiveMerchantId, campaign.getId());
 
-        // 3. If an ActionIntent is created and executable, claim and execute it
+        // 3. If an ActionIntent is created and claimable, claim it atomically (same primitive as the scheduler) and
+        //    execute it. If another worker already owns it (or it is not due yet), the scheduler executes it instead.
         PaymentExecutionResult executionResult = null;
         if (actionIntent != null) {
             String workerId = "web-recovery-worker-" + UUID.randomUUID().toString().substring(0, 8);
-            actionIntent.setStatus(com.mend.domain.enums.ActionIntentStatus.CLAIMED);
-            actionIntent.setWorkerId(workerId);
-            actionIntent.setClaimedAt(java.time.Instant.now());
-            actionIntentRepository.save(actionIntent);
-
-            try {
-                executionResult = actionExecutionService.executeActionIntent(actionIntent.getId(), workerId);
-            } catch (Exception e) {
-                log.error("Execution failed for ActionIntent '{}': {}", actionIntent.getId(), e.getMessage());
+            var claimed = actionIntentClaimService.claimSpecificIntent(actionIntent.getId(), workerId);
+            if (claimed.isPresent()) {
+                actionIntent = claimed.get();
+                try {
+                    executionResult = actionExecutionService.executeActionIntent(actionIntent.getId(), workerId, actionIntent.getClaimToken());
+                } catch (Exception e) {
+                    log.error("Execution failed for ActionIntent '{}': {}", actionIntent.getId(), e.getMessage());
+                }
+            } else {
+                log.info("ActionIntent '{}' not claimed by the manual path; left to its current owner / the scheduler", actionIntent.getId());
             }
         }
 
