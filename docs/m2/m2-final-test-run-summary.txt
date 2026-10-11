@@ -1,0 +1,103 @@
+# Summary of the M2 final test run (raw log is local-only, not tracked in git)
+command: cd backend && ./mvnw test
+date: 2026-10-11 16:12 (local time, log mtime)
+commit: 3a303bb (+ U10 docs, no code change)
+note: M2 close-out (U10); Skipped 0 (the M1 tracking test was enabled in U8)
+
+total: [INFO] Tests run: 647, Failures: 0, Errors: 0, Skipped: 0
+build: [INFO] BUILD SUCCESS
+
+per-class surefire totals (93 classes):
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- Action Scheduler Unit Tests
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 -- Phase 10 Action Scheduler End-to-End Integration Tests
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- Action scheduler transaction and concurrency integration tests
+Tests run: 17, Failures: 0, Errors: 0, Skipped: 0 -- Campaign State Machine Unit Tests
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.RazorpaySignatureVerifierTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.PasswordSecurityTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.security.JwtServiceTest
+Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayResponseClassifierTest
+Tests run: 38, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPaymentLinkContractTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayHttpFailureKindTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.SingleTenantEnvCredentialsResolverTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayPropertiesBindingTest
+Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayGetPaymentContractTest
+Tests run: 30, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayEvidenceMapperTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.razorpay.RazorpayHttpSocketTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.RequestResultTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.CreatePaymentLinkTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.MoneyMinorTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.ProviderAttemptKeyTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.PaymentLinkSnapshotTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.PaymentEvidenceStatusTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.PaymentEvidenceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- M2 U5: mock provider reference uniqueness, lookups and resend capability
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.provider.LookupResultTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 -- Compliance Engine Unit Tests
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.config.DevDataInitializerTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.config.RedisConfigTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.MerchantConfigApiIntegrationTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.RbacAndMultiTenancyIntegrationTest
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.CorsAndSecurityIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.WebhookIngestionRedisUnavailableIntegrationTest
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.RestApiIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase6EndToEndIntegrationTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase19MerchantProductIntegrationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.RazorpayTestModeEndToEndIntegrationTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AnalyticsObservabilityIntegrationTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AiRecoveryAgentIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase5EndToEndIntegrationTest
+Tests run: 20, Failures: 0, Errors: 0, Skipped: 0 -- Database Integration Tests
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase19_5_FullMockE2EValidationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.CrossTenantReadIsolationIntegrationTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- M2 U6: one in-flight intent per invoice
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.m2.V15MigrationTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.m2.V12MigrationTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- M2 U8 correlation
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.m2.ExecutionSafetyScenarioTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.m2.V13MigrationTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- M2 exit criteria
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- M2 U9 deferral and manual review
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.m2.ExecutionFenceTest
+Tests run: 33, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.PaymentReconciliationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase18ReliabilityAndFailureInjectionTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.Phase20_RazorpayTestModeE2EValidationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AiAgentIntegrationTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.TransactionalOutboxIntegrationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.integration.AuthIntegrationTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.controller.CampaignControllerTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.PostgresConnectivityTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.consumer.ConsumerConsolidationTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.consumer.RedisWebhookEventConsumerTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- Action Intent State Machine Unit Tests
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.WebhookIntegrationTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.RedisConnectivityTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.BackendApplicationTests
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.HealthControllerTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- Mock Payment Provider Client Unit Tests
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.client.AiClassificationClientTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- Payment Provider Client Spring Context Integration Test
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- Razorpay Payment Provider Client Unit Tests
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.events.WebhookEventMessageTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- Phase 7.1 Recovery Orchestration Integration Tests
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- M2 U6: invoice key derivation
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.OutboxPublisherServiceTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- Action Intent Service & Scheduler Integration Tests
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.ClassificationServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.ProviderActionDispatcherTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- Compliance Service Integration Tests
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.WebhookAmountResolverTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.WebhookServiceTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- Action Intent Claim Service Unit Tests
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.service.RedisStreamRetryServiceTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- ActionIntentTransitions (M2 fenced conditional updates)
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- Campaign Lifecycle Service Integration Tests
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- Recovery Strategy Service Integration Tests
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- M2 U5: ExecutionReconciler against recorded Razorpay fixtures
+Tests run: 28, Failures: 0, Errors: 0, Skipped: 0 -- M2 U5: ExecutionReconciler (mock provider)
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- Action Execution Service Integration Tests
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- M2 U5: reconcile backoff (full jitter, seeded)
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0 -- ActionExecutionService provider outcome mapping (M1)
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- Recovery Strategy Engine Unit Tests
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.publisher.RedisFailureAndRetryTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.publisher.RedisWebhookEventPublisherTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- com.mend.publisher.RedisStreamPublisherConsumerTest
