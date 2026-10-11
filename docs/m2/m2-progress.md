@@ -368,3 +368,13 @@ Tests after fixes: `Tests run: 646, Failures: 0, Errors: 0, Skipped: 0`.
 ### Adaptations for U10 (written before applying)
 1. Query plans: no Testcontainers dependency (new dependency = ask first), so a throwaway schema in the local test Postgres, migrated with the real Flyway files to V15 and seeded with `generate_series` (100k intents, 5k merchants), dropped afterwards. SQL is the native equivalent of each repository query (JPQL rendered by hand, stated in the doc).
 2. §9 table: `CLAIM_RELEASED` is documented but the code audits a release as `STATE_TRANSITION` → fix the code in a separate commit `M2 U10: fix claim release audit code` with a regression test (U7 rule for bugs found by verification). "DB down" has no test → add a scheduler unit test (poll aborts, nothing executed, next poll resumes).
+
+## U10 — M2 close-out
+Built:
+- `docs/m2/m2-final-test-run-summary.txt` — `Tests run: 647, Failures: 0, Errors: 0, Skipped: 0`, BUILD SUCCESS, 93 classes. Per-class lines are copied from this run's log and sum to 647. Two stale `RazorpayProviderSelectionTest$…` XML files from older runs are in `target/surefire-reports` and were excluded; summing that directory gives 649.
+- `docs/m2/M2-query-plans.md` — MEASURED `EXPLAIN (ANALYZE, BUFFERS)` for the due-claim select, claim update, release, markStuck, reconciler pick and the one-in-flight probe. Setup: 100k intents / 5k merchants in a throwaway schema migrated with the real V1–V15 files, seeded with `setseed(0.42)`, then dropped. Adaptation 1 applies: no Testcontainers.
+- `docs/m2/M2-failure-table-verification.md` — every §9 row mapped to green tests.
+  - Fixed in `M2 U10: fix claim release audit code`: the release was audited as `STATE_TRANSITION`, but §9 documents `CLAIM_RELEASED`. The unit test assertion was updated with a behaviour-change comment.
+  - Added `ActionSchedulerTest.databaseDownAbortsThePollAndTheNextPollResumes` for the "DB down" row (unit level).
+- `M2-implementation-plan.md` checklist ticked with SHAs; ADR-002 **Accepted** with Evidence and implementation notes (decisions unchanged); `docs/m2/M2-summary.md` (12 lines); AGENTS.md "Current milestone" → "M2 complete — next: M3 (do not start without a design pack)".
+Not done: tag `m2-complete` (owner action; M1's tag was created at merge).

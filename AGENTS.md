@@ -2,8 +2,9 @@
 
 MEND is a financial workflow system (revenue recovery on Razorpay). Correctness before intelligence.
 
-## Current milestone: M2 — Execution safety
+## Current milestone: M2 complete — next: M3 (do not start without a design pack)
 M1 (provider correctness) is complete: tag `m1-complete`, ADR-001 Accepted.
+M2 (execution safety) is complete: ADR-002 Accepted, final run 647 / 0 / 0 / 0 (`docs/m2/m2-final-test-run-summary.txt`), summary `docs/m2/M2-summary.md`.
 Only work on the unit you were given (`docs/m2/agent-prompts/U*.md`). Do not start M3+ work. Write anything else you notice under "Out-of-scope findings" in your final message.
 
 Out of scope in M2: debit wiring, AI service, CI/deployment, metrics registration, Redis changes, new dependencies (ask first), frontend changes.
