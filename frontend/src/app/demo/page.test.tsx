@@ -1,6 +1,6 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import DemoEnginePage from './page';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 
 jest.mock('@/lib/api', () => ({
   ...jest.requireActual('@/lib/api'),
@@ -98,5 +98,25 @@ describe('DemoEnginePage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Failed to reach the demo engine/i)).toBeInTheDocument();
     });
+  });
+
+  it('shows "Demo disabled" when the backend has no demo endpoint (404 outside the dev profile)', async () => {
+    (api.get as jest.Mock).mockRejectedValue(new ApiError(404, 'Not Found'));
+
+    render(<DemoEnginePage />);
+
+    await waitFor(() => expect(screen.getByText('Demo disabled')).toBeInTheDocument());
+    expect(screen.getByText(/SPRING_PROFILES_ACTIVE=dev/)).toBeInTheDocument();
+    expect(screen.queryByText('Not Found')).not.toBeInTheDocument();
+    expect(screen.queryByText('Run Scenario')).not.toBeInTheDocument();
+  });
+
+  it('still reports other catalog failures as errors', async () => {
+    (api.get as jest.Mock).mockRejectedValue(new ApiError(500, 'Internal Server Error'));
+
+    render(<DemoEnginePage />);
+
+    await waitFor(() => expect(screen.getByText('Internal Server Error')).toBeInTheDocument());
+    expect(screen.queryByText('Demo disabled')).not.toBeInTheDocument();
   });
 });

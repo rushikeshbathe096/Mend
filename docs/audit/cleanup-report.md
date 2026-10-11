@@ -17,7 +17,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | — | `8835869` | test: stop the scheduled Redis consumer poll racing consumer tests |
 | 5 | `3eb13e0` | cleanup: remove legacy webhook publish chain |
 | 6 | `72a1710` | cleanup: drop legacy status values + CHECK constraints |
-| 7 | (this commit) | config: complete .env.example and safe default profile |
+| 7 | `58c5569` | config: complete .env.example and safe default profile |
+| 8 | (this commit) | frontend: M2 states and demo page |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -280,3 +281,24 @@ Both runs applied 16 migrations, so V16 also succeeds on a fresh database.
 - `mend.compliance.min-confidence`, `mend.recovery.strategy.min-confidence` (both M3-owned; documented only, values unchanged)
 
 **Tests.** `./mvnw test` → `[INFO] Tests run: 660, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 4494755797558).
+
+## Group 8: frontend M2 states and demo page
+
+- **`Badge`**: `AWAITING_PAYMENT` uses the in-progress style (indigo), `NEEDS_RECONCILIATION` the attention style (amber), and `EXECUTING` already had indigo. Before this, the first two fell through to the grey default.
+- **Actions page**: the intent status filter adds `EXECUTING`, `NEEDS_RECONCILIATION` and `AWAITING_PAYMENT`.
+- **Campaign page**: the intent timeline step comes from the new `src/lib/intentStatus.ts` (`intentStepStatus`):
+  - only `SUCCEEDED` is success; the dead `ai.status === 'COMPLETED'` comparison is gone (audit item 3)
+  - `FAILED` / `EXPIRED` are failure
+  - `SCHEDULED`, `READY`, `CLAIMED`, `EXECUTING`, `NEEDS_RECONCILIATION` and `AWAITING_PAYMENT` are in progress (the three M2 states used to show as the generic `PENDING`)
+  - everything else is pending, as before
+- **Demo page**: a 404 from `/demo/scenarios` (the backend without the dev profile, see Group 7) shows the empty state "Demo disabled", which names `SPRING_PROFILES_ACTIVE=dev`. Any other error is still shown as an error.
+
+**Tests**
+- New `intentStatus.test.ts` (3): only `SUCCEEDED` is success and `COMPLETED` is not; the M2 states are in progress; the other statuses keep their mapping.
+- `Badge.test.tsx` +1: render test for the M2 states' styles.
+- `demo/page.test.tsx` +2: 404 → "Demo disabled" with no error and no scenario buttons; 500 → error.
+- `npm test -- --ci` → `Tests: 39 passed, 39 total` (was 33).
+- `npm run build` → success.
+- **`npm run lint` does not pass, before or after this group:** `✖ 64 problems (53 errors, 11 warnings)` at `58c5569` and the same after. On the 8 files this group touches, it is 13 problems before and 13 after; the new files add none. These are pre-existing `no-explicit-any`, `react-hooks/set-state-in-effect` and unused-variable findings across the frontend. Fixing them means restructuring effects in pages this group does not otherwise change, so it is listed as a finding instead.
+
+**Backend**: unchanged in this group (last full run 660/0/0/0 at `58c5569`).

@@ -13,6 +13,7 @@ import { AgentDecisionStack } from '@/components/common/AgentDecisionStack';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { intentStepStatus } from '@/lib/intentStatus';
 import { useAuth } from '@/context/AuthContext';
 import { CampaignDto, CampaignTimelineDto, AgentDecisionRecordDto, PageResponse, ReviewItemDto, CampaignDto as CD } from '@/types';
 
@@ -145,16 +146,12 @@ export default function CampaignDetailPage() {
     // Step 5: Action Intents & Execution
     if (timeline.actionIntents && timeline.actionIntents.length > 0) {
       timeline.actionIntents.forEach((ai, idx) => {
-        const isSuccess = ai.status === 'SUCCEEDED' || ai.status === 'COMPLETED';
-        const isFailed = ai.status === 'FAILED' || ai.status === 'EXPIRED';
-        const isPending = ai.status === 'SCHEDULED' || ai.status === 'CLAIMED' || ai.status === 'READY';
-
         steps.push({
           id: `action-${ai.id || idx}`,
           title: `Action Intent: ${ai.actionType} (Attempt #${ai.attemptNumber})`,
           subtitle: `Key: ${ai.idempotencyKey}`,
           timestamp: ai.completedAt || ai.scheduledAt || ai.createdAt,
-          status: isSuccess ? 'COMPLETED' : isFailed ? 'FAILED' : isPending ? 'IN_PROGRESS' : 'PENDING',
+          status: intentStepStatus(ai.status),
           details: (
             <div className="space-y-1 font-mono text-[11px]">
               <div>Status: {ai.status}</div>
