@@ -297,3 +297,39 @@ Not changed:
 1. `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1` (seed 1420547556647)
 2. `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1` (seed 1485673403837)
 3. `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1` (seed 1541887455792)
+
+## U8 — Correlation: campaign-level events never finalize intents (production behaviour change)
+Built:
+- `DefaultPaymentReconciliationService`: sealed `Correlation` (`Intent` / `Ambiguous` / `CampaignLevel` / `None`). Only intent-specific evidence finalizes an intent: idempotency key, notes `mend_intent_id` / legacy `action_intent_id`, the recorded provider reference (pay id, then plink id). Old strategies 4 (campaign `payment_id`) and 5 (subscription) are campaign level. Campaign-level matching uses `provider_payment_id` first, then `payment_id`, then subscription id.
+- Campaign level, original payment failed (or no evidence) → no change, INFO `original_payment_event`, result `SKIPPED_CAMPAIGN_LEVEL`.
+- Campaign level, original payment **captured** by a later event (late capture) → per matched campaign, under row locks (intents, then campaign):
+  - every non-terminal intent → CANCELLED (`cancelNonTerminal`, audit `INTENT_CANCELLED_ORIGINAL_PAYMENT_CAPTURED`);
+  - campaign → RECOVERED (from ACTION_PENDING / EXECUTING / FAILED) or CANCELLED (from a pre-action state), `recovery_attribution = ORIGINAL_PAYMENT_LATE_CAPTURE`, audit `ORIGINAL_PAYMENT_LATE_CAPTURE`;
+  - if any cancelled intent was EXECUTING / NEEDS_RECONCILIATION / AWAITING_PAYMENT: audit + review `DUPLICATE_PAYMENT_RISK` naming the plink id or the attempt key.
+  - Subscription matches never act: a captured subscription payment can belong to another billing cycle (invariant 2).
+- `findByResponseReference` → `findAllByResponseReference`; > 1 match → no change, ERROR log, audit + review `AMBIGUOUS_PROVIDER_REFERENCE` per campaign.
+- **V15** (planned V14; V14 is the U6 key rule): `campaigns.provider_payment_id` (real `pay_` id, CHECK-ed, not unique, indexed; backfilled only from a raw `pay_` id or the composite `payment.<event>_pay_<id>`) and `campaigns.recovery_attribution` (`MEND` | `ORIGINAL_PAYMENT_LATE_CAPTURE`, NULL = unknown/not recovered). Set at creation through `InvoiceKeyResolver.resolveProviderPaymentId` (untrusted payload, regex). `MEND` is written on both MEND recovery paths (webhook intent path, reconciler `succeed`). `payment_id` semantics and uniqueness unchanged.
+- Cancel endpoint: `POST /v1/payment_links/{id}/cancel` **verified from the official docs** (cancel-standard page: no body; 400 for paid/partially paid, expired/cancelled, unknown id, update in progress) but **not recorded** → no port method; review-item fallback (ADR-002). `scripts/record_razorpay_contracts.sh --cancel-link` added (fixtures 40–44) for the owner to run.
+- M1 `@Disabled("M2: correlation of original-payment failures")` test enabled; assertions unchanged.
+Stop-condition check: probe run with campaign-level correlation disabled → `Tests run: 620, Failures: 0, Errors: 0, Skipped: 1`: no existing test relies on campaign-level correlation finalizing an intent.
+Tests: new `CorrelationTest` (9, shares the M2 context): provider_payment_id derivation; original failure no-op (link and debit intents); late capture with a live link (RECOVERED, attribution, CANCELLED, review with plink id, second capture event no-op); before dispatch (READY cancelled, never executed, no review); before any action (ELIGIBLE → CANCELLED); worker mid-call (CANCELLED, finalize fenced out, review names the attempt key); subscription capture no-op; ambiguous reference; MEND attribution on the intent path. New `V15MigrationTest` (2). `M2ExitCriteriaTest.brief19` also asserts MEND attribution on the reconciler path.
+Full suite: `Tests run: 631, Failures: 0, Errors: 0, Skipped: 0` — **Skipped 0** (acceptance).
+Review (fresh subagent): 0 blockers. Fixed in `M2 U8: review fixes`:
+- MAJOR campaign-level no-ops returned `SKIPPED_UNSUPPORTED_EVENT`, which `DefaultEventProcessingService` passes on to classification → a next-cycle subscription capture (or a redelivered original failure) created a new campaign → new `SKIPPED_CAMPAIGN_LEVEL` (also for ambiguous references), handled without classification. End-to-end test through `processEvent`; **verified it fails without the fix** (4 campaigns instead of 2).
+- MAJOR the customer paying MEND's link after a late capture hit "campaign terminal" and was swallowed (INFO only) → captured evidence on a terminal campaign for an intent that did not succeed: audit `CAPTURED_ON_TERMINAL_CAMPAIGN` + review. A duplicate success on a RECOVERED campaign (intent SUCCEEDED) stays silent. Both tested; **verified failing without the fix**.
+- MINOR lock order campaign→intents was the reverse of the worker finalize / reconciler / webhook intent path → intents first, then the campaign; multiple campaigns in id order.
+- MINOR `setRecoveryAttribution` bulk update did not bump `Campaign.@Version` → bumps it; javadoc says it clears the persistence context.
+- MINOR `--cancel-link` recording mode missing → added (see above).
+- NIT "no cancel endpoint called" asserted create calls → asserts no provider request at all. NIT mid-call test asserts `STALE_WORKER_RESULT_DISCARDED`.
+Not changed:
+- Late capture before any action ends CANCELLED, not RECOVERED (**deviation**): the campaign state machine has no CREATED/CLASSIFIED/ELIGIBLE/SCHEDULED → RECOVERED edge and U8 does not own it; such campaigns have no in-flight intent. Attribution is still recorded, so the money is visible. Owner decision whether to add the edge.
+- V15 header says ADD COLUMN is metadata-only but does not mention that ADD CONSTRAINT CHECK scans under ACCESS EXCLUSIVE (fine at current size; V15 is committed and applied, so not edited — invariant 10; note for the runbook).
+- `parkOtherRows`-style rescheduling in `setUp` (shared-DB pattern since U3).
+- `HumanApprovalService.createReview` returns an existing PENDING review for the campaign, so a second reason (e.g. `CAPTURED_ON_TERMINAL_CAMPAIGN` after `DUPLICATE_PAYMENT_RISK`) is only in the audit trail. Out-of-scope finding (review service).
+Tests after fixes: `Tests run: 634, Failures: 0, Errors: 0, Skipped: 0`.
+
+### Adaptations for U9 (written before applying)
+1. DEFER codes: NotSent(any), Rejected(RATE_LIMITED), Rejected(AUTHENTICATION, `NO_CREDENTIALS_FOR_MERCHANT`), Rejected(LOCAL_PRECONDITION, `AMOUNT_UNRESOLVED`). No NotSupported reason in the code today is a MEND-side availability cause (the reasons are `UNSUPPORTED_ACTION_TYPE`, `RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2`, `MANUAL_REVIEW_NOT_AUTOMATED`), so that bucket is empty and stated as such.
+2. ROUTE-TO-REVIEW (not EXHAUSTED): NotSupported(`RECURRING_DEBIT_NOT_ENABLED_UNTIL_M2`) and NotSupported(`MANUAL_REVIEW_NOT_AUTOMATED`) → intent FAILED, campaign FAILED → ELIGIBLE, review. Everything else (provider VALIDATION, other LOCAL_PRECONDITION codes such as `AMOUNT_BELOW_MINIMUM`, DUPLICATE_REFERENCE, other AUTHENTICATION, `UNSUPPORTED_ACTION_TYPE`) stays TERMINAL (FAILED → EXHAUSTED).
+3. Deferral count = `execution_attempts` (incremented by every dispatch, so it counts deferred dispatches; no new column/migration). Cap `mend.execution.max-deferrals=5`; backoff reuses `ReconcileBackoff` (`mend.execution.defer-backoff-base-seconds=30`, cap 21600).
+4. OD-1 needs compliance to evaluate the override strategy: the engine blocks MANUAL_REVIEW, so a plain re-run can never allow the approved action. `ComplianceService` gets an override-strategy evaluation (all other rules still run, decision persisted with the override strategy). `ComplianceService` is outside FILES TO TOUCH — recorded as a deviation.
