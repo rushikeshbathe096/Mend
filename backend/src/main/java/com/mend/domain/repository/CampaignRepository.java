@@ -58,9 +58,12 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
     /** M2 U8: campaign-level correlation by subscription (not unique). */
     List<Campaign> findAllByMerchantIdAndSubscriptionId(UUID merchantId, String subscriptionId);
 
-    /** M2 U8: set by whoever moved the campaign to RECOVERED (or CANCELLED on a late original capture). */
+    /**
+     * M2 U8: set by whoever moved the campaign to RECOVERED (or CANCELLED on a late original capture). Bumps @Version so a
+     * stale entity save fails loudly; clears the persistence context, so callers must reload entities they use afterwards.
+     */
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE Campaign c SET c.recoveryAttribution = :attribution WHERE c.id = :id")
+    @Query("UPDATE Campaign c SET c.recoveryAttribution = :attribution, c.version = c.version + 1 WHERE c.id = :id")
     int setRecoveryAttribution(@Param("id") UUID id, @Param("attribution") com.mend.domain.enums.RecoveryAttribution attribution);
 
     /** Row lock for read-decide-transition sequences (M2 reconciler). */

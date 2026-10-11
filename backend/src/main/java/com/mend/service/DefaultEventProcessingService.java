@@ -68,6 +68,11 @@ public class DefaultEventProcessingService implements EventProcessingService {
                 log.info("Webhook event [eventId={}] successfully reconciled with ActionIntent '{}', Campaign '{}': {}",
                         event.getId(), reconResult.getActionIntentId(), reconResult.getCampaignId(), reconResult.getMessage());
                 return true;
+            } else if (reconResult.getStatus() == ReconciliationResult.Status.SKIPPED_CAMPAIGN_LEVEL) {
+                // M2 U8: the original payment / subscription of an existing campaign, or an ambiguous reference sent to
+                // review. Handled: classifying it would create a campaign from an event that is not a new failure.
+                log.info("Webhook event [eventId={}] handled at campaign level: {}", event.getId(), reconResult.getMessage());
+                return true;
             } else if (reconResult.getStatus() == ReconciliationResult.Status.SKIPPED_ALREADY_FINALIZED) {
                 log.info("Webhook event [eventId={}] skipped reconciliation (already finalized): {}",
                         event.getId(), reconResult.getMessage());
