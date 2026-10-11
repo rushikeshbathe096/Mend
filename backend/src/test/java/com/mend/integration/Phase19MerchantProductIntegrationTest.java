@@ -42,6 +42,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * recovery services, merchant endpoints (payments/customers), and strict
  * tenant isolation for review items.
  */
+// Pre-M3 hygiene: the demo controller exists only when enabled (default off); this class exercises it.
+@org.springframework.test.context.TestPropertySource(properties = "mend.demo.enabled=true")
 public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
@@ -381,5 +383,49 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
                 .andReturn();
         JsonNode listB = objectMapper.readTree(resultB.getResponse().getContentAsString());
         org.junit.jupiter.api.Assertions.assertEquals(0, listB.get("totalElements").asLong());
+    }
+
+    @Test
+    public void demoNarrationLabelsEverySimulatedStep() throws Exception {
+        // Pre-M3 hygiene: fabricated inputs are labelled SIMULATED in the response, never narrated as real events.
+        JsonNode ambiguity = runScenarioJson(tokenA, merchantA.getMerchantId(), "PROVIDER_AMBIGUITY");
+        org.junit.jupiter.api.Assertions.assertTrue(ambiguity.get("simulated").asBoolean());
+        org.junit.jupiter.api.Assertions.assertTrue(ambiguity.get("message").asText().startsWith("SIMULATED"), ambiguity.get("message").asText());
+        java.util.List<String> steps = new java.util.ArrayList<>();
+        ambiguity.get("executionSteps").forEach(step -> steps.add(step.asText()));
+        for (String fabricated : java.util.List.of("webhook", "classification", "provider call", "provider timeout", "provider event")) {
+            org.junit.jupiter.api.Assertions.assertTrue(steps.stream().anyMatch(step -> step.contains("SIMULATED") && step.contains(fabricated)),
+                    "step about '" + fabricated + "' must be labelled SIMULATED: " + steps);
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(steps.stream().noneMatch(step -> step.startsWith("Provider ") || step.startsWith("Authoritative")),
+                "no step narrates a provider event as real: " + steps);
+        for (String scenario : java.util.List.of("LOW_RISK_RETRY", "HIGH_RISK_HUMAN_REVIEW", "CUSTOMER_ACTION", "DUPLICATE_EVENT", "AGENT_FAILURE")) {
+            JsonNode run = runScenarioJson(tokenA, merchantA.getMerchantId(), scenario);
+            org.junit.jupiter.api.Assertions.assertTrue(run.get("simulated").asBoolean(), scenario);
+            org.junit.jupiter.api.Assertions.assertTrue(run.get("message").asText().startsWith("SIMULATED"), scenario);
+            java.util.List<String> runSteps = new java.util.ArrayList<>();
+            run.get("executionSteps").forEach(step -> runSteps.add(step.asText()));
+            org.junit.jupiter.api.Assertions.assertTrue(runSteps.stream().anyMatch(step -> step.startsWith("SIMULATED")), scenario + ": " + runSteps);
+            // The old narration of fabricated inputs as real events must not come back.
+            for (String realSounding : java.util.List.of("Provider webhook ingested", "Six-agent consensus", "Risk agent flagged",
+                    "Customer Engagement agent", "Original webhook delivered", "Duplicate delivery attempt intercepted", "AI service timeout simulated",
+                    "Payment update link issued to the customer")) {
+                org.junit.jupiter.api.Assertions.assertTrue(runSteps.stream().noneMatch(step -> step.startsWith(realSounding)), scenario + ": " + realSounding);
+            }
+        }
+
+        MvcResult catalog = mockMvc.perform(get("/api/v1/demo/scenarios")
+                .header("Authorization", "Bearer " + tokenA)
+                .header("X-Merchant-Id", merchantA.getMerchantId().toString()))
+                .andExpect(status().isOk()).andReturn();
+        objectMapper.readTree(catalog.getResponse().getContentAsString()).forEach(scenario ->
+                org.junit.jupiter.api.Assertions.assertTrue(scenario.get("description").asText().startsWith("SIMULATED"), scenario.toString()));
+    }
+
+    @Test
+    public void demoRequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/api/v1/demo/scenarios")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/v1/demo/trigger-scenario").contentType(MediaType.APPLICATION_JSON).content("{\"scenario\":\"LOW_RISK_RETRY\"}"))
+                .andExpect(status().isUnauthorized());
     }
 }
