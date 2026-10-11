@@ -1,6 +1,6 @@
 # Cleanup report (branch `cleanup/pre-m3`)
 
-Plan: the owner's cleanup prompt, Groups 1–9 (Groups 1–2 = items 1–2 of `docs/audit/unused-code-audit.md`).
+Plan: the owner's cleanup prompt, Groups 1–9, saved afterwards to `docs/audit/cleanup-plan.md` (Groups 1–2 = items 1–2 of `docs/audit/unused-code-audit.md`).
 Baseline: `[INFO] Tests run: 654, Failures: 0, Errors: 0, Skipped: 0` (audit baseline; `main` @ `b669205`).
 Out of scope throughout: Phase-N test renames, test package moves, tenant/membership checks, the AI path, V1–V15. Nothing is merged or pushed.
 
@@ -335,9 +335,22 @@ Both runs applied 16 migrations, so V16 also succeeds on a fresh database.
   | Group 6 | 4260205406699 |
   | Group 7 | 4494755797558 |
   | Group 9 | 4735883721066 |
+  | final run | 5658398601463 |
 
   One full run during Group 5 failed in a different test (seed 3645313379849), explained in the consumer-poll section above. No `m2-exit-evidence-*` file was written by any run.
 - Nothing merged or pushed. V1–V15 untouched. No Phase-N renames, no test package moves (apart from `RedisFailureAndRetryTest`, which followed its subject into `com.mend.service`), no tenant/membership changes, no AI-path changes.
+
+## Final run
+
+- `docs/audit/cleanup-plan.md` added: the group definitions and stop conditions, written after the work (the original prompt was not in the repository). Docs only.
+- Backend, at this commit: `cd backend && ./mvnw test` → `[INFO] Tests run: 660, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 5658398601463).
+- Frontend: `npm test -- --ci` → `Test Suites: 14 passed, 14 total`, `Tests: 39 passed, 39 total`.
+- None of the 5 stop conditions was hit during the cleanup:
+  1. no failed publish rows
+  2. V16 found no legacy values, and no code still used a removed value
+  3. the test count never dropped (654 → 660)
+  4. nothing pointed to a product bug; the compliance and JWT items are listed as findings below
+  5. the AI path, tenant/membership checks and V1–V15 were not touched
 
 ## Out-of-scope findings (not changed)
 
