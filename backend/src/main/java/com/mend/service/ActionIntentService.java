@@ -63,6 +63,10 @@ public class ActionIntentService {
         this.humanApprovalService = humanApprovalService;
     }
 
+    /** Intents that ended without recovering money; a new attempt may follow them. */
+    private static final java.util.Set<ActionIntentStatus> ENDED = java.util.EnumSet.of(
+            ActionIntentStatus.FAILED, ActionIntentStatus.CANCELLED, ActionIntentStatus.EXPIRED);
+
     /** True when compliance blocked only because the strategy is MANUAL_REVIEW (a human must decide, ADR-002 decision 10). */
     public static boolean isManualReviewBlock(ComplianceDecision decision) {
         return decision != null && decision.isBlocked() && decision.getStrategy() == RecoveryStrategy.MANUAL_REVIEW
@@ -124,6 +128,14 @@ public class ActionIntentService {
 
         // Check if intent already exists (Task 6 idempotency)
         Optional<ActionIntent> existingIntent = actionIntentRepository.findByIdempotencyKey(idempotencyKey);
+        // M2 U9 review: the campaign is ELIGIBLE again only after an attempt ended without recovery (deferral cap, routed
+        // to review, escalation). Returning that ended intent would leave the approved campaign with nothing to run, so the
+        // next attempt gets its own key (and attempt key). A live intent is still returned as is (idempotency).
+        while (existingIntent.isPresent() && ENDED.contains(existingIntent.get().getStatus())) {
+            attemptNumber++;
+            idempotencyKey = "intent:" + campaignId + ":attempt_" + attemptNumber + ":" + actionType.name();
+            existingIntent = actionIntentRepository.findByIdempotencyKey(idempotencyKey);
+        }
         if (existingIntent.isPresent()) {
             log.info("Action Intent already exists for key '{}'. Returning existing intent.", idempotencyKey);
             return existingIntent.get();

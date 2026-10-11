@@ -54,6 +54,8 @@ public class ActionExecutionService {
     private final HumanApprovalService humanApprovalService;
     private final int maxDeferrals;
     private final ReconcileBackoff deferBackoff;
+    private final java.time.Duration minDeferral;
+    private final com.mend.provider.ProviderCapabilities capabilities;
 
     public ActionExecutionService(
             ActionIntentRepository actionIntentRepository,
@@ -68,6 +70,7 @@ public class ActionExecutionService {
             @org.springframework.beans.factory.annotation.Value("${mend.reconciler.backoff-base-seconds:30}") long backoffBaseSeconds,
             @org.springframework.beans.factory.annotation.Value("${mend.reconciler.not-found-grace-seconds:120}") long notFoundGraceSeconds,
             HumanApprovalService humanApprovalService,
+            com.mend.provider.ProviderCapabilities capabilities,
             @org.springframework.beans.factory.annotation.Value("${mend.execution.max-deferrals:5}") int maxDeferrals,
             @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-base-seconds:30}") long deferBackoffBaseSeconds,
             @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-cap-seconds:21600}") long deferBackoffCapSeconds) {
@@ -85,6 +88,8 @@ public class ActionExecutionService {
         this.executionTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.humanApprovalService = humanApprovalService;
         this.maxDeferrals = maxDeferrals;
+        this.capabilities = capabilities;
+        this.minDeferral = java.time.Duration.ofSeconds(deferBackoffBaseSeconds);
         this.deferBackoff = new ReconcileBackoff(java.time.Duration.ofSeconds(deferBackoffBaseSeconds),
                 java.time.Duration.ofSeconds(deferBackoffCapSeconds), java.util.random.RandomGenerator.getDefault());
     }
@@ -264,8 +269,18 @@ public class ActionExecutionService {
         // M2 U9: a MEND-side failure where nothing reached the provider is deferred (same intent, later), up to the cap.
         // execution_attempts counts dispatches (incremented by the dispatch fence), so it counts the deferred dispatches too.
         OutcomeRetryPolicy retry = OutcomeRetryPolicy.classify(outcome);
-        boolean deferNow = retry == OutcomeRetryPolicy.DEFER && intent.getExecutionAttempts() <= maxDeferrals;
-        Instant deferUntil = deferNow ? now.plus(deferBackoff.delay(Math.max(0, intent.getExecutionAttempts() - 1))) : null;
+        if (retry == OutcomeRetryPolicy.DEFER && outcome instanceof ProviderActionOutcome.Rejected rejected
+                && rejected.kind() == com.mend.provider.RejectionKind.RATE_LIMITED && !resendSafe(intent)) {
+            // A 429 answered a sent POST: resending later is only allowed where the provider dedups the attempt (invariant 5).
+            retry = OutcomeRetryPolicy.REVIEW;
+        }
+        // Deferral needs the campaign in EXECUTING (it goes back to ACTION_PENDING, where the scheduler claims). Anything else
+        // (e.g. the manual path) would leave a READY intent nobody claims: route it to review instead.
+        CampaignStatus stateAtFinalize = campaignRepository.findById(intent.getCampaignId()).map(Campaign::getCurrentState).orElse(null);
+        boolean deferNow = retry == OutcomeRetryPolicy.DEFER && intent.getExecutionAttempts() <= maxDeferrals
+                && stateAtFinalize == CampaignStatus.EXECUTING;
+        // Full jitter, but never sooner than the base delay: a MEND-side cause (e.g. missing credentials) needs time to fix.
+        Instant deferUntil = deferNow ? now.plus(max(minDeferral, deferBackoff.delay(Math.max(0, intent.getExecutionAttempts() - 1)))) : null;
 
         // Step 0: fenced intent transition. Not applied => this worker no longer owns the intent: discard the result.
         boolean applied = deferNow ? transitions.deferFromExecuting(intentId, claimToken, deferUntil) : switch (outcome) {
@@ -408,6 +423,18 @@ public class ActionExecutionService {
         };
     }
 
+    private boolean resendSafe(ActionIntent intent) {
+        try {
+            return capabilities.supportsIdempotentResend(ActionType.valueOf(intent.getActionType()));
+        } catch (IllegalArgumentException | NullPointerException unknownType) {
+            return false;
+        }
+    }
+
+    private static java.time.Duration max(java.time.Duration a, java.time.Duration b) {
+        return a.compareTo(b) >= 0 ? a : b;
+    }
+
     /** M2 U9: intent already READY again; campaign EXECUTING -> ACTION_PENDING (RETRY_DEFERRED) so the scheduler picks it up. */
     private void deferCampaign(ActionIntent intent, Campaign campaign, ProviderActionOutcome outcome, Instant deferUntil, String attemptKey) {
         String code = OutcomeRetryPolicy.code(outcome);
@@ -440,10 +467,16 @@ public class ActionExecutionService {
         }
         String code = OutcomeRetryPolicy.code(outcome);
         String reviewCode = retry == OutcomeRetryPolicy.DEFER ? "OPERATOR_ACTION_REQUIRED:" + code : "HUMAN_DECISION_REQUIRED:" + code;
-        campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.FAILED,
-                "Action execution failed: " + reason, "SYSTEM", null);
-        campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.ELIGIBLE,
-                reviewCode + ": routed to human review", "SYSTEM", null);
+        CampaignStatus state = campaign.getCurrentState();
+        if (state == CampaignStatus.EXECUTING) {
+            campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.FAILED,
+                    "Action execution failed: " + reason, "SYSTEM", null);
+            state = CampaignStatus.FAILED;
+        }
+        if (state == CampaignStatus.FAILED || state == CampaignStatus.ACTION_PENDING) {
+            campaignLifecycleService.transitionState(campaign.getMerchantId(), campaign.getId(), CampaignStatus.ELIGIBLE,
+                    reviewCode + ": routed to human review", "SYSTEM", null);
+        }
         humanApprovalService.createReview(intent.getMerchantId(), campaign.getId(), reviewCode + ": intent " + intent.getId()
                 + (retry == OutcomeRetryPolicy.DEFER ? " deferred " + intent.getExecutionAttempts() + " times; fix the cause, then approve"
                                                      : " cannot run automatically; human decision required"));

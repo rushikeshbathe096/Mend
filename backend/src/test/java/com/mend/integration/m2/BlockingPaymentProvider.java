@@ -31,6 +31,7 @@ public class BlockingPaymentProvider implements PaymentProvider, com.mend.provid
     private final Map<ProviderAttemptKey, CountDownLatch> release = new ConcurrentHashMap<>();
     /** M2 U9: a create call for the key answers this result instead of reaching the delegate (e.g. RATE_LIMITED). */
     private final Map<ProviderAttemptKey, RequestResult<PaymentLinkSnapshot>> createAnswers = new ConcurrentHashMap<>();
+    private final Map<ProviderAttemptKey, RequestResult<String>> debitAnswers = new ConcurrentHashMap<>();
 
     public BlockingPaymentProvider(PaymentProvider delegate) {
         this.delegate = delegate;
@@ -69,8 +70,14 @@ public class BlockingPaymentProvider implements PaymentProvider, com.mend.provid
         createAnswers.put(key, answer);
     }
 
+    /** Every synthetic debit for {@code key} returns {@code answer} (counted, never forwarded). */
+    public void answerDebit(ProviderAttemptKey key, RequestResult<String> answer) {
+        debitAnswers.put(key, answer);
+    }
+
     public void reset() {
         createAnswers.clear();
+        debitAnswers.clear();
         release.values().forEach(CountDownLatch::countDown);
         createCalls.clear();
         debitCalls.clear();
@@ -93,7 +100,8 @@ public class BlockingPaymentProvider implements PaymentProvider, com.mend.provid
         }
         int call = debitCalls.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
         holdIfFirst(key, call);
-        return debitDelegate.simulateDebit(merchant, campaignId, intentId, key);
+        RequestResult<String> answer = debitAnswers.get(key);
+        return answer != null ? answer : debitDelegate.simulateDebit(merchant, campaignId, intentId, key);
     }
 
     private void holdIfFirst(ProviderAttemptKey key, int call) {
