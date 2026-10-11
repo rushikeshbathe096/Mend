@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** M2 U3: the executor's dispatch and finalize fences on real PostgreSQL with a provider held mid-call. */
-@Import(ExecutionSafetyScenarioTest.BlockingProviderConfig.class)
+@Import(BlockingProviderConfig.class)
 class ExecutionFenceTest extends AbstractIntegrationTest {
 
     @Autowired private ActionExecutionService executor;
