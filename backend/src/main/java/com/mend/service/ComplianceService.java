@@ -91,8 +91,10 @@ public class ComplianceService {
                 .findFirstByCampaignIdOrderByEvaluatedAtDesc(campaignId);
         if (existingComplianceOpt.isPresent()) {
             ComplianceDecisionEntity existingEntity = existingComplianceOpt.get();
+            // The shortcut reuses only a decision for the strategy being evaluated now: an OD-1 approval decision
+            // (override strategy) is never handed to a path without an approval (invariant 7).
             if (recoveryDecisionId != null && java.util.Objects.equals(existingEntity.getRecoveryDecisionId(), recoveryDecisionId)
-                    && (strategyOverride == null || existingEntity.getStrategy() == strategyOverride)) {
+                    && strategy != null && existingEntity.getStrategy() == strategy) {
                 log.info("Idempotent compliance evaluation: Returning existing ComplianceDecision for campaign '{}'", campaignId);
                 return mapToDecision(existingEntity);
             }

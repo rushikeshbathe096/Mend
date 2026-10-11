@@ -155,7 +155,7 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
         poll();
         ActionIntent deferred = reload(intent);
         assertEquals(ActionIntentStatus.READY, deferred.getStatus(), "first failure is deferred");
-        assertTrue(deferred.getScheduledAt().isAfter(Instant.now().minusSeconds(1)), "rescheduled into the future (backoff)");
+        assertTrue(deferred.getScheduledAt().isAfter(Instant.now().plusSeconds(20)), "rescheduled at least the base delay ahead (backoff floor)");
         assertNull(deferred.getClaimToken(), "ownership cleared");
         assertEquals(CampaignStatus.ACTION_PENDING, campaignState(intent));
         assertTrue(auditTypes(intent).contains("EXECUTION_DEFERRED"));
@@ -257,5 +257,105 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
         assertEquals(ComplianceStatus.COMPLIANCE_ALLOWED, compliance.getStatus(), "compliance was re-run for the approved action");
         assertEquals(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, compliance.getStrategy());
         assertEquals(CampaignStatus.ACTION_PENDING, campaigns.findById(campaign.getId()).orElseThrow().getCurrentState());
+    }
+
+    // ---- U9 review fixes ----
+
+    private AuthenticatedUser reviewer() {
+        UUID reviewerId = UUID.randomUUID();
+        jdbc.update("INSERT INTO users (id, email, password_hash, display_name) VALUES (?, ?, 'x', 'Reviewer')",
+                reviewerId, "reviewer-" + reviewerId + "@test.invalid");
+        return new AuthenticatedUser(reviewerId, "reviewer@test.invalid", "Reviewer", "ACTIVE",
+                List.of(new AuthenticatedUser.MerchantMembershipInfo(merchantId, "M2 U9 merchant", UUID.randomUUID(), "REVIEWER")));
+    }
+
+    @Test
+    @DisplayName("Approving the operator review after the deferral cap runs a NEW attempt (not the ended intent) and it executes")
+    void approvalAfterDeferralCapRunsANewAttempt() {
+        ActionIntent intent = arrange(DeferCode.AMOUNT_UNRESOLVED);
+        for (int i = 0; i <= maxDeferrals && reload(intent).getStatus() != ActionIntentStatus.FAILED; i++) {
+            jdbc.update("UPDATE action_intents SET scheduled_at = now() - interval '1 second' WHERE id = ?", intent.getId());
+            poll();
+        }
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.ELIGIBLE, campaignState(intent));
+        // The operator fixed the cause (the amount is now known) and the campaign has a normal recovery decision.
+        Campaign campaign = campaigns.findById(intent.getCampaignId()).orElseThrow();
+        webhooks.findByMerchantIdAndExternalEventId(merchantId, campaign.getPaymentId()).ifPresent(event -> {
+            event.setRawPayload("{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + campaign.getPaymentId()
+                    + "\",\"status\":\"failed\",\"amount\":49900,\"currency\":\"INR\"}}}}");
+            webhooks.save(event);
+        });
+        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "CARD_EXPIRED",
+                new BigDecimal("0.95"), "CUSTOMER_ACTION_REQUIRED", "customer update", "v1.0.0"));
+        recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
+        ReviewQueue review = reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaign.getId(), ReviewQueueStatus.PENDING).orElseThrow();
+
+        humanApprovalService.approveReview(merchantId, review.getId(), "fixed", reviewer());
+
+        List<ActionIntent> all = intents.findByCampaignId(campaign.getId());
+        ActionIntent next = all.stream().filter(i -> !i.getId().equals(intent.getId())).findFirst().orElseThrow(
+                () -> new AssertionError("approval must create a new attempt, intents: " + all.size()));
+        assertEquals(2, next.getAttemptNumber());
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus(), "the ended attempt is left as it was");
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() - interval '1 second' WHERE id = ?", next.getId());
+        poll();
+        assertEquals(ActionIntentStatus.AWAITING_PAYMENT, intents.findById(next.getId()).orElseThrow().getStatus(), "the approved attempt really runs");
+    }
+
+    @Test
+    @DisplayName("The OD-1 approval decision is never reused by a path without an approval (invariant 7)")
+    void approvalDecisionIsNotReusedWithoutApproval() {
+        manualReviewThenApprovalYieldsLink();
+        Campaign campaign = campaigns.findAll().stream().filter(c -> merchantId.equals(c.getMerchantId())).findFirst().orElseThrow();
+        // Back to ELIGIBLE with nothing live (as after a cancelled attempt), then a plain, unapproved creation:
+        jdbc.update("UPDATE action_intents SET status = 'CANCELLED', completed_at = now() WHERE campaign_id = ?", campaign.getId());
+        jdbc.update("UPDATE campaigns SET current_state = 'ELIGIBLE' WHERE id = ?", campaign.getId());
+        jdbc.update("UPDATE review_queue SET status = 'CLOSED' WHERE campaign_id = ? AND status = 'PENDING'", campaign.getId());
+
+        assertNull(actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId()),
+                "MANUAL_REVIEW is re-evaluated: no intent without a new human approval");
+        assertTrue(reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaign.getId(), ReviewQueueStatus.PENDING).isPresent());
+    }
+
+    @Test
+    @DisplayName("A DEFER outcome when the campaign is no longer EXECUTING is routed to review (no orphan READY intent)")
+    void deferWithoutExecutingCampaignGoesToReview() throws Exception {
+        ActionIntent intent = readyIntent(ActionType.REQUEST_CUSTOMER_ACTION, true);
+        ProviderAttemptKey key = ProviderAttemptKey.forIntent(intent.getId());
+        provider.answerCreate(key, new RequestResult.Rejected<>(RejectionKind.RATE_LIMITED, null, null, 429));
+        provider.blockFirstCreate(key);
+        java.util.concurrent.ExecutorService thread = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<?> worker = thread.submit(this::poll);
+            assertTrue(provider.awaitEntered(key));
+            jdbc.update("UPDATE campaigns SET current_state = 'ELIGIBLE' WHERE id = ?", intent.getCampaignId());   // moved meanwhile
+            provider.release(key);
+            worker.get(20, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            provider.release(key);
+            thread.shutdownNow();
+        }
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus(), "not left READY where no scheduler would claim it");
+        assertEquals(CampaignStatus.ELIGIBLE, campaignState(intent));
+        assertTrue(reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(intent.getCampaignId(), ReviewQueueStatus.PENDING)
+                .orElseThrow().getReason().startsWith("OPERATOR_ACTION_REQUIRED:"));
+    }
+
+    @Test
+    @DisplayName("429 on an action the provider does not dedup (debit): routed to review, never resent automatically (invariant 5)")
+    void rateLimitedNonResendSafeActionIsNotDeferred() {
+        ActionIntent intent = readyIntent(ActionType.RETRY_PAYMENT, true);
+        ProviderAttemptKey key = ProviderAttemptKey.forIntent(intent.getId());
+        provider.answerDebit(key, new RequestResult.Rejected<>(RejectionKind.RATE_LIMITED, null, null, 429));
+
+        poll();
+
+        assertEquals(ActionIntentStatus.FAILED, reload(intent).getStatus());
+        assertEquals(CampaignStatus.ELIGIBLE, campaignState(intent));
+        assertEquals(1, provider.debitCalls(key));
+        assertFalse(auditTypes(intent).contains("EXECUTION_DEFERRED"));
+        assertTrue(reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(intent.getCampaignId(), ReviewQueueStatus.PENDING)
+                .orElseThrow().getReason().startsWith("HUMAN_DECISION_REQUIRED:"));
     }
 }
