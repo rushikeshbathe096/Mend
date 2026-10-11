@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * Catalog entry describing a deterministic demo scenario. This is static
  * product documentation (scenario id/title/description), never fabricated
- * business metrics.
+ * business metrics. Every description starts with "SIMULATED": the scenarios run on fabricated inputs.
  */
 public class DemoScenarioDto {
 
@@ -36,22 +36,22 @@ public class DemoScenarioDto {
     public static List<DemoScenarioDto> catalog() {
         return List.of(
                 new DemoScenarioDto("LOW_RISK_RETRY", "Low-Risk Automated Retry",
-                        "A transient payment failure is classified as low risk, passes compliance, and is retried through the provider boundary to a recovered outcome.",
+                        "SIMULATED: A transient payment failure is classified as low risk, passes compliance, and is retried through the provider boundary to a recovered outcome.",
                         List.of("Failed payment", "Classification", "LOW risk", "Recovery decision", "Strategy", "Compliance", "ActionIntent", "Provider execution", "Recovered")),
                 new DemoScenarioDto("HIGH_RISK_HUMAN_REVIEW", "High-Risk Human Review",
-                        "A high-value failure is flagged by the risk agent, supervisor consensus requires merchant review, and the campaign waits in the approval queue for an Approve / Reject decision.",
+                        "SIMULATED: A high-value failure is flagged by the risk agent, supervisor consensus requires merchant review, and the campaign waits in the approval queue for an Approve / Reject decision.",
                         List.of("Failed payment", "HIGH risk", "Agent disagreement", "Supervisor consensus", "HUMAN_APPROVAL", "Merchant approval", "Compliance revalidation", "Execution", "Outcome")),
                 new DemoScenarioDto("CUSTOMER_ACTION", "Customer Action",
-                        "A card failure routes to a customer payment link; when the customer completes payment, the captured webhook reconciles the campaign to recovered.",
+                        "SIMULATED: A card failure routes to a customer payment link; when the customer completes payment, the captured webhook reconciles the campaign to recovered.",
                         List.of("Card/payment failure", "CUSTOMER_ACTION_REQUIRED", "Payment link", "Customer action", "Captured webhook", "Reconciliation", "Recovered")),
                 new DemoScenarioDto("PROVIDER_AMBIGUITY", "Provider Ambiguity Resolution",
-                        "A provider timeout leaves execution state uncertain; the authoritative provider event reconciles the campaign to its true final state.",
+                        "SIMULATED: A provider timeout leaves execution state uncertain; the authoritative provider event reconciles the campaign to its true final state.",
                         List.of("Provider timeout", "Execution uncertain", "Reconciliation", "Authoritative provider status", "Final state")),
                 new DemoScenarioDto("DUPLICATE_EVENT", "Duplicate Event Interception",
-                        "The same webhook delivered twice is intercepted by strict deduplication: one business event, one recovery path.",
+                        "SIMULATED: The same webhook delivered twice is intercepted by strict deduplication: one business event, one recovery path.",
                         List.of("Webhook delivery", "Duplicate delivery", "Deduplication", "One business event")),
                 new DemoScenarioDto("AGENT_FAILURE", "Agent Failure Safe Fallback",
-                        "An AI/MCP failure triggers the deterministic fallback, which makes a safe no-retry decision instead of an unsafe action.",
+                        "SIMULATED: An AI/MCP failure triggers the deterministic fallback, which makes a safe no-retry decision instead of an unsafe action.",
                         List.of("AI/MCP failure", "Deterministic fallback", "Safe decision", "No unsafe action", "Campaign closed"))
         );
     }
