@@ -229,7 +229,7 @@ public class ExecutionReconciler {
     private void reconcileAwaitingPayment(ActionIntent intent) {
         MerchantRef merchant = new MerchantRef(intent.getMerchantId());
         String linkId = intent.getResponseReference();
-        LookupResult<PaymentLinkSnapshot> lookup = linkId != null && linkId.startsWith("plink_")
+        LookupResult<PaymentLinkSnapshot> lookup = PaymentLinkSnapshot.isLinkId(linkId)
                 ? provider.getPaymentLink(merchant, linkId)
                 : provider.findPaymentLinkByReference(merchant, ProviderAttemptKey.forIntent(intent.getId()));
         switch (lookup) {

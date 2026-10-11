@@ -11,7 +11,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | 1 | `f4526cc` | cleanup: remove unused enums |
 | — | `ec78300` | test: capture evidence on randomizedInvoiceRaces timeout |
 | — | `3482f6e` | test: fix randomizedInvoiceRaces observer busy-poll |
-| 2 | (this commit) | cleanup: remove unused repository methods |
+| 2 | `f5892e0` | cleanup: remove unused repository methods |
+| 3 | (this commit) | cleanup: shared payment-link id helper |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -105,3 +106,10 @@ Removed (audit item 2): `ActionIntentRepository.findDueIntents`, `AuditLogReposi
 
 - Proof of no use: each name has 0 matches in `backend/src`, `frontend/src` and `ai-service` after the change; Spring Data only parses declared methods, so nothing can reach them at runtime.
 - Tests: `./mvnw test` → `[INFO] Tests run: 654, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 2475853721078; after the import cleanup, seed 2584640586156, same totals).
+
+## Group 3: shared payment-link id helper
+
+- `com.mend.provider.PaymentLinkSnapshot.isLinkId(String)`: `!= null && startsWith("plink_")`, the exact rule both copies used (no behaviour change; the stricter `RazorpayPaymentProvider.LINK_ID` pattern is adapter input validation and stays where it is).
+- `ExecutionReconciler.reconcileAwaitingPayment` and `DefaultPaymentReconciliationService` (2 call sites; its private `isPaymentLinkReference` is removed) use it. `grep -rn 'startsWith("plink_")' backend/src/main` → none left.
+- New test `PaymentLinkSnapshotTest.isLinkIdAcceptsOnlyPaymentLinkIds` (null, empty, `pay_`, upper case, attempt key → false).
+- Tests: `./mvnw test` → `[INFO] Tests run: 655, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 2730759722708; +1 = the new test).

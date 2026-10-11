@@ -47,4 +47,15 @@ class PaymentLinkSnapshotTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new PaymentLinkSnapshot("plink_1", null, PaymentLinkState.CREATED, 100, 0, "INR", null, null));
     }
+
+    @Test
+    void isLinkIdAcceptsOnlyPaymentLinkIds() {
+        assertTrue(PaymentLinkSnapshot.isLinkId("plink_Abc123"));
+        assertTrue(PaymentLinkSnapshot.isLinkId("plink_mock_4da508ee25894ffcabbc411bcf7c41f7"));
+        assertFalse(PaymentLinkSnapshot.isLinkId(null));
+        assertFalse(PaymentLinkSnapshot.isLinkId(""));
+        assertFalse(PaymentLinkSnapshot.isLinkId("pay_Abc123"));
+        assertFalse(PaymentLinkSnapshot.isLinkId("PLINK_Abc123"));
+        assertFalse(PaymentLinkSnapshot.isLinkId("mnd_4da508ee25894ffcabbc411bcf7c41f7"));
+    }
 }
