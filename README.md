@@ -39,7 +39,7 @@ flowchart TD
   Backend --> Provider[Razorpay abstraction]
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), and [docs/RELIABILITY.md](docs/RELIABILITY.md).
+The provider boundary is specified in [docs/m1/M1-provider-correctness.md](docs/m1/M1-provider-correctness.md) ([ADR-001](docs/adr/ADR-001-payment-provider-boundary.md)); execution safety (claims, dispatch fence, reconciliation) in [docs/m2/M2-execution-safety.md](docs/m2/M2-execution-safety.md) ([ADR-002](docs/adr/ADR-002-execution-safety.md)).
 
 ## Six Agents
 
@@ -64,7 +64,7 @@ They are roles within one LangGraph workflow, not six independent services. No a
 
 ## Verified Results
 
-- 276 Java tests, 32 Python tests, and 23 frontend tests passing.
+- Backend: 660 tests, 0 failures (`cd backend && ./mvnw test`, each run on its own throwaway database); frontend: 39 tests (`npm test`). The ai-service tests are M3-owned and were not re-run in the pre-M3 cleanup ([docs/audit/cleanup-report.md](docs/audit/cleanup-report.md)).
 - `./scripts/verify.sh` passes, including the Next.js production build.
 - Six-agent heuristic benchmark: 85.32 ms p50 and 89.76 ms p95 over 10 local runs with no LLM keys.
 - Five-case recovery fixture: 5/5 expected routes, 40% retry, 40% human-review, 20% customer-action.
@@ -77,7 +77,7 @@ Next.js, TypeScript, Java 21, Spring Boot, PostgreSQL, Flyway, Redis Streams, Py
 
 ## Demo
 
-The demo covers low-risk retry, high-risk human approval, customer action, provider timeout/reconciliation, duplicate webhook, and AI/MCP failure fallback. See [docs/DEMO.md](docs/DEMO.md).
+The demo covers low-risk retry, high-risk human approval, customer action, provider timeout/reconciliation, duplicate webhook, and AI/MCP failure fallback. Every scenario is SIMULATED and labelled as such. `/api/v1/demo` exists only with the `dev` profile (see Profiles below); otherwise the console's demo page shows "Demo disabled". Details: [docs/hygiene/pre-m3-hygiene.md](docs/hygiene/pre-m3-hygiene.md).
 
 ## Setup
 
@@ -92,7 +92,20 @@ cd backend && SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
 
 The backend has **no default profile**. Started without `SPRING_PROFILES_ACTIVE` it runs Spring's `default` profile: no dev seed and no `/api/v1/demo` (404). Set `SPRING_PROFILES_ACTIVE=dev` only for local development.
 
-For separate service startup, environment variables, expected ports, Razorpay TEST MODE, and troubleshooting, see [docs/SETUP.md](docs/SETUP.md).
+Every environment variable the code reads is listed in [.env.example](.env.example) with its default. Ports: frontend 3000, backend 8080, ai-service 8000, PostgreSQL 5433, Redis 6379. Razorpay TEST MODE needs `MEND_PAYMENT_PROVIDER=razorpay`, the key pair, `RAZORPAY_WEBHOOK_SECRET` and `RAZORPAY_SINGLE_TENANT_MERCHANT_ID`; recorded contracts are under `backend/src/test/resources/razorpay/recorded/`.
+
+### Profiles
+
+| `SPRING_PROFILES_ACTIVE` | dev seed data | `/api/v1/demo` | use |
+|---|---|---|---|
+| unset (Spring `default`) | off | 404 | any shared or deployed environment |
+| `dev` | on (`MEND_DEMO_DATASET_V1`) | on, SIMULATED scenarios | local development only |
+
+Tests run with their own `test` profile and a throwaway database per run; they never touch the dev database.
+
+### Analytics
+
+Analytics amounts come only from the strict minor-unit parser (positive integral paise with a supported currency). They are summed exactly; a campaign whose original amount cannot be resolved is counted as `amountUnknownCount` and never given a default amount. "Recovered" means recovered by MEND (`recovery_attribution = MEND`). Late captures of the original payment and RECOVERED campaigns without an attribution (recovered before V15, or by the SYNTHETIC mock provider) are reported separately. Details: Group 4 of [docs/audit/cleanup-report.md](docs/audit/cleanup-report.md).
 
 ## Project Structure
 
@@ -100,14 +113,18 @@ For separate service startup, environment variables, expected ports, Razorpay TE
 - `backend/`: authoritative API, event processing, compliance, ActionIntent, providers, reconciliation, and audit.
 - `ai-service/`: bounded classification, LangGraph roles, MCP tools, checkpoint helper, and AI tests.
 - `scripts/`: repository verification.
-- `docs/`: technical, evidence, demo, interview, and readiness package.
+- `docs/`: milestone design docs and evidence (`m1/`, `m2/`), ADRs (`adr/`), hygiene and audit reports (`hygiene/`, `audit/`).
 
-See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
 
 ## Limitations
 
-Mend is a regression-green single-host engineering demonstration, not a production-deployment-ready SaaS. Remaining gaps include the provider lease-expiry duplicate-call boundary, synthetic MCP fallbacks, optional deployment-configured AI authentication, process-local checkpointing, external secret management, TLS/ingress, rate limiting, monitoring, database HA/backups, and live Razorpay production certification.
+Mend is a regression-green single-host engineering demonstration, not a production-deployment-ready SaaS. Remaining gaps include synthetic MCP fallbacks, optional deployment-configured AI authentication, process-local checkpointing, external secret management, TLS/ingress, rate limiting, monitoring, database HA/backups, and live Razorpay production certification.
 
 ## Documentation Index
 
-Start with [docs/PHASE21_PACKAGE_INDEX.md](docs/PHASE21_PACKAGE_INDEX.md). The current evidence source is [docs/PHASE20_FORENSIC_FINDINGS.md](docs/PHASE20_FORENSIC_FINDINGS.md). Career packaging is in [docs/CV_BULLETS.md](docs/CV_BULLETS.md) and [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md).
+- Rules for contributors and coding agents: [AGENTS.md](AGENTS.md).
+- M1, provider correctness: [docs/m1/M1-summary.md](docs/m1/M1-summary.md), spec [docs/m1/M1-provider-correctness.md](docs/m1/M1-provider-correctness.md), [ADR-001](docs/adr/ADR-001-payment-provider-boundary.md).
+- M2, execution safety: [docs/m2/M2-summary.md](docs/m2/M2-summary.md), spec [docs/m2/M2-execution-safety.md](docs/m2/M2-execution-safety.md), [ADR-002](docs/adr/ADR-002-execution-safety.md). The provider lease-expiry duplicate-call boundary is closed there (`M2ExitCriteriaTest.brief19`).
+- Pre-M3 hygiene (isolated test database, gated demo): [docs/hygiene/pre-m3-hygiene.md](docs/hygiene/pre-m3-hygiene.md).
+- Unused-code audit and the cleanup that followed it: [docs/audit/unused-code-audit.md](docs/audit/unused-code-audit.md), [docs/audit/cleanup-report.md](docs/audit/cleanup-report.md).
+- Pre-M1 health check (historical): [docs/health-check.md](docs/health-check.md).

@@ -18,7 +18,8 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | 5 | `3eb13e0` | cleanup: remove legacy webhook publish chain |
 | 6 | `72a1710` | cleanup: drop legacy status values + CHECK constraints |
 | 7 | `58c5569` | config: complete .env.example and safe default profile |
-| 8 | (this commit) | frontend: M2 states and demo page |
+| 8 | `3ab707c` | frontend: M2 states and demo page |
+| 9 | (this commit) | docs: README index and limitations |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
@@ -302,3 +303,55 @@ Both runs applied 16 migrations, so V16 also succeeds on a fresh database.
 - **`npm run lint` does not pass, before or after this group:** `✖ 64 problems (53 errors, 11 warnings)` at `58c5569` and the same after. On the 8 files this group touches, it is 13 problems before and 13 after; the new files add none. These are pre-existing `no-explicit-any`, `react-hooks/set-state-in-effect` and unused-variable findings across the frontend. Fixing them means restructuring effects in pages this group does not otherwise change, so it is listed as a finding instead.
 
 **Backend**: unchanged in this group (last full run 660/0/0/0 at `58c5569`).
+
+## Group 9: docs (README index and limitations)
+
+- **`README.md`**:
+  - Replaced the 10 broken links (`ARCHITECTURE`, `SECURITY`, `RELIABILITY`, `DEMO`, `SETUP`, `PROJECT_STRUCTURE`, `PHASE21_PACKAGE_INDEX`, `PHASE20_FORENSIC_FINDINGS`, `CV_BULLETS`, `INTERVIEW_GUIDE`) with links to documents that exist: M1/M2 summaries and specs, ADR-001/002, the hygiene and audit reports, `AGENTS.md`, `.env.example`.
+  - Dropped the closed "provider lease-expiry duplicate-call boundary" from Limitations; the index says where M2 closed it.
+  - New "Profiles" table (default vs `dev`) and "Analytics" note (strict amounts, `amountUnknownCount`, MEND-only "recovered", late capture and unknown attribution reported separately).
+  - The stale "276 Java / 32 Python / 23 frontend tests" line now states what this cleanup measured (backend 660, frontend 39) and says the ai-service tests were not re-run (M3-owned).
+- **`frontend/README.md`**: the create-next-app boilerplate is replaced by a pointer to the root README and the three commands.
+- **Link check**: every relative `](…)` target in `README.md` and `frontend/README.md` exists (20 of 20; there were 10 missing before).
+- **Tests**: `./mvnw test` → `[INFO] Tests run: 660, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (seed 4735883721066).
+
+## End state
+
+- Backend: 654 → **660** tests; 0 failures, 0 errors, 0 skipped.
+  - +1 Group 3 (`isLinkId`); +3 Group 4 (analytics + resolver regressions); +2 Group 6 (V16)
+  - Group 5 net 0; no test deleted
+  - Changed assertions carry `// cleanup behaviour change` with the reason
+- Frontend: 33 → **39** jest tests; `next build` succeeds; `npm run lint` has the same 64 pre-existing problems as before the cleanup.
+- `randomizedInvoiceRaces` passed in every full run after the harness fix:
+
+  | run | seed |
+  |---|---|
+  | fix verification ×3 | 2166130308841, 2259516901534, 2349090276975 |
+  | Group 2 | 2475853721078, 2584640586156 |
+  | Group 3 | 2730759722708 |
+  | Group 4 | 3250871087065 |
+  | consumer flag | 3820937730003 |
+  | Group 5 | 3933075509317 |
+  | Group 6 | 4260205406699 |
+  | Group 7 | 4494755797558 |
+  | Group 9 | 4735883721066 |
+
+  One full run during Group 5 failed in a different test (seed 3645313379849), explained in the consumer-poll section above. No `m2-exit-evidence-*` file was written by any run.
+- Nothing merged or pushed. V1–V15 untouched. No Phase-N renames, no test package moves (apart from `RedisFailureAndRetryTest`, which followed its subject into `com.mend.service`), no tenant/membership changes, no AI-path changes.
+
+## Out-of-scope findings (not changed)
+
+1. **`ComplianceService.checkDuplicateActionExists`** counts PENDING / SCHEDULED / READY / CLAIMED / EXECUTING / SUCCEEDED as an existing action, but not `NEEDS_RECONCILIATION` or `AWAITING_PAYMENT`. A second intent for the same attempt number could pass compliance while one is in reconciliation or awaiting payment. The one-in-flight index (V13) still prevents two from being in flight per invoice. Compliance behaviour, so it was not changed here.
+2. **`jwt.secret`** defaults to `dev_default_jwt_secret_key_must_be_at_least_32_bytes_long` in `application.properties` for every profile, now including `default`. A deployment without `JWT_SECRET` signs tokens with a public key. It should fail to start instead, or the default should move to `application-dev.properties`.
+3. **`CustomerController`** customer summary counts every RECOVERED campaign as `recoveredCampaigns`, regardless of attribution (lines 110, 117), unlike analytics after Group 4.
+4. **The analytics UI** does not show the new fields yet (`amountUnknownCount`, late capture, attribution unknown). Mock-mode/demo dashboards will show 0 MEND recoveries, because SYNTHETIC captures set no attribution.
+5. **The webhook filter** still offers `UNVERIFIED` and `DUPLICATE`, which are not `WebhookEventStatus` values.
+6. **Frontend lint**: 64 pre-existing problems (53 errors), mostly `no-explicit-any` and `react-hooks/set-state-in-effect`.
+7. **Test hygiene**:
+   - 15 test classes call `deleteAll()` on shared tables (webhooks, classifications) in the run's shared database.
+   - `debug=true` in `application-test.properties` enables DEBUG SQL logging (tens of MB per run).
+   - `DevDataInitializer` holds one connection for ≈5 s during test context startup (Hikari leak-detection warning).
+8. **Jackson 2** remains at test scope only because of 4 integration tests' `ObjectMapper`. `RedisWebhookEventPublisher` keeps a now-unneeded `@Primary`.
+9. **Local state**:
+   - Two `mend_test_*` databases from aborted runs (`…1791726135…`, `…1791737945…`) remain until the 24 h sweep.
+   - A git worktree from another session is registered at `/tmp/claude-1000/…/b1176de1…/scratchpad/main-wt` (`b669205`, detached). It was not created by this work and was left alone.
