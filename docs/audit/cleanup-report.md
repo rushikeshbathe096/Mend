@@ -19,7 +19,7 @@ Out of scope throughout: Phase-N test renames, test package moves, tenant/member
 | 6 | `72a1710` | cleanup: drop legacy status values + CHECK constraints |
 | 7 | `58c5569` | config: complete .env.example and safe default profile |
 | 8 | `3ab707c` | frontend: M2 states and demo page |
-| 9 | (this commit) | docs: README index and limitations |
+| 9 | `294eea4` | docs: README index and limitations |
 
 ## Investigation: `M2ExitCriteriaTest.randomizedInvoiceRaces` timeout
 
