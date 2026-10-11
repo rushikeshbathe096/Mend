@@ -11,7 +11,7 @@
 
 | # | Query (repository method) | Plan shape | Execution time |
 |---|---|---|---|
-| Q1 | due-claim select (findDueClaimableIntents, batch 50) | Bitmap Index Scan on idx_action_intents_status (8,081 READY rows, sorted before LIMIT); Seq Scan on campaigns c (Hash Join, estimated 1 row, actual 8,081); Nested Loop Anti Join; Index Scan using ux_action_intents_one_inflight_per_invoice on action_intents s | 27.458 ms |
+| Q1 | due-claim select (findDueClaimableIntents, batch 50) | Bitmap Index Scan on idx_action_intents_status (8,081 READY rows, sorted before LIMIT); Seq Scan on campaigns c (14,158 ACTION_PENDING rows hashed); Hash Join with intents (estimated 1 row, actual 8,081); Nested Loop Anti Join; Index Scan using ux_action_intents_one_inflight_per_invoice on action_intents s | 27.458 ms |
 | Q2 | claim update (claimIntentAtomic, one row, rolled back) | Index Scan using action_intents_pkey on action_intents a; Index Scan using uq_campaigns_id_invoice_key on campaigns c; Index Scan using ux_action_intents_one_inflight_per_invoice on action_intents s | 0.335 ms |
 | Q3a | release candidates (findExpiredClaims) | Bitmap Index Scan on idx_action_intents_claimed | 0.719 ms |
 | Q3b | release update (releaseIfUndispatched, one row, rolled back) | Index Scan using action_intents_pkey on action_intents a | 0.111 ms |
@@ -193,3 +193,5 @@
 - Every per-row fence (Q2 claim, Q3b release, Q4b markStuck) is a primary-key lookup; the one-in-flight checks (Q1 subplan, Q2, Q6) use `ux_action_intents_one_inflight_per_invoice` (index scan, 0 rows when nothing is in flight).
 - Q1 (due-claim select) is the most expensive: the `EXISTS` on the campaign state is planned as a Hash Join over a sequential scan of `campaigns` (estimated 1 row, actual 8,081), and all 8,081 READY rows go through the anti join and a top-N sort before `LIMIT 50`; `idx_action_intents_scheduler_poll (status, scheduled_at)` is not used to stop early. Candidate for M3/M5 if the READY backlog grows (e.g. an index on `campaigns (id) WHERE current_state = 'ACTION_PENDING'`, or ordering on the poll index) — to be measured, not assumed.
 - Q4a (stuck sweep) and Q5 (reconciler pick) use `idx_action_intents_status`, not the partial `idx_action_intents_reconcile_due`, at this data shape.
+- Data-shape limits: every invoice has exactly one intent, so each one-in-flight probe finds 0 rows (the cost of finding a sibling is not measured); all 1,067 CLAIMED rows are past the lease and all 982 EXECUTING rows are past `T_stuck` (worst case for Q3a/Q4a candidate lists, not a typical mix).
+- Bitmap index scans report 8,082 READY and 6,120 NEEDS_RECONCILIATION + AWAITING_PAYMENT entries against 8,081 and 6,118 rows: rolled-back updates left dead index entries — the warm-up Q3b (CLAIMED→READY) before the measured Q1 (+1 READY), and the warm-up and measured Q4b (EXECUTING→NEEDS_RECONCILIATION) before the measured Q5 (+2); no VACUUM in between. The heap counts are the true row counts.
