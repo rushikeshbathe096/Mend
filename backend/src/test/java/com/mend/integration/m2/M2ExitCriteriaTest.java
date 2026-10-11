@@ -379,7 +379,7 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
     /**
      * One race: 3 schedulers + the manual path, 2 campaigns sharing an invoice; a 4th thread watches the in-flight count.
      * After the race the provider recovers and one reconciler cycle + one poll run, so SAFE_RETRY resends happen and are
-     * counted separately from first sends. The observer polls in a loop and can miss short states; the database index
+     * counted separately from first sends. The observer polls every ~5 ms and can miss short states; the database index
      * (U6) is the real guarantee, the observer only checks that nothing visible contradicts it.
      */
     private void invoiceRace(Random random, boolean randomReleaseOrder, Outcome outcome) throws Exception {
@@ -425,6 +425,9 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
                         + "WHERE merchant_id = ? AND status IN ('CLAIMED','EXECUTING','NEEDS_RECONCILIATION','AWAITING_PAYMENT') "
                         + "GROUP BY invoice_key) t", Integer.class, merchantId);
                 maxInFlight.accumulateAndGet(worst == null ? 0 : worst, Math::max);
+                // A busy loop ran ~65k queries per run (75% of the test log) and was the thread found stuck in the one
+                // observer timeout; pausing keeps it to one short-lived connection at a time. See docs/audit/cleanup-report.md.
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
             }
         });
 
