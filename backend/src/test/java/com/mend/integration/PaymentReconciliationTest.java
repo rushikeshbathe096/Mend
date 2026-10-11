@@ -11,7 +11,6 @@ import com.mend.security.RazorpaySignatureVerifier;
 import com.mend.service.PaymentReconciliationService;
 import com.mend.service.ReconciliationResult;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -753,8 +752,8 @@ class PaymentReconciliationTest {
     }
 
     @Test
-    @Disabled("M2: correlation of original-payment failures")
-    @DisplayName("Known gap (M2): payment.failed for the ORIGINAL payment must not fail an in-flight NON-link intent")
+    // Enabled in M2 U8: campaign-level (original payment) events never finalize an intent (invariant 15).
+    @DisplayName("M2 U8: payment.failed for the ORIGINAL payment must not fail an in-flight NON-link intent")
     void originalPaymentFailureMustNotFailNonLinkIntent() {
         // Strategy 4 correlates by campaign.paymentId and picks the latest intent, so a (late/duplicate) payment.failed for
         // the original payment marks an in-flight non-link intent (e.g. outcome unknown) FAILED. Asserts the desired behaviour.
