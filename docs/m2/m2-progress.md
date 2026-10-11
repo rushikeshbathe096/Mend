@@ -378,3 +378,11 @@ Built:
   - Added `ActionSchedulerTest.databaseDownAbortsThePollAndTheNextPollResumes` for the "DB down" row (unit level).
 - `M2-implementation-plan.md` checklist ticked with SHAs; ADR-002 **Accepted** with Evidence and implementation notes (decisions unchanged); `docs/m2/M2-summary.md` (12 lines); AGENTS.md "Current milestone" → "M2 complete — next: M3 (do not start without a design pack)".
 Not done: tag `m2-complete` (owner action; M1's tag was created at merge).
+Review (fresh subagent): 0 blockers, 0 majors. Fixed in `M2 U10: review fixes` (docs):
+- MINOR the "crash before dispatch" tests mocked the repository → the row now cites `ActionIntentTransitionsTest.releaseOnlyAppliesToUndispatchedExpiredClaims` (real DB) and labels the service-level tests as such.
+- MINOR the concurrent-claim row omitted the NOT EXISTS test and overstated "retried next poll" → cites `claimPredicateBlocksSibling`; says "stays READY".
+- MINOR the ADR implied three green runs on the final code → "at U7"; the final code has one run, as the close-out requires.
+- MINOR seed data-shape limits not stated → added to Observations.
+- MINOR index entry counts (8,082 / 6,120) differ from row counts (8,081 / 6,118) → explained: dead entries from the rolled-back Q3b/Q4b updates.
+- NIT Q1 wording; NIT ADR records CLAIM_RELEASED; NIT "seeded" → "seed printed, reproducible". Also a missing trailing newline in `ActionSchedulerTest`.
+Not changed: `AuditEventType` is an unused enum without the M2 codes (out-of-scope finding).
