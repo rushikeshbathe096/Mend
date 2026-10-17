@@ -121,7 +121,7 @@ public class ActionIntentService {
             return null;
         }
 
-        int attemptNumber = (campaign.getAttemptCount() == null || campaign.getAttemptCount() < 1) ? 1 : campaign.getAttemptCount();
+        int attemptNumber = campaign.currentAttemptNumber();
 
         // Idempotency Key Design
         String idempotencyKey = "intent:" + campaignId + ":attempt_" + attemptNumber + ":" + actionType.name();

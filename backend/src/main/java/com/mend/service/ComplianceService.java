@@ -116,7 +116,7 @@ public class ComplianceService {
                 .orElse(null);
 
         // Check duplicate action protection
-        boolean duplicateActionExists = checkDuplicateActionExists(campaignId, campaign.getAttemptCount());
+        boolean duplicateActionExists = checkDuplicateActionExists(campaignId, campaign.currentAttemptNumber());
 
         ComplianceContext context = new ComplianceContext(
                 merchantId, campaign, strategy, classificationResult, merchantConfig, recoveryDecisionId, duplicateActionExists
@@ -182,11 +182,11 @@ public class ComplianceService {
         return complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaignId);
     }
 
-    private boolean checkDuplicateActionExists(UUID campaignId, Integer attemptCount) {
-        if (attemptCount == null) return false;
+    /** {@code attemptNumber} comes from {@link Campaign#currentAttemptNumber()}, the rule intent creation uses. */
+    private boolean checkDuplicateActionExists(UUID campaignId, int attemptNumber) {
         List<ActionIntent> intents = actionIntentRepository.findByCampaignId(campaignId);
         return intents.stream().anyMatch(intent ->
-                attemptCount.equals(intent.getAttemptNumber()) && countsAsExistingAction(intent.getStatus()));
+                Integer.valueOf(attemptNumber).equals(intent.getAttemptNumber()) && countsAsExistingAction(intent.getStatus()));
     }
 
     /**

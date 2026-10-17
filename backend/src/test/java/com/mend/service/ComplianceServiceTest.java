@@ -202,6 +202,24 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         assertEquals(ComplianceReason.DUPLICATE_ACTION, decision.getReason());
     }
 
+    /**
+     * Regression (cleanup follow-up finding 1): a fresh campaign has attempt_count = 0 while its first intent is attempt 1.
+     * The duplicate check compared 0 with 1 and never matched; it now uses Campaign.currentAttemptNumber(), the rule
+     * intent creation uses.
+     */
+    @ParameterizedTest
+    @EnumSource(value = ActionIntentStatus.class, names = {"CLAIMED", "EXECUTING", "NEEDS_RECONCILIATION", "AWAITING_PAYMENT"})
+    @DisplayName("Fresh campaign (attempt_count = 0) with an in-flight attempt-1 intent is blocked as DUPLICATE_ACTION")
+    void freshCampaignWithInFlightFirstIntentIsBlocked(ActionIntentStatus firstIntentStatus) {
+        Campaign campaign = eligibleCampaignWithFirstIntent("PAY-COMP-FRESH-" + firstIntentStatus, firstIntentStatus, 0);
+        assertEquals(0, campaignRepository.findById(campaign.getId()).orElseThrow().getAttemptCount());
+
+        ComplianceDecision decision = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId());
+
+        assertTrue(decision.isBlocked());
+        assertEquals(ComplianceReason.DUPLICATE_ACTION, decision.getReason());
+    }
+
     @Test
     @DisplayName("Control: an ended (FAILED) first intent for the same attempt does not block")
     void endedFirstIntentDoesNotBlock() {
@@ -234,6 +252,10 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
      * first intent for attempt 1 in {@code firstIntentStatus}. Execution sets attempt_count to the intent's attempt number.
      */
     private Campaign eligibleCampaignWithFirstIntent(String paymentId, ActionIntentStatus firstIntentStatus) {
+        return eligibleCampaignWithFirstIntent(paymentId, firstIntentStatus, 1);
+    }
+
+    private Campaign eligibleCampaignWithFirstIntent(String paymentId, ActionIntentStatus firstIntentStatus, Integer attemptCount) {
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), paymentId, "payment.failed");
         event.setMerchantId(merchantId);
         event = webhookEventRepository.save(event);
@@ -247,7 +269,7 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"));
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
 
-        campaign.setAttemptCount(1);
+        campaign.setAttemptCount(attemptCount);
         campaign = campaignRepository.saveAndFlush(campaign);
 
         ActionIntent first = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
