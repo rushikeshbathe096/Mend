@@ -77,14 +77,22 @@ public class Phase6EndToEndIntegrationTest {
     @MockitoBean
     private AiClassificationClient aiClassificationClient;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private HttpClient httpClient;
+    private final java.util.List<String> ownEventIds = new java.util.ArrayList<>();
+
+    @org.junit.jupiter.api.AfterEach
+    void removeOwnRows() {
+        com.mend.testsupport.TestRows.deleteWebhookEvents(jdbc, ownEventIds);
+    }
 
     @BeforeEach
     void setUp() {
         httpClient = HttpClient.newHttpClient();
-        outboxEventRepository.deleteAll();
-        classificationResultRepository.deleteAll();
-        webhookEventRepository.deleteAll();
+        // Bug sweep item 6: own rows only (shared database); other classes' unpublished outbox rows are parked, not deleted.
+        jdbc.update("UPDATE outbox_events SET next_attempt_at = now() + interval '30 days' WHERE status <> 'PUBLISHED'");
         try {
             redisTemplate.delete(redisStreamProperties.getStreamName());
             redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
@@ -108,6 +116,7 @@ public class Phase6EndToEndIntegrationTest {
     @DisplayName("Phase 6 E2E: Webhook POST -> DB -> Redis Stream -> Consumer -> AI Classification -> PostgreSQL classification_results")
     void testEndToEndWebhookAiClassificationPipeline() throws Exception {
         String externalEventId = "evt_p6_e2e_" + UUID.randomUUID().toString().substring(0, 8);
+        ownEventIds.add(externalEventId);
         String payload = String.format("""
                 {
                   "event": "payment.failed",
@@ -185,6 +194,8 @@ public class Phase6EndToEndIntegrationTest {
         int secondPollCount = redisWebhookEventConsumer.pollAndProcessMessages();
         assertThat(secondPollCount).isEqualTo(0);
 
-        assertThat(classificationResultRepository.count()).isEqualTo(1);
+        // One classification for this event (was count() on a wiped table)
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM classification_results c JOIN webhook_events w ON c.event_id = w.id "
+                + "WHERE w.external_event_id = ?", Long.class, externalEventId)).isEqualTo(1);
     }
 }

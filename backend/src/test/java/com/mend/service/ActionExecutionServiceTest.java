@@ -302,7 +302,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         intent.setComplianceDecisionId(null);
         actionIntentRepository.save(intent);
 
-        complianceDecisionRepository.deleteAll();
+        // Bug sweep item 6: remove this campaign's decisions only (was deleteAll() on the shared table).
+        complianceDecisionRepository.deleteAll(complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(intent.getCampaignId()));
 
         assertThrows(ComplianceBlockedException.class, () ->
                 actionExecutionService.executeActionIntent(intent.getId(), "worker-test-1", intent.getClaimToken()));
