@@ -17,7 +17,10 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -113,8 +116,14 @@ public class CustomerController {
         // attribution are reported separately.
         long recovered = campaigns.stream().filter(Campaign::recoveredByMend).count();
 
-        BigDecimal totalFailed = sumAmounts(campaigns.stream());
-        BigDecimal totalRecovered = sumAmounts(campaigns.stream().filter(Campaign::recoveredByMend));
+        // Same amount rule as analytics: each amount is resolved once (strict); a campaign without one is excluded from
+        // every sum and counted in amountUnknownCount, never given a default.
+        Map<UUID, BigDecimal> amounts = new HashMap<>();
+        campaigns.forEach(c -> amounts.put(c.getId(), resolveAmount(c)));
+        long amountUnknown = amounts.values().stream().filter(Objects::isNull).count();
+
+        BigDecimal totalFailed = sumAmounts(campaigns.stream(), amounts);
+        BigDecimal totalRecovered = sumAmounts(campaigns.stream().filter(Campaign::recoveredByMend), amounts);
 
         List<Campaign> lateCapture = campaigns.stream()
                 .filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED
@@ -145,17 +154,18 @@ public class CustomerController {
                 totalFailed, totalRecovered, riskSignals, lastActivity
         );
         summary.setRecoveredLateCaptureCount(lateCapture.size());
-        summary.setAmountRecoveredLateCapture(sumAmounts(lateCapture.stream()));
+        summary.setAmountRecoveredLateCapture(sumAmounts(lateCapture.stream(), amounts));
         summary.setRecoveredAttributionUnknownCount(attributionUnknown.size());
-        summary.setAmountRecoveredAttributionUnknown(sumAmounts(attributionUnknown.stream()));
+        summary.setAmountRecoveredAttributionUnknown(sumAmounts(attributionUnknown.stream(), amounts));
+        summary.setAmountUnknownCount(amountUnknown);
         return summary;
     }
 
-    /** Exact sum of the resolvable amounts; a campaign without one adds nothing (never a default). */
-    private BigDecimal sumAmounts(Stream<Campaign> campaigns) {
+    /** Exact sum of the resolved amounts; a campaign without one adds nothing (never a default). */
+    private static BigDecimal sumAmounts(Stream<Campaign> campaigns, Map<UUID, BigDecimal> amounts) {
         return campaigns
-                .map(this::resolveAmount)
-                .filter(java.util.Objects::nonNull)
+                .map(c -> amounts.get(c.getId()))
+                .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 

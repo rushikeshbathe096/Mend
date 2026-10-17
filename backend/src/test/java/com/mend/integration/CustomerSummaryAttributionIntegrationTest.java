@@ -69,6 +69,31 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
         campaigns.save(campaign);
     }
 
+    /** A campaign whose amount cannot be resolved: payload amount missing / not integral, or no webhook at all. */
+    private void campaignWithUnknownAmount(String rawAmountOrNull, boolean withWebhook, CampaignStatus state,
+                                           RecoveryAttribution attribution) {
+        String paymentId = "pay_cu" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        if (withWebhook) {
+            String amount = rawAmountOrNull == null ? "" : "\"amount\":" + rawAmountOrNull + ",";
+            WebhookEvent event = new WebhookEvent(UUID.randomUUID(), paymentId, "payment.failed", "RAZORPAY",
+                    "{\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + paymentId + "\"," + amount
+                            + "\"currency\":\"INR\",\"status\":\"failed\"}}}}");
+            event.setMerchantId(merchantId);
+            webhooks.save(event);
+        }
+        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, null, null);
+        campaign.setCustomerIdHash(customerIdHash);
+        campaign.setCurrentState(state);
+        campaign.setRecoveryAttribution(attribution);
+        campaigns.save(campaign);
+    }
+
+    private void addUnknownAmountCampaigns() {
+        campaignWithUnknownAmount(null, true, CampaignStatus.ACTION_PENDING, null);                    // amount missing
+        campaignWithUnknownAmount("100.5", true, CampaignStatus.EXHAUSTED, null);                      // not integral
+        campaignWithUnknownAmount(null, false, CampaignStatus.RECOVERED, RecoveryAttribution.MEND);    // no webhook
+    }
+
     private static void assertMoney(String expected, BigDecimal actual) {
         assertEquals(0, new BigDecimal(expected).compareTo(actual), "expected " + expected + " but was " + actual);
     }
@@ -107,6 +132,40 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
         assertEquals(overview.getRecoveredLateCaptureCount(), summary.getRecoveredLateCaptureCount());
         assertEquals(0, overview.getAmountRecoveredLateCapture().compareTo(summary.getAmountRecoveredLateCapture()));
         assertEquals(overview.getRecoveredAttributionUnknownCount(), summary.getRecoveredAttributionUnknownCount());
+        assertEquals(0, overview.getAmountRecoveredAttributionUnknown().compareTo(summary.getAmountRecoveredAttributionUnknown()));
+    }
+
+    /** Regression (cleanup follow-up finding 2): unknown amounts are counted, never defaulted, never summed. */
+    @Test
+    @DisplayName("A campaign with no resolvable amount is counted in amountUnknownCount and not in totalFailedAmount")
+    void unknownAmountsAreCountedNotSummed() {
+        addUnknownAmountCampaigns();
+
+        CustomerSummaryDto summary = customerController
+                .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
+
+        assertEquals(7, summary.getTotalCampaigns());
+        assertEquals(3, summary.getAmountUnknownCount(), "missing amount, fractional amount, no webhook");
+        assertMoney("1149.00", summary.getTotalFailedAmount()); // exactly the 4 known amounts
+        assertEquals(2, summary.getRecoveredCampaigns(), "the amountless MEND recovery still counts as recovered");
+        assertMoney("499.00", summary.getTotalRecoveredAmount()); // ...but adds no amount
+    }
+
+    @Test
+    @DisplayName("With unknown amounts, the customer summary still agrees with the analytics overview")
+    void unknownAmountsAgreeWithAnalytics() {
+        addUnknownAmountCampaigns();
+
+        CustomerSummaryDto summary = customerController
+                .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+
+        assertEquals(overview.getTotalCampaigns(), summary.getTotalCampaigns());
+        assertEquals(overview.getAmountUnknownCount(), summary.getAmountUnknownCount());
+        assertEquals(0, overview.getRevenueAtRisk().compareTo(summary.getTotalFailedAmount()));
+        assertEquals(overview.getRecoveredCampaigns(), summary.getRecoveredCampaigns());
+        assertEquals(0, overview.getAmountRecovered().compareTo(summary.getTotalRecoveredAmount()));
+        assertEquals(0, overview.getAmountRecoveredLateCapture().compareTo(summary.getAmountRecoveredLateCapture()));
         assertEquals(0, overview.getAmountRecoveredAttributionUnknown().compareTo(summary.getAmountRecoveredAttributionUnknown()));
     }
 }

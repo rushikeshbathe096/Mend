@@ -21,6 +21,8 @@ public class CustomerSummaryDto {
     private BigDecimal amountRecoveredLateCapture;
     private long recoveredAttributionUnknownCount;
     private BigDecimal amountRecoveredAttributionUnknown;
+    // Campaigns with no resolvable amount (as analytics amountUnknownCount): excluded from every amount above.
+    private long amountUnknownCount;
 
     public CustomerSummaryDto() {}
 
@@ -76,4 +78,7 @@ public class CustomerSummaryDto {
 
     public BigDecimal getAmountRecoveredAttributionUnknown() { return amountRecoveredAttributionUnknown; }
     public void setAmountRecoveredAttributionUnknown(BigDecimal amountRecoveredAttributionUnknown) { this.amountRecoveredAttributionUnknown = amountRecoveredAttributionUnknown; }
+
+    public long getAmountUnknownCount() { return amountUnknownCount; }
+    public void setAmountUnknownCount(long amountUnknownCount) { this.amountUnknownCount = amountUnknownCount; }
 }
