@@ -87,6 +87,10 @@ public class ActionIntent {
     @Column(name = "execution_attempts", nullable = false)
     private int executionAttempts;
 
+    /** Bug sweep item 4 (V17): dispatches returned to READY by a MEND-side deferral; not counted in executionAttempts. */
+    @Column(name = "defer_attempts", nullable = false)
+    private int deferAttempts;
+
     /** M2: optimistic lock; conditional transitions bump it too, so a stale entity save fails instead of overwriting. */
     @Version
     @Column(name = "version", nullable = false)
@@ -315,6 +319,14 @@ public class ActionIntent {
 
     public void setExecutionAttempts(int executionAttempts) {
         this.executionAttempts = executionAttempts;
+    }
+
+    public int getDeferAttempts() {
+        return deferAttempts;
+    }
+
+    public void setDeferAttempts(int deferAttempts) {
+        this.deferAttempts = deferAttempts;
     }
 
     public String getInvoiceKey() {

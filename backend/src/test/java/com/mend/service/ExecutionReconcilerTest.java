@@ -275,6 +275,47 @@ class ExecutionReconcilerTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("Bug sweep item 4: 2 deferrals + an Unknown outcome still allow SAFE_RETRY (deferrals have their own counter)")
+    void deferralsDoNotUseUpTheSafeRetryBudget() {
+        ActionIntent intent = readyIntent(ActionType.REQUEST_CUSTOMER_ACTION);
+        mock.setSimulatedNotSent(true);
+        for (int deferral = 1; deferral <= 2; deferral++) {
+            claimAndExecute(intent);
+            ActionIntent deferred = reload(intent);
+            assertEquals(ActionIntentStatus.READY, deferred.getStatus(), "deferral " + deferral);
+            assertEquals(deferral, deferred.getDeferAttempts());
+            assertEquals(0, deferred.getExecutionAttempts(), "a deferred dispatch is not a SAFE_RETRY attempt");
+            jdbc.update("UPDATE action_intents SET scheduled_at = now() - interval '1 second' WHERE id = ?", intent.getId());
+        }
+        mock.setSimulatedNotSent(false);
+        mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);   // Unknown outcome
+        claimAndExecute(intent);
+        ActionIntent unknown = reload(intent);
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, unknown.getStatus(), "precondition");
+        assertEquals(1, unknown.getExecutionAttempts());
+        assertEquals(2, unknown.getDeferAttempts());
+        assertEquals(3, unknown.getExecutionAttempts() + unknown.getDeferAttempts(), "every dispatch is still counted");
+
+        dispatchedLongAgo(intent);
+        due(intent);
+        reconciler.runCycle();
+
+        assertEquals(ActionIntentStatus.READY, reload(intent).getStatus(), "SAFE_RETRY, not escalation");
+        assertTrue(audited(intent, "SAFE_RETRY"));
+        assertFalse(audited(intent, "RECONCILIATION_ESCALATED"));
+        assertTrue(pendingReview(intent).isEmpty());
+    }
+
+    @Test
+    @DisplayName("V17: defer_attempts defaults to 0 and cannot be negative")
+    void deferAttemptsColumn() {
+        ActionIntent intent = readyIntent(ActionType.REQUEST_CUSTOMER_ACTION);
+        assertEquals(0, reload(intent).getDeferAttempts());
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                () -> jdbc.update("UPDATE action_intents SET defer_attempts = -1 WHERE id = ?", intent.getId()));
+    }
+
+    @Test
     @DisplayName("NR + NotFound after grace with dispatches exhausted -> FAILED + review RECONCILIATION_ESCALATED, campaign ELIGIBLE")
     void needsReconciliationNotFoundWithAttemptsExhaustedEscalates() {
         mock.setSimulatedStatus(PaymentExecutionStatus.ERROR);
