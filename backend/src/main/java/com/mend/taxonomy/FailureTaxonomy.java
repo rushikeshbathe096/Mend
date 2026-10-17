@@ -21,7 +21,9 @@ import static com.mend.taxonomy.PaymentFailureClass.*;
  *       the code never decides a class.</li>
  * </ol>
  * Deliberately unmapped (documented, but the docs do not say why it failed or who must act): {@code card_declined},
- * {@code payment_declined}, {@code debit_declined}, {@code payment_failed}, and every business-side / integration reason
+ * {@code payment_declined}, {@code debit_declined}, {@code payment_failed}, {@code authorisation_declined_by_psp} (the
+ * PSP declined, not the customer), {@code payment_session_expired} and {@code payment_collect_request_expired} ("has
+ * expired", no actor), and every business-side / integration reason
  * (e.g. {@code input_validation_failed}, {@code invalid_amount}). They are UNCLASSIFIED, whatever their source.
  */
 public final class FailureTaxonomy {
@@ -48,8 +50,8 @@ public final class FailureTaxonomy {
                 "payment_declined_due_to_high_traffic", "request_timed_out", "server_error");
         put(table, AUTHENTICATION_FAILURE, "authentication_failed", "incorrect_otp", "incorrect_pin", "incorrect_atm_pin",
                 "incorrect_cvv", "otp_attempts_exceeded", "otp_expired", "pin_attempts_exceeded");
-        put(table, CUSTOMER_DECLINED, "payment_cancelled", "payment_timed_out", "payment_session_expired",
-                "payment_collect_request_expired", "authorisation_declined_by_psp");
+        // Only the two reasons the docs attribute to the customer ("explicitly cancelled", "did not complete").
+        put(table, CUSTOMER_DECLINED, "payment_cancelled", "payment_timed_out");
         put(table, INSTRUMENT_INVALID, "card_expired", "debit_instrument_blocked", "debit_instrument_inactive");
         put(table, MANDATE_INVALID, "mandate_creation_declined", "mandate_creation_expired", "mandate_creation_failed",
                 "mandate_creation_timeout", "reqauth_mandate_not_acknowledged");

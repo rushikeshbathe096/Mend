@@ -22,5 +22,27 @@ public enum PaymentFailureClass {
     /** A recurring mandate could not be created or acknowledged. */
     MANDATE_INVALID,
     /** No documented mapping: never guessed. */
-    UNCLASSIFIED
+    UNCLASSIFIED;
+
+    /**
+     * The class named {@code value}, or null when {@code value} is not a taxonomy class (null, or a pre-M3 AI-era
+     * class such as {@code BANK_DECLINED} / {@code UNKNOWN} on a historical row).
+     */
+    public static PaymentFailureClass fromStored(String value) {
+        if (value == null) {
+            return null;
+        }
+        for (PaymentFailureClass c : values()) {
+            if (c.name().equals(value)) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    /** True only for a taxonomy class other than UNCLASSIFIED: legacy and unclassified values fail closed. */
+    public static boolean isRecoverable(String value) {
+        PaymentFailureClass c = fromStored(value);
+        return c != null && c != UNCLASSIFIED;
+    }
 }

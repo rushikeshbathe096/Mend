@@ -14,15 +14,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class TaxonomyPurityTest {
 
     @Test
-    @DisplayName("com.mend.taxonomy imports only java.* and itself")
+    @DisplayName("com.mend.taxonomy (incl. subpackages) imports and references only java.* and itself")
     void onlyJavaImports() throws Exception {
         List<String> offending;
-        try (Stream<Path> files = Files.list(Path.of("src/main/java/com/mend/taxonomy"))) {
-            offending = files.flatMap(p -> {
+        try (Stream<Path> files = Files.walk(Path.of("src/main/java/com/mend/taxonomy"))) {
+            offending = files.filter(p -> p.toString().endsWith(".java")).flatMap(p -> {
                 try {
                     return Files.readAllLines(p).stream()
-                            .filter(l -> l.startsWith("import "))
-                            .filter(l -> !l.matches("import (static )?(java\\.|com\\.mend\\.taxonomy\\.).*"))
+                            .map(String::trim)
+                            .filter(l -> !l.startsWith("//") && !l.startsWith("*") && !l.startsWith("/*"))
+                            .filter(l -> (l.startsWith("import ") && !l.matches("import (static )?(java\\.|com\\.mend\\.taxonomy\\.).*"))
+                                    || l.matches(".*\\b(org|jakarta|tools\\.jackson)\\.[a-z].*")
+                                    || l.matches(".*\\bcom\\.mend\\.(?!taxonomy)[a-z].*"))
                             .map(l -> p.getFileName() + ": " + l);
                 } catch (Exception e) {
                     throw new IllegalStateException(e);

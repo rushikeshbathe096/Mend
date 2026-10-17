@@ -24,7 +24,10 @@ they can stop or hold a recovery. Inventory: `docs/m3/M3-analysis.md`.
    | `UNCLASSIFIED` | everything unmapped |
 
    Only when Razorpay sends no reason does `error_source` `gateway` / `razorpay` decide `GATEWAY_ERROR`. A reason that is
-   present but unmapped stays `UNCLASSIFIED`. Every row cites https://razorpay.com/docs/errors/payments/list/.
+   present but unmapped stays `UNCLASSIFIED`. Every row cites https://razorpay.com/docs/errors/payments/list/; all
+   rows share one URL because every mapped reason is listed on that one page. Reasons the docs do not attribute to an
+   actor stay unmapped: `card_declined`, `payment_declined`, `debit_declined`, `payment_failed`,
+   `authorisation_declined_by_psp`, `payment_session_expired` and `payment_collect_request_expired`.
    No confidence is produced. The table version `razorpay-error-taxonomy-v1` is stored in its own
    `classification_results.taxonomy_version` column; it is never written into `model_version`.
 2. **AI off the payment hot path.** webhook → taxonomy → strategy → compliance → intent makes no ai-service call. The

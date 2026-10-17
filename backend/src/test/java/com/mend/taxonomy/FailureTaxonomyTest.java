@@ -50,9 +50,6 @@ class FailureTaxonomyTest {
             "pin_attempts_exceeded, AUTHENTICATION_FAILURE",
             "payment_cancelled, CUSTOMER_DECLINED",
             "payment_timed_out, CUSTOMER_DECLINED",
-            "payment_session_expired, CUSTOMER_DECLINED",
-            "payment_collect_request_expired, CUSTOMER_DECLINED",
-            "authorisation_declined_by_psp, CUSTOMER_DECLINED",
             "card_expired, INSTRUMENT_INVALID",
             "debit_instrument_blocked, INSTRUMENT_INVALID",
             "debit_instrument_inactive, INSTRUMENT_INVALID",
@@ -72,14 +69,15 @@ class FailureTaxonomyTest {
     }
 
     @Test
-    @DisplayName("The table has exactly the 40 reasons tested above (no untested mapping)")
+    @DisplayName("The table has exactly the 37 reasons tested above (no untested mapping)")
     void tableIsFullyTested() {
-        assertEquals(40, FailureTaxonomy.reasonTable().size());
+        assertEquals(37, FailureTaxonomy.reasonTable().size());
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"card_declined", "payment_declined", "debit_declined", "payment_failed", "input_validation_failed",
-            "invalid_amount", "not_a_razorpay_reason"})
+            "invalid_amount", "authorisation_declined_by_psp", "payment_session_expired", "payment_collect_request_expired",
+            "not_a_razorpay_reason"})
     @DisplayName("Unmapped reason -> UNCLASSIFIED whatever the source (never guessed, never overridden by the source)")
     void unmappedReasonIsUnclassified(String reason) {
         assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, reason, "gateway")).failureClass());
@@ -110,6 +108,13 @@ class FailureTaxonomyTest {
         assertNull(codeOnly.documentation());
         assertEquals(PaymentFailureClass.INSUFFICIENT_FUNDS,
                 FailureTaxonomy.classify(ProviderFailure.of(null, "  Insufficient_Funds ", null)).failureClass());
+        // the canonical constructor normalises too
+        assertEquals(PaymentFailureClass.INSUFFICIENT_FUNDS,
+                FailureTaxonomy.classify(new ProviderFailure(null, " insufficient_funds", null)).failureClass());
+        assertEquals(PaymentFailureClass.GATEWAY_ERROR, FailureTaxonomy.classify(new ProviderFailure(null, " ", "gateway")).failureClass());
+        // only the documented transient sources decide; customer / business never do
+        assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, null, "customer")).failureClass());
+        assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, null, "business")).failureClass());
     }
 
     @Test
@@ -117,8 +122,8 @@ class FailureTaxonomyTest {
     void docDerivedFixture() throws Exception {
         JsonNode body = new ObjectMapper().readTree(Files.readString(
                 Path.of("src/test/resources/razorpay/doc-derived/payment_failed_entity.json"))).path("response").path("body");
-        ProviderFailure failure = ProviderFailure.of(body.path("error_code").asText(null), body.path("error_reason").asText(null),
-                body.path("error_source").asText(null));
+        ProviderFailure failure = ProviderFailure.of(body.path("error_code").asString(null), body.path("error_reason").asString(null),
+                body.path("error_source").asString(null));
         assertEquals("payment_cancelled", failure.reason());
         assertEquals(PaymentFailureClass.CUSTOMER_DECLINED, FailureTaxonomy.classify(failure).failureClass());
     }
