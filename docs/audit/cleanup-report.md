@@ -495,3 +495,62 @@ Owner request: fix follow-up findings 1 and 2, one commit each, with the full su
 
 - Backend: 671 → **679** tests (+4 fresh-campaign cases, +2 attempt-number unit tests, +2 unknown-amount tests), all with 0 failures, 0 errors and 0 skipped. No test was deleted and no existing assertion changed.
 - Frontend: 42 → **44** jest tests, and `next build` succeeds.
+
+## Record: parallel branch `cleanup/pre-m3-fixes` (findings 1, 2, 3, 5)
+
+The same four findings were also fixed on a separate branch, `cleanup/pre-m3-fixes` (worktree `.claude/worktrees/pre-m3-fixes`, cut from `7864b91`), whose report section (`f811adf`) never reached this branch. It is kept below verbatim as the record of that branch. Its commit hashes, test names and counts are that branch's, not this one's. On this branch the fixes are `0d7e36c`, `e3b4773`, `c6d5834`, `f803138` (section "Follow-up: out-of-scope findings 1, 2, 3 and 5 fixed" above). Where the two differ:
+
+- JWT: this branch throws `IllegalArgumentException` ("jwt.secret is not configured: set JWT_SECRET …" / "jwt.secret is too short …"), not `IllegalStateException` ("JWT_SECRET is not set …"). `JwtSecretStartupTest` was brought over with assertions on this branch's messages.
+- Compliance: this branch uses `isInFlight()` + an explicit PENDING / SCHEDULED / READY / SUCCEEDED set (and `Campaign.currentAttemptNumber()`, follow-up 2), not `isExecutable()`; its tests are a superset.
+- Customer summary: this branch's test is a superset, plus the two list-endpoint assertions brought over.
+- Webhook filter: this branch keeps the options in the page and pins `WEBHOOK_EVENT_STATUSES` to the backend enum source file; it has a page-level test as well.
+
+Owner request: fix findings 2 (JWT), 1 (compliance), 3 (customer summary) and 5 (webhook filter), one commit each, full suite after each. Work is on branch `cleanup/pre-m3-fixes`, cut from `cleanup/pre-m3` @ `7864b91` (a worktree; the main checkout holds `cleanup/pre-m3`). Nothing merged or pushed.
+
+| item | commit | subject | `./mvnw test` | seed |
+|---|---|---|---|---|
+| 1 | `c58f5b9` | security: no default JWT secret outside dev | `[INFO] Tests run: 664, Failures: 0, Errors: 0, Skipped: 0` | 6150583305013 |
+| 2 | `737ab43` | fix: compliance duplicate check includes M2 in-flight states | `[INFO] Tests run: 667, Failures: 0, Errors: 0, Skipped: 0` | 6335449119149 |
+| 3 | `0cd75d2` | fix: customer summary counts only MEND recoveries | `[INFO] Tests run: 668, Failures: 0, Errors: 0, Skipped: 0` | 6503709057769 |
+| 4 | `4074ec3` | frontend: webhook filter only real statuses | `[INFO] Tests run: 668, Failures: 0, Errors: 0, Skipped: 0` (backend unchanged) | 6592887546976 |
+
+Every run: `BUILD SUCCESS`, no `m2-exit-evidence-*` file.
+
+### 1. No default JWT secret outside dev (finding 2)
+
+- `application.properties`: `jwt.secret=${JWT_SECRET:}`. No secret value; an unset `JWT_SECRET` resolves to empty.
+- `application-dev.properties`: `jwt.secret=${JWT_SECRET:dev_default_jwt_secret_key_must_be_at_least_32_bytes_long}` (the old public placeholder, dev only; `JWT_SECRET` still overrides it). `application-test.properties` keeps its own value.
+- `JwtService` fails startup (`IllegalStateException`, root cause of the context failure) with:
+  - `JWT_SECRET is not set. It is required in every profile except dev and test: set JWT_SECRET to at least 32 bytes (e.g. openssl rand -base64 48)` when empty
+  - `JWT_SECRET is too short: it must be at least 32 bytes (UTF-8)` when shorter (the 32-byte check existed, as an `IllegalArgumentException` with a generic message)
+- New `JwtSecretStartupTest` (4): `ApplicationContextRunner` with the real `application*.properties` (`ConfigDataApplicationContextInitializer`) and an environment **without OS env / system properties**, so an exported `JWT_SECRET` cannot hide the failure:
+  - default profile, no secret → context fails, root cause "JWT_SECRET is not set"
+  - default profile, 31-byte secret → fails, "JWT_SECRET is too short"
+  - default profile, 32-byte secret → starts
+  - `spring.profiles.active=dev`, no secret → starts (proves the dev file supplies it)
+- `.env.example` and `README.md` (setup text and the Profiles table): `JWT_SECRET` is required outside dev; startup fails without it or with < 32 bytes.
+
+### 2. Compliance duplicate check includes the M2 in-flight states (finding 1)
+
+- `ComplianceService.checkDuplicateActionExists` counts an intent for the same attempt when `status.isExecutable() || status.isInFlight() || status == SUCCEEDED`. `isExecutable()` is exactly the PENDING / SCHEDULED / READY it already counted; `isInFlight()` adds `NEEDS_RECONCILIATION` and `AWAITING_PAYMENT` and is the same predicate as invariant 14, so the lists cannot drift again. FAILED / CANCELLED / EXPIRED still free the attempt.
+- Callers are the intent-creation paths only (`ActionIntentService`, `HumanApprovalService`, `RecoveryOrchestratorService`), not the pre-dispatch re-check, so an intent never blocks its own execution.
+- `ComplianceServiceTest` +3: `secondIntentBlockedWhileFirstIsInM2InFlightState` (parameterized: `AWAITING_PAYMENT`, `NEEDS_RECONCILIATION` → `DUPLICATE_ACTION`) and `failedIntentDoesNotBlockSameAttempt` (control → `ALLOWED`). Against the old check, both parameterized cases fail (`Tests run: 6, Failures: 2`).
+
+### 3. Customer summary counts only MEND recoveries (finding 3)
+
+- `CustomerController` summary (`GET /api/v1/customers` and the profile) uses the analytics rule: `recoveredCampaigns` and `totalRecoveredAmount` count only `recovery_attribution = MEND`.
+- Reported separately, additive fields with the analytics names: `recoveredLateCaptureCount` + `amountRecoveredLateCapture` (`ORIGINAL_PAYMENT_LATE_CAPTURE`), `recoveredAttributionUnknownCount` + `amountRecoveredAttributionUnknown` (NULL on RECOVERED rows). `activeCampaigns` and `totalFailedAmount` unchanged (state-based, like `statusBreakdown`).
+- New `CustomerSummaryAttributionIntegrationTest` (1): one customer with a MEND, a late-capture, an unknown-attribution and an open campaign → recovered 1 / ₹499.00, late 1 / ₹250.00, unknown 1 / ₹100.00, on both endpoints. With the old controller: `expected: <1> but was: <3>`.
+
+### 4. Webhook filter offers only real statuses (finding 5)
+
+- The filter options are `ALL` + `RECEIVED`, `VERIFIED`, `PROCESSED`, `FAILED` (= `WebhookEventStatus`). `UNVERIFIED` and `DUPLICATE` are removed.
+- The list moved to `src/lib/webhookStatus.ts` (a Next.js page may not export it); new `webhookStatus.test.ts` (2) pins it to the backend enum. The `Badge` `DUPLICATE` style is untouched (not a filter).
+- `npm test -- --ci` → `Tests: 41 passed, 41 total` (was 39); `npm run build` → success.
+- `eslint` on the three files: 2 problems, both pre-existing in `webhooks/page.tsx` (`no-explicit-any`, `set-state-in-effect`); the new files add none.
+
+### End state after the follow-up
+
+- Backend 660 → **668** (+4 JWT startup, +3 compliance, +1 customer summary), 0 failures, 0 errors, 0 skipped. No test deleted or weakened; no existing assertion changed.
+- Frontend 39 → **41** jest tests; `next build` succeeds.
+- Findings 4, 6–9 above remain open. New, not changed: the frontend `CustomerSummary` type and customer pages do not show the new late-capture / unknown-attribution fields yet (same gap as finding 4 for analytics).
