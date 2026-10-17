@@ -429,3 +429,54 @@ Owner request after the cleanup: fix four of the findings above, one commit each
 3. **Frontend customer types and UI**: the `CustomerSummaryDto` type and the customer pages do not show the new late-capture and unknown fields yet (compare finding 4 above).
 4. **`Badge`** still has a `DUPLICATE` case. It is harmless, and the landing page uses `DUPLICATE` as a demo-scenario id, not as a webhook status.
 5. **`webhookStatus.test.ts`** reads a backend source file, so the frontend tests assume the monorepo layout.
+
+## Follow-up 2: attempt numbering, unknown customer amounts, customer UI
+
+Owner request: fix follow-up findings 1 and 2, one commit each, with the full suite after each. Prove each new test catches its bug by temporarily reverting the fix. Add the new customer fields to the frontend. Nothing is merged or pushed.
+
+| item | commit | subject | backend `./mvnw test` | seed (`randomizedInvoiceRaces`) |
+|---|---|---|---|---|
+| follow-up finding 1 | `e3f0eed` | fix: duplicate check matches the first attempt of a fresh campaign | `[INFO] Tests run: 677, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` | 1315303050637 |
+| follow-up finding 2 | `63a08a3` | fix: customer summary reports unknown amounts | `[INFO] Tests run: 679, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (`./mvnw clean test`, see note) | 1594148114827 |
+| follow-up finding 3 | `33feadb` | frontend: customer attribution and unknown-amount fields | `[INFO] Tests run: 679, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (backend unchanged) | 1711840947366 |
+
+### Follow-up finding 1: the duplicate check matches the first attempt of a fresh campaign (`e3f0eed`)
+
+- The rule lives in one place, `Campaign.currentAttemptNumber()`: `attempt_count`, or 1 while it is null or below 1. The method name has no `get`/`is` prefix, so JPA and Jackson ignore it.
+- Both callers use it:
+  - `ActionIntentService.createActionIntentFromCompliance`, in place of its inline expression
+  - `ComplianceService.checkDuplicateActionExists`, which used to compare the raw `attempt_count` (0 on a fresh campaign) with intent attempt 1 and so never matched
+- `ComplianceEngine` (max attempts) and `RecoveryStrategyEngine` still read `attempt_count` as "attempts made". That is a different meaning, so they are unchanged.
+- New tests (+6):
+  - `ComplianceServiceTest.freshCampaignWithInFlightFirstIntentIsBlocked`, parameterized over CLAIMED, EXECUTING, NEEDS_RECONCILIATION and AWAITING_PAYMENT: the campaign has `attempt_count = 0` (asserted), an attempt-1 intent exists in that state, and compliance returns `DUPLICATE_ACTION`
+  - `CampaignAttemptNumberTest` (2 tests): null, 0 and -1 give 1; 1 and 3 are used as they are
+- Proof: with the old comparison put back temporarily (raw `attempt_count`, null never matching), `ComplianceServiceTest` ran `Tests run: 11, Failures: 4`, and the failures were exactly `freshCampaignWithInFlightFirstIntentIsBlocked` [1]–[4]. The fix was then restored, and a grep confirmed the temporary line was gone.
+
+### Follow-up finding 2: the customer summary reports unknown amounts (`63a08a3`)
+
+- `CustomerController` resolves each campaign's amount once, with the same strict resolver as before. That also removes the repeated lookups.
+- A campaign with no resolvable amount is excluded from every sum and counted in the new `CustomerSummaryDto.amountUnknownCount`.
+- `totalFailedAmount` stays the exact sum of the known amounts.
+- New tests in `CustomerSummaryAttributionIntegrationTest` (+2). They add three campaigns with unknown amounts (amount missing, `100.5`, no webhook; the last one RECOVERED/MEND) to the existing four known ones:
+  - `unknownAmountsAreCountedNotSummed`: `amountUnknownCount = 3`; `totalFailedAmount` stays ₹1149.00; the amountless MEND recovery counts as recovered (2) but adds nothing to `totalRecoveredAmount` (₹499.00)
+  - `unknownAmountsAgreeWithAnalytics`: total campaigns, `amountUnknownCount`, `totalFailedAmount` = `revenueAtRisk`, the recovered count and amount, and the late-capture and unknown-attribution amounts all equal `getAnalyticsOverview` for the same data
+- Proof: with the `setAmountUnknownCount` call removed temporarily, the class ran `Tests run: 4, Failures: 2`, both with `expected: <3> but was: <0>`. The fix was then restored.
+- Note on the suite run: during the first full run for this commit, a frontend lint before/after check used `git stash`. That briefly stashed the backend changes while Maven was compiling. The run was stopped, its result discarded, and the suite re-run as `./mvnw clean test` with the tree untouched. That clean run is the one recorded above.
+
+### Follow-up finding 3: customer UI (`33feadb`)
+
+- Frontend `CustomerSummaryDto` type: adds `recoveredLateCaptureCount`, `amountRecoveredLateCapture`, `recoveredAttributionUnknownCount`, `amountRecoveredAttributionUnknown` and `amountUnknownCount`, all optional. It also documents that `recoveredCampaigns` and `totalRecoveredAmount` cover MEND recoveries only.
+- Customer profile page:
+  - "Recovered" becomes "Recovered by MEND", and "Recovered Value" is marked "MEND recoveries only"
+  - a new row shows Late Capture (count + amount), Attribution Unknown (count + amount) and Amount Unknown (count)
+  - a field the backend did not send is shown as `—`, never 0
+- Customer list page: the column header becomes "Recovered by MEND".
+- New `customers/[customerIdHash]/page.test.tsx` (2 tests): each card shows its own count and amount; missing fields show `—` and not 0.
+- `npm test -- --ci` → `Tests: 44 passed, 44 total` (`Test Suites: 17 passed, 17 total`; was 42).
+- `npm run build` → `✓ Compiled successfully`.
+- Lint on the touched files: `✖ 10 problems (9 errors, 1 warning)` before and after, all pre-existing. The new test file adds none.
+
+### End state
+
+- Backend: 671 → **679** tests (+4 fresh-campaign cases, +2 attempt-number unit tests, +2 unknown-amount tests), all with 0 failures, 0 errors and 0 skipped. No test was deleted and no existing assertion changed.
+- Frontend: 42 → **44** jest tests, and `next build` succeeds.
