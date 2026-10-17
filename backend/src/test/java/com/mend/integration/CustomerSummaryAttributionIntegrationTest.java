@@ -1,5 +1,6 @@
 package com.mend.integration;
 
+import com.mend.testsupport.TestUsers;
 import com.mend.controller.CustomerController;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.Merchant;
@@ -127,7 +128,9 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
     void customerSummaryAgreesWithAnalytics() {
         CustomerSummaryDto summary = customerController
                 .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
-        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+        // Bug sweep behaviour change (item 1): user-facing service methods now require a user (TenantGuard);
+        // these calls pass a member of the merchant, as every production caller does. Assertions unchanged.
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
 
         assertEquals(overview.getRecoveredCampaigns(), summary.getRecoveredCampaigns());
         assertEquals(0, overview.getAmountRecovered().compareTo(summary.getTotalRecoveredAmount()));
@@ -160,7 +163,7 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
 
         CustomerSummaryDto summary = customerController
                 .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
-        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
 
         assertEquals(overview.getTotalCampaigns(), summary.getTotalCampaigns());
         assertEquals(overview.getAmountUnknownCount(), summary.getAmountUnknownCount());

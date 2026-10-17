@@ -3,8 +3,8 @@ package com.mend.service;
 import com.mend.domain.entity.AuditLog;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.repository.AuditLogRepository;
-import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import org.slf4j.MDC;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -113,13 +113,13 @@ public class AuditService {
 
     @Transactional(readOnly = true)
     public List<AuditLog> getCampaignAuditLogs(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return auditLogRepository.findByMerchantIdAndCampaignIdOrderByCreatedAtAsc(merchantId, campaignId);
     }
 
     @Transactional(readOnly = true)
     public Page<AuditLog> getMerchantAuditLogs(UUID merchantId, Pageable pageable, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return auditLogRepository.findByMerchantId(merchantId, pageable);
     }
 
@@ -131,7 +131,7 @@ public class AuditService {
             UUID campaignId,
             Pageable pageable,
             AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         if (eventType != null && !eventType.isBlank()) {
             return auditLogRepository.findByMerchantIdAndEventType(merchantId, eventType.trim(), pageable);
@@ -148,18 +148,10 @@ public class AuditService {
 
     @Transactional(readOnly = true)
     public List<AuditLog> getMerchantAuditLogs(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return auditLogRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId);
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 
     private String sanitizeText(String text) {
         if (text == null) return null;

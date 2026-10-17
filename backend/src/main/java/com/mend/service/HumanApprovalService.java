@@ -21,6 +21,7 @@ import com.mend.exception.InvalidRequestException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -124,7 +125,7 @@ public class HumanApprovalService {
 
     @Transactional(readOnly = true)
     public Page<ReviewItemDto> listReviews(UUID merchantId, ReviewQueueStatus status, int page, int size, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         Pageable pageable = PageRequest.of(page, Math.min(Math.max(size, 1), 100));
         Page<ReviewQueue> reviews = (status != null)
@@ -140,14 +141,14 @@ public class HumanApprovalService {
 
     @Transactional(readOnly = true)
     public ReviewItemDto getReview(UUID merchantId, UUID reviewId, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         ReviewQueue review = loadReview(merchantId, reviewId);
         return toReviewItem(merchantId, review);
     }
 
     @Transactional(readOnly = true)
     public ReviewQueueSummaryDto getReviewSummary(UUID merchantId, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         Map<String, Long> byStatus = new LinkedHashMap<>();
         for (Object[] row : reviewQueueRepository.countByMerchantGroupedByStatus(merchantId)) {
@@ -362,17 +363,9 @@ public class HumanApprovalService {
         return review;
     }
 
-    private void validateMembership(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser == null || (!currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId))) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 
     private void requireReviewer(UUID merchantId, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         if (currentUser == null || !currentUser.hasMerchantRole(merchantId, "REVIEWER")) {
             throw new TenantAccessDeniedException(
                     "Requires REVIEWER or MERCHANT_ADMIN privilege for merchant " + merchantId);

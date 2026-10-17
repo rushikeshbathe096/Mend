@@ -10,6 +10,7 @@ import com.mend.exception.InvalidRequestException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +32,7 @@ public class MerchantConfigService {
     public MerchantConfigDto getMerchantConfig(UUID merchantId, AuthenticatedUser currentUser) {
         validateAuthentication(currentUser);
         validateMerchantExists(merchantId);
-        validateTenantAccess(currentUser, merchantId);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         MerchantConfig config = merchantConfigRepository.findByMerchantId(merchantId)
                 .orElseGet(() -> createDefaultConfig(merchantId));
@@ -43,7 +44,7 @@ public class MerchantConfigService {
     public MerchantConfigDto updateMerchantConfig(UUID merchantId, UpdateMerchantConfigRequest request, AuthenticatedUser currentUser) {
         validateAuthentication(currentUser);
         validateMerchantExists(merchantId);
-        validateTenantAccess(currentUser, merchantId);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         validateAdminPermission(currentUser, merchantId);
 
         if (request == null) {
@@ -114,11 +115,6 @@ public class MerchantConfigService {
         }
     }
 
-    private void validateTenantAccess(AuthenticatedUser currentUser, UUID merchantId) {
-        if (!currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied to merchant " + merchantId);
-        }
-    }
 
     private void validateAdminPermission(AuthenticatedUser currentUser, UUID merchantId) {
         if (!currentUser.isSystemAdmin() && !currentUser.hasMerchantRole(merchantId, "MERCHANT_ADMIN")) {

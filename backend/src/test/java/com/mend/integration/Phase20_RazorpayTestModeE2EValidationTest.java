@@ -1,5 +1,6 @@
 package com.mend.integration;
 
+import com.mend.testsupport.TestUsers;
 import com.mend.provider.ProviderAttemptKey;
 import com.mend.provider.razorpay.RazorpayCredentials;
 import com.mend.provider.razorpay.RazorpayProperties;
@@ -345,7 +346,9 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         assertNotEquals(CampaignStatus.EXHAUSTED, finalCampaign.getCurrentState());
 
         // Step 8: Revenue Metrics Verification
-        AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, null);
+        // Bug sweep behaviour change (item 1): user-facing service methods now require a user (TenantGuard);
+        // these calls pass a member of the merchant, as every production caller does. Assertions unchanged.
+        AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
         assertEquals(1, analytics.getTotalCampaigns());
         // M1 behaviour change: nothing was recovered without captured evidence, see ADR-001
         assertEquals(0, analytics.getRecoveredCampaigns());

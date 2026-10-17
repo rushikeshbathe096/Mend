@@ -11,6 +11,7 @@ import com.mend.domain.repository.MerchantRepository;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -248,20 +249,15 @@ public class CampaignLifecycleService {
 
     @Transactional(readOnly = true)
     public Campaign getCampaign(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return campaignRepository.findByMerchantIdAndId(merchantId, campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found for merchant " + merchantId + " and campaign " + campaignId));
     }
 
     @Transactional(readOnly = true)
     public List<Campaign> getCampaignsForMerchant(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return campaignRepository.findByMerchantId(merchantId);
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 }

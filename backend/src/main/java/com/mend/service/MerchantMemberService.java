@@ -16,6 +16,7 @@ import com.mend.exception.InvalidRequestException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import com.mend.security.PasswordHasher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,7 +52,7 @@ public class MerchantMemberService {
     public List<MerchantMemberDto> getMerchantMembers(UUID merchantId, AuthenticatedUser currentUser) {
         validateAuthentication(currentUser);
         validateMerchantExists(merchantId);
-        validateTenantAccess(currentUser, merchantId);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         List<MerchantUser> merchantUsers = merchantUserRepository.findByMerchantId(merchantId);
         List<MerchantMemberDto> result = new ArrayList<>();
@@ -79,6 +80,7 @@ public class MerchantMemberService {
     public MerchantMemberDto addMerchantMember(UUID merchantId, AddMerchantMemberRequest request, AuthenticatedUser currentUser) {
         validateAuthentication(currentUser);
         validateMerchantExists(merchantId);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         validateMerchantAdminPermission(currentUser, merchantId);
 
         if (request == null || request.getEmail() == null || request.getRoleName() == null) {
@@ -133,6 +135,7 @@ public class MerchantMemberService {
     public MerchantMemberDto updateMemberRole(UUID merchantId, UUID targetUserId, UpdateMemberRoleRequest request, AuthenticatedUser currentUser) {
         validateAuthentication(currentUser);
         validateMerchantExists(merchantId);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         validateMerchantAdminPermission(currentUser, merchantId);
 
         if (request == null || request.getRoleName() == null) {
@@ -171,6 +174,7 @@ public class MerchantMemberService {
     public void removeMerchantMember(UUID merchantId, UUID targetUserId, AuthenticatedUser currentUser) {
         validateAuthentication(currentUser);
         validateMerchantExists(merchantId);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         validateMerchantAdminPermission(currentUser, merchantId);
 
         MerchantUser mu = merchantUserRepository.findByMerchantIdAndUserId(merchantId, targetUserId)
@@ -191,11 +195,6 @@ public class MerchantMemberService {
         }
     }
 
-    private void validateTenantAccess(AuthenticatedUser currentUser, UUID merchantId) {
-        if (!currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied to merchant " + merchantId);
-        }
-    }
 
     private void validateMerchantAdminPermission(AuthenticatedUser currentUser, UUID merchantId) {
         if (!currentUser.isSystemAdmin() && !currentUser.hasMerchantRole(merchantId, "MERCHANT_ADMIN")) {

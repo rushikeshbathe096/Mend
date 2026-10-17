@@ -5,8 +5,8 @@ import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.repository.*;
 import com.mend.dto.*;
 import com.mend.exception.ResourceNotFoundException;
-import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -56,7 +56,7 @@ public class CampaignQueryService {
             String sortOrder,
             AuthenticatedUser currentUser) {
 
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         String effectiveSortBy = (sortBy != null && !sortBy.isBlank()) ? sortBy : "createdAt";
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
@@ -78,7 +78,7 @@ public class CampaignQueryService {
 
     @Transactional(readOnly = true)
     public CampaignDto getCampaign(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         Campaign campaign = campaignRepository.findByMerchantIdAndId(merchantId, campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found for merchant " + merchantId + " with ID: " + campaignId));
@@ -88,7 +88,7 @@ public class CampaignQueryService {
 
     @Transactional(readOnly = true)
     public CampaignTimelineDto getCampaignTimeline(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         Campaign campaign = campaignRepository.findByMerchantIdAndId(merchantId, campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found for merchant " + merchantId + " with ID: " + campaignId));
@@ -125,12 +125,4 @@ public class CampaignQueryService {
         return timeline;
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 }

@@ -1,5 +1,6 @@
 package com.mend.integration;
 
+import com.mend.testsupport.TestUsers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mend.provider.mock.MockPaymentProvider;
@@ -275,7 +276,9 @@ public class Phase19_5_FullMockE2EValidationTest {
         assertEquals(0, BigDecimal.ZERO.compareTo(remainingExposure));
 
         // Validate Analytics Service Returns Matching Metrics
-        AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, null);
+        // Bug sweep behaviour change (item 1): user-facing service methods now require a user (TenantGuard);
+        // these calls pass a member of the merchant, as every production caller does. Assertions unchanged.
+        AnalyticsOverviewDto analytics = analyticsQueryService.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
         assertEquals(1, analytics.getTotalCampaigns());
         // cleanup behaviour change: a SYNTHETIC mock capture sets no recovery_attribution, so analytics reports it as
         // "attribution unknown", not as recovered by MEND (Group 4, docs/audit/cleanup-report.md); was 1 and 100.0.

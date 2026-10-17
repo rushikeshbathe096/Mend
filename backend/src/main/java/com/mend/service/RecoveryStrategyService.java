@@ -11,6 +11,7 @@ import com.mend.domain.repository.RecoveryDecisionRepository;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import com.mend.strategy.RecoveryContext;
 import com.mend.strategy.RecoveryDecision;
 import com.mend.strategy.RecoveryStrategyEngine;
@@ -132,7 +133,7 @@ public class RecoveryStrategyService {
 
     @Transactional(readOnly = true)
     public List<RecoveryDecisionEntity> getStrategyHistory(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         Campaign campaign = campaignRepository.findById(campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
 
@@ -157,9 +158,4 @@ public class RecoveryStrategyService {
         );
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 }

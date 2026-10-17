@@ -6,8 +6,8 @@ import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.PageResponse;
 import com.mend.dto.WebhookEventDetailDto;
 import com.mend.exception.ResourceNotFoundException;
-import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -38,7 +38,7 @@ public class WebhookQueryService {
             String sortOrder,
             AuthenticatedUser currentUser) {
 
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         String effectiveSortBy = (sortBy != null && !sortBy.isBlank()) ? sortBy : "receivedAt";
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
@@ -60,7 +60,7 @@ public class WebhookQueryService {
 
     @Transactional(readOnly = true)
     public WebhookEventDetailDto getWebhook(UUID merchantId, UUID webhookId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         WebhookEvent event = webhookEventRepository.findByMerchantIdAndId(merchantId, webhookId)
                 .orElseThrow(() -> new ResourceNotFoundException("Webhook event not found for merchant " + merchantId + " with ID: " + webhookId));
@@ -68,12 +68,4 @@ public class WebhookQueryService {
         return WebhookEventDetailDto.fromEntity(event);
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 }
