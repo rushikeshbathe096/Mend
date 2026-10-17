@@ -554,3 +554,22 @@ Every run: `BUILD SUCCESS`, no `m2-exit-evidence-*` file.
 - Backend 660 → **668** (+4 JWT startup, +3 compliance, +1 customer summary), 0 failures, 0 errors, 0 skipped. No test deleted or weakened; no existing assertion changed.
 - Frontend 39 → **41** jest tests; `next build` succeeds.
 - Findings 4, 6–9 above remain open. New, not changed: the frontend `CustomerSummary` type and customer pages do not show the new late-capture / unknown-attribution fields yet (same gap as finding 4 for analytics).
+
+## Branch reconciliation
+
+`git cherry -v cleanup/pre-m3 <branch>` listed six commits on `cleanup/pre-m3-fixes` and `cleanup/pre-m3-final` as not on this branch. Each was compared by content (its patch against this branch's files), not by hash. Nothing merged into `main` or pushed; no branch deleted.
+
+| commit | subject | status before | this branch's counterpart | reconcile commit |
+|---|---|---|---|---|
+| `c58f5b9` | security: no default JWT secret outside dev | partial: behaviour present; the env-isolated `JwtSecretStartupTest` (4) missing | `0d7e36c` | `00b2f86` (test added, assertions on this branch's messages) |
+| `737ab43` | fix: compliance duplicate check includes M2 in-flight states | fully present (tests a superset) | `e3b4773`, `e3f0eed` | none |
+| `0cd75d2` | fix: customer summary counts only MEND recoveries | partial: code present; two list-endpoint assertions missing | `c6d5834`, `63a08a3` | `5f731b6` |
+| `4074ec3` | frontend: webhook filter only real statuses | fully present (tests a superset) | `f803138` | none |
+| `f811adf` | docs: cleanup report follow-up (findings 1, 2, 3, 5) | partial: same findings documented for this branch's commits; the -fixes record missing | `642a5c8` | `2488005` ("Record: parallel branch …" above) |
+| `5564462` | docs: cleanup plan and final run | missing: `cleanup-plan.md`, "Final run" section | none | `c85e4b8` |
+
+Verification after the reconcile commits:
+
+- Backend `cd backend && ./mvnw test`: `[INFO] Tests run: 683, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (679 + 4 `JwtSecretStartupTest`; `randomizedInvoiceRaces` seed 964198587571; no `m2-exit-evidence-*` file).
+- Frontend: `npm test -- --ci` → `Test Suites: 17 passed, 17 total`, `Tests: 44 passed, 44 total`; `npm run build` succeeds.
+- Finding (not changed): with `JWT_SECRET` exported, `JwtSecretConfigurationTest.defaultProfileWithoutJwtSecretFailsToStart` and `defaultProfileRejectsSecretShorterThan32Bytes` fail ("context started successfully"): the runner's `JWT_SECRET=` override does not outrank the OS environment. `JwtSecretStartupTest` passes in the same run.
