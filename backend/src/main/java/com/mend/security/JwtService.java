@@ -20,8 +20,14 @@ public class JwtService {
             @Value("${jwt.secret}") String secret,
             @Value("${jwt.expiration:86400000}") long expirationMs,
             ObjectMapper objectMapper) {
-        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
-            throw new IllegalArgumentException("JWT secret must be configured and be at least 32 bytes long");
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException(
+                    "jwt.secret is not configured: set JWT_SECRET (at least 32 bytes). "
+                            + "Only the dev profile has a built-in development secret.");
+        }
+        if (secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalArgumentException(
+                    "jwt.secret is too short: JWT_SECRET must be at least 32 bytes (HS256)");
         }
         this.secret = secret;
         this.expirationMs = expirationMs;

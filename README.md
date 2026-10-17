@@ -96,10 +96,10 @@ Every environment variable the code reads is listed in [.env.example](.env.examp
 
 ### Profiles
 
-| `SPRING_PROFILES_ACTIVE` | dev seed data | `/api/v1/demo` | use |
-|---|---|---|---|
-| unset (Spring `default`) | off | 404 | any shared or deployed environment |
-| `dev` | on (`MEND_DEMO_DATASET_V1`) | on, SIMULATED scenarios | local development only |
+| `SPRING_PROFILES_ACTIVE` | dev seed data | `/api/v1/demo` | `JWT_SECRET` | use |
+|---|---|---|---|---|
+| unset (Spring `default`) | off | 404 | **required** (≥ 32 bytes); the backend fails to start without it | any shared or deployed environment |
+| `dev` | on (`MEND_DEMO_DATASET_V1`) | on, SIMULATED scenarios | optional; falls back to a public dev-only secret | local development only |
 
 Tests run with their own `test` profile and a throwaway database per run; they never touch the dev database.
 
