@@ -16,7 +16,7 @@ Classifications: BUG, SECURITY, TEST-RELIABILITY, QUALITY, M3-OWNED, M5-OWNED, A
 
 | id | source | description | class | decision |
 |---|---|---|---|---|
-| BR-01 | UA §5 "Membership / tenant check pasted into services"; CR scope note | The `currentUser != null && !isSystemAdmin && !isMemberOfMerchant` rule is copied into 12 services (`ActionIntentService`, `AnalyticsQueryService`, `AuditService`, `CampaignLifecycleService`, `CampaignQueryService`, `ComplianceService`, `HumanApprovalService`, `MerchantConfigService`, `MerchantMemberService`, `RecoveryActionQueryService`, `RecoveryStrategyService`, `WebhookQueryService`). Most copies **let a null user through**; `HumanApprovalService` rejects it; `MerchantConfigService` / `MerchantMemberService` would throw an NPE. | SECURITY | **Fix, item 1** (`fix: single tenant guard`). |
+| BR-01 | UA §5 "Membership / tenant check pasted into services"; CR scope note | The `currentUser != null && !isSystemAdmin && !isMemberOfMerchant` rule is copied into 12 services (`ActionIntentService`, `AnalyticsQueryService`, `AuditService`, `CampaignLifecycleService`, `CampaignQueryService`, `ComplianceService`, `HumanApprovalService`, `MerchantConfigService`, `MerchantMemberService`, `RecoveryActionQueryService`, `RecoveryStrategyService`, `WebhookQueryService`). Most copies **let a null user through** (9 of 12); `HumanApprovalService` rejects it; `MerchantConfigService` / `MerchantMemberService` answer it with 401 before their own check (the audit's "NPE" was wrong). | SECURITY | **Fix, item 1** (`fix: single tenant guard`). |
 | BR-02 | MP U8 "Not changed"; MS Deviations | Late capture of the original payment before any MEND action ends the campaign CANCELLED instead of RECOVERED: the state machine has no CREATED/CLASSIFIED/ELIGIBLE/SCHEDULED → RECOVERED edge. | BUG | **Fix, item 2** (edges gated on `ORIGINAL_PAYMENT_LATE_CAPTURE`). |
 | BR-03 | MP U8 + U9 review; MS M3 inputs | `HumanApprovalService.createReview` returns the existing PENDING review, so a later reason (e.g. `CAPTURED_ON_TERMINAL_CAMPAIGN` after `DUPLICATE_PAYMENT_RISK`) reaches only the audit log, not the reviewer. | BUG | **Fix, item 3** (append reason with timestamp + code). |
 | BR-04 | MP U9 review MINOR; MS Deviations; ADR-002 | Deferrals and SAFE_RETRY share `execution_attempts` (cap 5 vs 3): e.g. 2 deferrals + an Unknown outcome leave no SAFE_RETRY. | BUG | **Fix, item 4** (`defer_attempts`, V17). |
@@ -25,7 +25,7 @@ Classifications: BUG, SECURITY, TEST-RELIABILITY, QUALITY, M3-OWNED, M5-OWNED, A
 | BR-06b | CR OOS 7 | `ClassificationServiceTest` and `AiRecoveryAgentIntegrationTest` also `deleteAll()` shared tables (incl. `merchants` in the latter). They test M3-owned classes (`ClassificationService`, `RecoveryOrchestratorService`). | M3-OWNED | Not touched (AI path is out of scope). M3 must scope their cleanup. |
 | BR-07 | CR OOS 7 | `debug=true` in `application-test.properties` (DEBUG auto-config report; Flyway at TRACE), tens of MB of log per run. | TEST-RELIABILITY | **Fix, item 6**. |
 | BR-08 | CR OOS 7 | `DevDataInitializer` (`mend.dev.seed=true` in the test profile) runs in every test context and holds one connection / transaction ≈5 s (Hikari leak warning). | TEST-RELIABILITY | **Fix, item 6**. |
-| BR-09 | RC (reconciliation, `docs/audit/cleanup-report.md` "Branch reconciliation") | `JwtSecretConfigurationTest`'s two default-profile failure cases pass vacuously-wrong when `JWT_SECRET` is exported: the runner's `JWT_SECRET=` override is outranked by the OS environment, the context starts, the test fails. | TEST-RELIABILITY | **Fix, item 6b** (isolate from the OS environment like `JwtSecretStartupTest`). |
+| BR-09 | RC (reconciliation, `docs/audit/cleanup-report.md` "Branch reconciliation") | `JwtSecretConfigurationTest`'s two default-profile failure cases depend on the shell: with `JWT_SECRET` exported, the runner's `JWT_SECRET=` override is outranked by the OS environment, the context starts, and the tests fail. | TEST-RELIABILITY | **Fix, item 6b** (isolate from the OS environment like `JwtSecretStartupTest`). |
 | BR-10 | CR OOS 6 | Frontend `npm run lint`: 64 problems, 53 errors (35 `no-explicit-any`, 17 `react-hooks/set-state-in-effect`, 1 `react-hooks/purity`), 11 warnings. | QUALITY | **Fix, item 7**. |
 | BR-11 | CR FU 5; RC | `webhookStatus.test.ts` reads a backend source file (assumes the monorepo layout). | ACCEPTED-TRADEOFF | Keep (owner: do not touch). |
 | BR-12 | MP U4 review | Captured evidence for a terminal (e.g. FAILED) intent is audited (`CAPTURED_EVIDENCE_NOT_APPLIED`), but what to do with that real money (refund / review / recover) is undecided. | BUG (open owner decision) | Not in this sweep: needs an owner decision on money handling (stop condition). |
@@ -46,6 +46,22 @@ Classifications: BUG, SECURITY, TEST-RELIABILITY, QUALITY, M3-OWNED, M5-OWNED, A
 | BR-27 | UA §4 | Backend endpoints with no frontend caller (`/auth/me`, member management, …). | ACCEPTED-TRADEOFF | Public API surface; keep. |
 | BR-28 | CR OOS 9; RC | Local state: stale `mend_test_*` DBs (24 h sweep), a prunable foreign worktree under `/tmp/claude-1000/…/b1176de1…/scratchpad/main-wt`. | QUALITY (local) | Left alone (not repository state). |
 | BR-29 | this sweep (setup) | `main` @ `e591173` is local only: `origin/main` is still `b669205`, and no `pre-m3-clean` tag exists locally or on `origin`. | QUALITY (process) | Reported to the owner; nothing pushed (task rule). |
+
+## Status after the sweep
+
+Details, tests and revert proofs: `docs/audit/bug-sweep-report.md`.
+
+| id | status | commit |
+|---|---|---|
+| BR-01 | fixed: one `TenantGuard` (user call / system call); no production null callers; 10 test callers now pass a member | `e4247bd` |
+| BR-02 | fixed: pre-action → RECOVERED only with `ORIGINAL_PAYMENT_LATE_CAPTURE`, via `CampaignLifecycleService.recover` | `20b6e3f` |
+| BR-03 | fixed: reasons appended with timestamp and code (no migration) | `44fc1bd` |
+| BR-04 | fixed: `defer_attempts` (V17) | `2e106e7` |
+| BR-05 | fixed: `SYNTHETIC` attribution (V18), mock mode only, reported separately | `4dd132c` |
+| BR-06, BR-07, BR-08 | fixed: own-row cleanup, `debug=false`, dev seed off in tests; guarded by `TestHygieneTest` | `efdd827` |
+| BR-09 | fixed: environment-isolated runner | `1461ce6` |
+| BR-10 | fixed: 0 lint errors, 1 warning with a reason | `8cd6ade` |
+| all others | unchanged (decision column above) | — |
 
 ## Already fixed before this sweep (traceability)
 
