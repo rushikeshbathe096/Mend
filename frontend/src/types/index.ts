@@ -80,9 +80,20 @@ export interface CustomerSummaryDto {
   merchantId: string;
   totalCampaigns: number;
   activeCampaigns: number;
+  /** Recovered by MEND only (recovery_attribution = MEND), the same rule as analytics. */
   recoveredCampaigns: number;
+  /** Exact sum of the known amounts; campaigns without one are in amountUnknownCount. */
   totalFailedAmount: number;
+  /** MEND recoveries only. */
   totalRecoveredAmount: number;
+  /** RECOVERED by a late capture of the original payment: not a MEND recovery. */
+  recoveredLateCaptureCount?: number;
+  amountRecoveredLateCapture?: number;
+  /** RECOVERED with no attribution (before V15). */
+  recoveredAttributionUnknownCount?: number;
+  amountRecoveredAttributionUnknown?: number;
+  /** Campaigns with no resolvable amount: excluded from every sum, never defaulted. */
+  amountUnknownCount?: number;
   riskSignals: string[];
   lastActivityAt: string;
 }

@@ -112,7 +112,7 @@ export default function CustomersPage() {
                     <th className="px-6 py-3.5">Customer</th>
                     <th className="px-6 py-3.5">Campaigns</th>
                     <th className="px-6 py-3.5">Active</th>
-                    <th className="px-6 py-3.5">Recovered</th>
+                    <th className="px-6 py-3.5">Recovered by MEND</th>
                     <th className="px-6 py-3.5 text-right">Failed Volume</th>
                     <th className="px-6 py-3.5 text-right">Recovered Value</th>
                     <th className="px-6 py-3.5">Risk Signals</th>
