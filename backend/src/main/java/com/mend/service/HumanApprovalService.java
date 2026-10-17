@@ -64,6 +64,10 @@ public class HumanApprovalService {
     private static final Duration DEFAULT_REVIEW_EXPIRY = Duration.ofHours(72);
 
     private static final java.util.regex.Pattern REASON_CODE = java.util.regex.Pattern.compile("^([A-Z][A-Z0-9_]*):");
+    /** Review codes MEND itself writes (createReview callers). */
+    private static final java.util.Set<String> KNOWN_REASON_CODES = java.util.Set.of(
+            "DUPLICATE_PAYMENT_RISK", "CAPTURED_ON_TERMINAL_CAMPAIGN", "AMBIGUOUS_PROVIDER_REFERENCE", "MANUAL_REVIEW_REQUIRED",
+            "OPERATOR_ACTION_REQUIRED", "HUMAN_DECISION_REQUIRED", "RECONCILIATION_ESCALATED", "AMBIGUOUS_DEBIT");
 
     private final ReviewQueueRepository reviewQueueRepository;
     private final CampaignRepository campaignRepository;
@@ -115,7 +119,7 @@ public class HumanApprovalService {
             ReviewQueue existing = pending.get();
             String code = reasonCode(text);
             String entry = "\n[" + Instant.now() + "] [" + code + "] " + text;
-            if (reviewQueueRepository.appendReasonIfPending(existing.getId(), text, entry) == 1) {
+            if (reviewQueueRepository.appendReasonIfPending(existing.getId(), text, entry, "\n") == 1) {
                 auditService.logEvent(merchantId, campaignId, "REVIEW_REASON_APPENDED", "SYSTEM", null,
                         "review=" + existing.getId() + " code=" + code);
                 log.info("Appended reason code '{}' to pending review '{}' for campaign '{}'", code, existing.getId(), campaignId);
@@ -141,10 +145,13 @@ public class HumanApprovalService {
         return review;
     }
 
-    /** The leading {@code CODE:} of a reason (e.g. {@code DUPLICATE_PAYMENT_RISK}), or {@code UNCODED}. */
+    /**
+     * The leading {@code CODE:} of a reason when it is one of MEND's own review codes, else {@code UNCODED}. Reasons can
+     * carry untrusted text (invariant 8), so a code is never taken from text alone.
+     */
     static String reasonCode(String reason) {
         java.util.regex.Matcher m = REASON_CODE.matcher(reason);
-        return m.find() ? m.group(1) : "UNCODED";
+        return m.find() && KNOWN_REASON_CODES.contains(m.group(1)) ? m.group(1) : "UNCODED";
     }
 
     @Transactional(readOnly = true)
@@ -390,7 +397,7 @@ public class HumanApprovalService {
 
     private void requireReviewer(UUID merchantId, AuthenticatedUser currentUser) {
         TenantGuard.requireUserAccess(merchantId, currentUser);
-        if (currentUser == null || !currentUser.hasMerchantRole(merchantId, "REVIEWER")) {
+        if (!currentUser.hasMerchantRole(merchantId, "REVIEWER")) {
             throw new TenantAccessDeniedException(
                     "Requires REVIEWER or MERCHANT_ADMIN privilege for merchant " + merchantId);
         }

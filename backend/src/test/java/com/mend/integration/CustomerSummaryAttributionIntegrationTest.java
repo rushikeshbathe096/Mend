@@ -95,6 +95,23 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
         campaignWithUnknownAmount(null, false, CampaignStatus.RECOVERED, RecoveryAttribution.MEND);    // no webhook
     }
 
+    @Test
+    @DisplayName("Review fix: a SYNTHETIC (mock) recovery is reported separately, never as MEND, and agrees with analytics")
+    void syntheticRecoveryIsReportedSeparately() {
+        campaign(7700, CampaignStatus.RECOVERED, RecoveryAttribution.SYNTHETIC);                     // synthetic 77.00
+
+        CustomerSummaryDto summary = customerController
+                .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
+
+        assertEquals(1, summary.getRecoveredCampaigns(), "still only the MEND recovery");
+        assertMoney("499.00", summary.getTotalRecoveredAmount());
+        assertEquals(1, summary.getRecoveredSyntheticCount());
+        assertMoney("77.00", summary.getAmountRecoveredSynthetic());
+        assertEquals(overview.getRecoveredSyntheticCount(), summary.getRecoveredSyntheticCount());
+        assertEquals(0, overview.getAmountRecoveredSynthetic().compareTo(summary.getAmountRecoveredSynthetic()));
+    }
+
     private static void assertMoney(String expected, BigDecimal actual) {
         assertEquals(0, new BigDecimal(expected).compareTo(actual), "expected " + expected + " but was " + actual);
     }

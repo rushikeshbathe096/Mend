@@ -30,7 +30,9 @@ public interface ReviewQueueRepository extends JpaRepository<ReviewQueue, UUID> 
 
     /**
      * Bug sweep item 3: appends {@code entry} to a review that is still PENDING, in one statement (no lost update between two
-     * reasons), unless {@code reason} is already in it. Returns 0 when the review is no longer PENDING or already has it.
+     * reasons), unless {@code reason} is already one of its entries: the first line, or an appended {@code "] <reason>"}
+     * line. Matched as whole lines ({@code nl} = "\n"), so a reason that is only a substring of another is still appended.
+     * Returns 0 when the review is no longer PENDING or already has the reason.
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -38,9 +40,12 @@ public interface ReviewQueueRepository extends JpaRepository<ReviewQueue, UUID> 
                SET r.reason = CONCAT(COALESCE(r.reason, ''), :entry)
              WHERE r.id = :id
                AND r.status = com.mend.domain.enums.ReviewQueueStatus.PENDING
-               AND (r.reason IS NULL OR LOCATE(:reason, r.reason) = 0)
+               AND (r.reason IS NULL
+                    OR (LOCATE(CONCAT(:reason, :nl), CONCAT(r.reason, :nl)) <> 1
+                        AND LOCATE(CONCAT('] ', :reason, :nl), CONCAT(r.reason, :nl)) = 0))
             """)
-    int appendReasonIfPending(@Param("id") UUID id, @Param("reason") String reason, @Param("entry") String entry);
+    int appendReasonIfPending(@Param("id") UUID id, @Param("reason") String reason, @Param("entry") String entry,
+                              @Param("nl") String nl);
 
     @Query("SELECT r.status, COUNT(r) FROM ReviewQueue r WHERE r.merchantId = :merchantId GROUP BY r.status")
     List<Object[]> countByMerchantGroupedByStatus(@Param("merchantId") UUID merchantId);

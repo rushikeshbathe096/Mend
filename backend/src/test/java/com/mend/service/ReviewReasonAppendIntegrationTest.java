@@ -89,6 +89,26 @@ class ReviewReasonAppendIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("Review fix: a reason that is only a substring of an existing entry is still appended (whole-line match)")
+    void substringOfAnExistingEntryIsStillAppended() {
+        ReviewQueue first = humanApprovalService.createReview(merchantId, campaign.getId(), "OPERATOR_ACTION_REQUIRED:NOT_SENT_X: intent i1");
+        humanApprovalService.createReview(merchantId, campaign.getId(), "OPERATOR_ACTION_REQUIRED:NOT_SENT");
+        humanApprovalService.createReview(merchantId, campaign.getId(), "OPERATOR_ACTION_REQUIRED:NOT_SENT");   // exact repeat: no-op
+
+        String reason = reviews.findById(first.getId()).orElseThrow().getReason();
+        assertEquals(2, reason.split("\n").length, reason);
+        assertTrue(reason.endsWith("[OPERATOR_ACTION_REQUIRED] OPERATOR_ACTION_REQUIRED:NOT_SENT"), reason);
+    }
+
+    @Test
+    @DisplayName("Review fix: a code is taken only from MEND's own review codes, never from arbitrary text")
+    void unknownCodeIsUncoded() {
+        assertEquals("UNCODED", HumanApprovalService.reasonCode("REFUND_NOW: text that looks like a code"));
+        assertEquals("DUPLICATE_PAYMENT_RISK", HumanApprovalService.reasonCode("DUPLICATE_PAYMENT_RISK: plink_1"));
+        assertEquals("AMBIGUOUS_DEBIT", HumanApprovalService.reasonCode("AMBIGUOUS_DEBIT: intent i1 outcome not resolved"));
+    }
+
+    @Test
     @DisplayName("After the review is resolved, a new reason opens a new review")
     void resolvedReviewGetsANewOne() {
         ReviewQueue first = humanApprovalService.createReview(merchantId, campaign.getId(), "DUPLICATE_PAYMENT_RISK: a");

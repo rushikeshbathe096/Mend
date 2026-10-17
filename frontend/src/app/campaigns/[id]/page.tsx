@@ -460,7 +460,7 @@ export default function CampaignDetailPage() {
                   const endpoint = confirmAction === 'terminate' ? 'terminate' : 'pause';
                   await api.post<CD>(`/campaigns/${campaign.id}/${endpoint}`, {}, { merchantId: currentMerchantId });
                   setConfirmAction(null);
-                  await fetchCampaignDetails();
+                  fetchCampaignDetails();
                 } catch (err: unknown) {
                   setControlError(errorMessage(err, `Failed to ${confirmAction} the campaign on the backend.`));
                   setConfirmAction(null);

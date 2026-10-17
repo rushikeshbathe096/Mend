@@ -23,6 +23,9 @@ public class CustomerSummaryDto {
     private BigDecimal amountRecoveredAttributionUnknown;
     // Campaigns with no resolvable amount (as analytics amountUnknownCount): excluded from every amount above.
     private long amountUnknownCount;
+    // Mock-mode simulated recoveries (attribution SYNTHETIC), as analytics recoveredSyntheticCount: never MEND's.
+    private long recoveredSyntheticCount;
+    private BigDecimal amountRecoveredSynthetic;
 
     public CustomerSummaryDto() {}
 
@@ -81,4 +84,10 @@ public class CustomerSummaryDto {
 
     public long getAmountUnknownCount() { return amountUnknownCount; }
     public void setAmountUnknownCount(long amountUnknownCount) { this.amountUnknownCount = amountUnknownCount; }
+
+    public long getRecoveredSyntheticCount() { return recoveredSyntheticCount; }
+    public void setRecoveredSyntheticCount(long recoveredSyntheticCount) { this.recoveredSyntheticCount = recoveredSyntheticCount; }
+
+    public BigDecimal getAmountRecoveredSynthetic() { return amountRecoveredSynthetic; }
+    public void setAmountRecoveredSynthetic(BigDecimal amountRecoveredSynthetic) { this.amountRecoveredSynthetic = amountRecoveredSynthetic; }
 }
