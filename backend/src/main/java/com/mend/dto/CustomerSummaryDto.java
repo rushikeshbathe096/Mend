@@ -15,6 +15,12 @@ public class CustomerSummaryDto {
     private BigDecimal totalRecoveredAmount;
     private List<String> riskSignals;
     private Instant lastActivityAt;
+    // Reported separately, as in analytics: RECOVERED but not by MEND (late capture of the original payment),
+    // or RECOVERED with no attribution (before V15). Not part of recoveredCampaigns / totalRecoveredAmount.
+    private long recoveredLateCaptureCount;
+    private BigDecimal amountRecoveredLateCapture;
+    private long recoveredAttributionUnknownCount;
+    private BigDecimal amountRecoveredAttributionUnknown;
 
     public CustomerSummaryDto() {}
 
@@ -58,4 +64,16 @@ public class CustomerSummaryDto {
 
     public Instant getLastActivityAt() { return lastActivityAt; }
     public void setLastActivityAt(Instant lastActivityAt) { this.lastActivityAt = lastActivityAt; }
+
+    public long getRecoveredLateCaptureCount() { return recoveredLateCaptureCount; }
+    public void setRecoveredLateCaptureCount(long recoveredLateCaptureCount) { this.recoveredLateCaptureCount = recoveredLateCaptureCount; }
+
+    public BigDecimal getAmountRecoveredLateCapture() { return amountRecoveredLateCapture; }
+    public void setAmountRecoveredLateCapture(BigDecimal amountRecoveredLateCapture) { this.amountRecoveredLateCapture = amountRecoveredLateCapture; }
+
+    public long getRecoveredAttributionUnknownCount() { return recoveredAttributionUnknownCount; }
+    public void setRecoveredAttributionUnknownCount(long recoveredAttributionUnknownCount) { this.recoveredAttributionUnknownCount = recoveredAttributionUnknownCount; }
+
+    public BigDecimal getAmountRecoveredAttributionUnknown() { return amountRecoveredAttributionUnknown; }
+    public void setAmountRecoveredAttributionUnknown(BigDecimal amountRecoveredAttributionUnknown) { this.amountRecoveredAttributionUnknown = amountRecoveredAttributionUnknown; }
 }

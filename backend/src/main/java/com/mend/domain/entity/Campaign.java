@@ -92,6 +92,15 @@ public class Campaign {
         return recoveryAttribution;
     }
 
+    /**
+     * The one "recovered" rule for every metric (analytics, customer summary): RECOVERED with MEND attribution. Late
+     * captures of the original payment and RECOVERED rows without attribution (before V15) are not MEND recoveries.
+     */
+    public boolean recoveredByMend() {
+        return currentState == CampaignStatus.RECOVERED
+                && recoveryAttribution == com.mend.domain.enums.RecoveryAttribution.MEND;
+    }
+
     public void setRecoveryAttribution(com.mend.domain.enums.RecoveryAttribution recoveryAttribution) {
         this.recoveryAttribution = recoveryAttribution;
     }

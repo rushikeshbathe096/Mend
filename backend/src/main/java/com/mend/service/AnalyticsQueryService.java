@@ -188,7 +188,7 @@ public class AnalyticsQueryService {
                 String fc = campaign.getFailureClass();
                 failureClassBreakdown.put(fc, failureClassBreakdown.getOrDefault(fc, 0L) + 1);
                 failureClassTotalMap.put(fc, failureClassTotalMap.getOrDefault(fc, 0L) + 1);
-                if (recoveredByMend(campaign)) {
+                if (campaign.recoveredByMend()) {
                     failureClassRecoveredMap.put(fc, failureClassRecoveredMap.getOrDefault(fc, 0L) + 1);
                 }
             }
@@ -197,7 +197,7 @@ public class AnalyticsQueryService {
                 String strategy = campaign.getStrategy();
                 strategyBreakdown.put(strategy, strategyBreakdown.getOrDefault(strategy, 0L) + 1);
                 strategyTotalMap.put(strategy, strategyTotalMap.getOrDefault(strategy, 0L) + 1);
-                if (recoveredByMend(campaign)) {
+                if (campaign.recoveredByMend()) {
                     strategyRecoveredMap.put(strategy, strategyRecoveredMap.getOrDefault(strategy, 0L) + 1);
                 }
             }
@@ -327,7 +327,7 @@ public class AnalyticsQueryService {
         List<ActionIntent> intents = actionIntentRepository.findByMerchantId(merchantId);
         long actionScheduled = intents.size();
         long actionExecuted = intents.stream().filter(i -> i.getStatus() == ActionIntentStatus.SUCCEEDED || i.getStatus() == ActionIntentStatus.FAILED).count();
-        long recovered = campaigns.stream().filter(AnalyticsQueryService::recoveredByMend).count();
+        long recovered = campaigns.stream().filter(Campaign::recoveredByMend).count();
 
         List<com.mend.dto.AnalyticsFunnelDto.FunnelStageDto> stages = new ArrayList<>();
         long baseCount = Math.max(totalFailures, totalCampaigns);
@@ -425,10 +425,6 @@ public class AnalyticsQueryService {
             }
         }
         return amounts;
-    }
-
-    private static boolean recoveredByMend(Campaign campaign) {
-        return campaign.getCurrentState() == CampaignStatus.RECOVERED && campaign.getRecoveryAttribution() == RecoveryAttribution.MEND;
     }
 
     /** Percentage (not money), two decimals. */
