@@ -141,3 +141,26 @@ Review (fresh subagent, fetched the Razorpay page itself: all mapped reasons exi
   `unmappedReasonIsUnclassified:83 expected: <UNCLASSIFIED> but was: <CUSTOMER_DECLINED>`; a qualified
   `org.springframework` reference in the package → `TaxonomyPurityTest.onlyJavaImports:35` fails.
 Next: U2.2 (in progress: V19, ClassificationService on the taxonomy, eligibility, strategy).
+
+#### U2.2 AI off the payment hot path
+Plan: taxonomy into ClassificationService (provider fields extracted separately), V19 (confidence nullable +
+taxonomy_version), eligibility/strategy/compliance by class with confidence gates removed (moved forward from U2.3,
+standing DECISION), orchestrator without the agent step, proof test with ai-service unreachable.
+Commit `31a1949`. Full suite: `[INFO] Tests run: 887, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+Test changes (count 867 → 887, none deleted):
+- AiRecoveryAgentIntegrationTest → DeterministicRecoveryPathIntegrationTest (same 11 scenarios rewritten to the deterministic
+  behaviour; own-row cleanup); ClassificationServiceTest 3 rewritten; RazorpayTestModeE2E fixture now carries Razorpay's
+  documented error_reason/error_source and no AI mocks; fixtures with AI-era classes or confidence-driven MANUAL_REVIEW moved
+  to taxonomy classes / merchant enabled actions; policy versions v1.0 → v2.0. Each marked "M3 behaviour change".
+- New: AiOffHotPathTest (2), ComplianceEngineTest 5b (5), RecoveryStrategyEngineTest strategy table (13).
+- TestHygieneTest allowlist emptied (the two M3-owned wipers are rewritten).
+DECISIONS:
+- MANUAL_REVIEW→approval flows (OD-1) are now reached via merchant enabled actions; a legacy-class campaign reaches review
+  (strategy MANUAL_REVIEW) but cannot be approved (compliance UNKNOWN_CLASSIFICATION) — fail closed, rejectable by a human.
+- The demo's invented classes (NETWORK_TIMEOUT, AUTHENTICATION_FAILED, CARD_EXPIRED, UNKNOWN) mapped to taxonomy classes;
+  its fake confidences/agent records go in U2.3.
+Revert proofs:
+- old orchestrator → `AiOffHotPathTest.paymentPathHasNoAiDependency:105 RecoveryOrchestratorService constructor takes com.mend.agent.AgentDecisionEngine`;
+- 0.50 confidence gate back → `AiOffHotPathTest.paymentFlowWithAiServiceUnreachable:91 expected: <ACTION_PENDING> but was: <EXHAUSTED>` (+3);
+- UNKNOWN-only compliance block → `ComplianceEngineTest.testUndocumentedClassBlocked:127 expected: <true> but was: <false>` ×5.
+Review: running (fresh subagent). Next: U2.3.
