@@ -107,6 +107,24 @@ Tests run with their own `test` profile and a throwaway database per run; they n
 
 Analytics amounts come only from the strict minor-unit parser (positive integral paise with a supported currency). They are summed exactly; a campaign whose original amount cannot be resolved is counted as `amountUnknownCount` and never given a default amount. "Recovered" means recovered by MEND (`recovery_attribution = MEND`). Late captures of the original payment and RECOVERED campaigns without an attribution (recovered before V15, or by the SYNTHETIC mock provider) are reported separately. Details: Group 4 of [docs/audit/cleanup-report.md](docs/audit/cleanup-report.md).
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push and pull request. Each job only calls a script, so running the scripts
+locally reproduces the pipeline:
+
+```bash
+docker compose up -d postgres redis   # PostgreSQL on 5433, Redis on 6379
+scripts/ci/backend.sh                 # ./mvnw clean test (unit + integration; own throwaway database per run)
+scripts/ci/migrations.sh              # fresh empty database: Flyway migrate V1..latest, then validate
+scripts/ci/frontend.sh                # npm ci, lint (0 errors), jest, next build
+scripts/ci/ai-service.sh              # fresh virtualenv from requirements.txt, pytest
+```
+
+In CI the backend and migrations jobs get PostgreSQL and Redis service containers (`MEND_TEST_DB_SERVER_URL`,
+`REDIS_HOST`); no repository secrets are needed (the backend job generates a throwaway `JWT_SECRET`). Two security jobs
+need no build dependencies: `secret-scan` (gitleaks over the full history, with `.gitleaks.toml` allowlisting only the
+literal test placeholders) and `dependency-review` (pull requests only; fails on high-severity advisories).
+
 ## Project Structure
 
 - `frontend/`: merchant console and route tests.
