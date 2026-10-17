@@ -164,3 +164,17 @@ Revert proofs:
 - 0.50 confidence gate back → `AiOffHotPathTest.paymentFlowWithAiServiceUnreachable:91 expected: <ACTION_PENDING> but was: <EXHAUSTED>` (+3);
 - UNKNOWN-only compliance block → `ComplianceEngineTest.testUndocumentedClassBlocked:127 expected: <true> but was: <false>` ×5.
 Review: running (fresh subagent). Next: U2.3.
+
+#### PAUSED (usage limit) — resume point
+- Branch `m3/honest-intelligence` is green at `31a1949` + progress commits (backend 887/0/0/0; frontend unchanged since Phase 1).
+- U2.2 review subagent was still running when paused; its findings are NOT yet triaged — re-run the U2.2 review
+  (diff `faf859a..31a1949`) before continuing.
+- U2.3 started, uncommitted, in `git stash` "u23-frontend-wip": new `FailureClassificationPanel` (+3 tests) replacing
+  `AgentDecisionStack` (deleted, 1 test). Remaining U2.3 work: frontend type/page cleanup (campaign detail AI tab and
+  confidence, payment agent decisions, StartRecoveryModal agent decisions, actions agent fields, dashboard "% Conf",
+  campaigns "AI Confidence" column, analytics AI confidence, landing "six agents" copy); settings bug: the escalation slider
+  sends 0.1–1.0 to an integer 1–10 field (no rule uses it) → integer input with an honest label + test; backend deletion of
+  agent/*, Agent* controllers, dto/ai, AiClassificationClient/FastApi client, agent fields on Review/Payment/StartRecovery
+  DTOs, analytics aiConfidenceMetrics, demo/dev-seed fake values; ClassificationResultDto.taxonomyVersion; rewrite
+  AiAgentIntegrationTest, AiClassificationClientTest, CrossTenantReadIsolation agent cases without lowering the count.
+- Then U2.4–U2.7 as planned in `docs/m3/M3-plan.md`. Phase 2 is not merged; no `m3-complete` tag.
