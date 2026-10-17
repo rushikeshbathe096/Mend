@@ -123,7 +123,10 @@ scripts/ci/ai-service.sh              # fresh virtualenv from requirements.txt, 
 In CI the backend and migrations jobs get PostgreSQL and Redis service containers (`MEND_TEST_DB_SERVER_URL`,
 `REDIS_HOST`); no repository secrets are needed (the backend job generates a throwaway `JWT_SECRET`). Two security jobs
 need no build dependencies: `secret-scan` (gitleaks over the full history, with `.gitleaks.toml` allowlisting only the
-literal test placeholders) and `dependency-review` (pull requests only; fails on high-severity advisories).
+literal test placeholders) and `dependency-review` (pull requests only; fails on high-severity advisories; needs the
+repository's dependency graph enabled, which is the default for public repositories, and GitHub Advanced Security for
+private ones). The first real GitHub run happens when the repository is pushed; until then only the local script runs
+are evidence.
 
 ## Project Structure
 

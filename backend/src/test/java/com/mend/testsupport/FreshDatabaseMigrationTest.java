@@ -2,6 +2,7 @@ package com.mend.testsupport;
 
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class FreshDatabaseMigrationTest {
 
-    private static final Pattern VERSION = Pattern.compile("^V(\\d+)__.+\\.sql$");
+    private static final Pattern VERSION = Pattern.compile("^V([0-9._]+)__.+\\.sql$");
 
     @Test
     @DisplayName("A fresh database migrates V1..latest and validates")
@@ -49,15 +50,15 @@ class FreshDatabaseMigrationTest {
                         .locations("classpath:db/migration")
                         .load();
 
+                assertNull(flyway.info().current(), "the database must be empty before the run");
                 MigrateResult result = flyway.migrate();
                 flyway.validate();
 
-                int latestFile = latestMigrationFileVersion();
                 MigrationInfo current = flyway.info().current();
                 assertNotNull(current, "nothing was applied");
-                assertEquals(String.valueOf(latestFile), current.getVersion().getVersion(), "migrated to the highest V<n> file");
-                assertEquals(latestFile, result.migrationsExecuted, "every migration ran on the empty database");
-                assertEquals(0, flyway.info().pending().length);
+                assertEquals(0, flyway.info().pending().length, "no migration left pending");
+                assertEquals(flyway.info().applied().length, result.migrationsExecuted, "every applied migration ran in this run");
+                assertEquals(latestMigrationFileVersion(), current.getVersion(), "migrated to the highest V<version> file");
                 System.out.println("[migrations] fresh database " + database + ": applied " + result.migrationsExecuted
                         + " migrations, current version " + current.getVersion() + ", validate OK");
             } finally {
@@ -66,12 +67,12 @@ class FreshDatabaseMigrationTest {
         }
     }
 
-    private static int latestMigrationFileVersion() throws IOException {
+    private static MigrationVersion latestMigrationFileVersion() throws IOException {
         try (Stream<Path> files = Files.list(Path.of("src/main/resources/db/migration"))) {
             return files.map(p -> VERSION.matcher(p.getFileName().toString()))
                     .filter(Matcher::matches)
-                    .mapToInt(m -> Integer.parseInt(m.group(1)))
-                    .max()
+                    .map(m -> MigrationVersion.fromVersion(m.group(1).replace('_', '.')))
+                    .max(MigrationVersion::compareTo)
                     .orElseThrow();
         }
     }
