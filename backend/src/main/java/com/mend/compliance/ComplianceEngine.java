@@ -1,6 +1,7 @@
 package com.mend.compliance;
 
 import com.mend.domain.entity.Campaign;
+import com.mend.taxonomy.PaymentFailureClass;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.MerchantConfig;
 import com.mend.domain.enums.CampaignStatus;
@@ -9,10 +10,8 @@ import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.enums.RecoveryStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -21,14 +20,8 @@ public class ComplianceEngine {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceEngine.class);
 
-    public static final String POLICY_VERSION = "v1.0";
-
-    private final BigDecimal minConfidenceThreshold;
-
-    public ComplianceEngine(
-            @Value("${mend.compliance.min-confidence:0.80}") BigDecimal minConfidenceThreshold) {
-        this.minConfidenceThreshold = minConfidenceThreshold;
-    }
+    /** v2.0 (M3 U2.2): classification rule by taxonomy class; no confidence rule (ADR-003 §4). */
+    public static final String POLICY_VERSION = "v2.0";
 
     public ComplianceDecision evaluate(ComplianceContext context) {
         // Rule 1: Fail Closed & Missing Context (Task 3.7 & Task 11)
@@ -124,26 +117,17 @@ public class ComplianceEngine {
             );
         }
 
-        // Rule 5: Failure Classification & AI Confidence Rules (Task 3.5 & Task 3.6)
+        // Rule 5 (M3 U2.2, ADR-003 §4): only a documented taxonomy class can be authorized. UNCLASSIFIED, a missing class
+        // and any pre-M3 (AI-era) class are blocked. This replaces both the UNKNOWN block and the confidence block: a failure
+        // without provider evidence is still never authorized (invariant 7), and no confidence is consulted.
         String failureClassStr = classification != null ? classification.getFailureClass() : campaign.getFailureClass();
-        if (failureClassStr != null && failureClassStr.equalsIgnoreCase("UNKNOWN")) {
-            log.info("Compliance evaluation blocked for campaign '{}': failure class is UNKNOWN", campaignId);
+        if (!PaymentFailureClass.isRecoverable(failureClassStr)) {
+            log.info("Compliance evaluation blocked for campaign '{}': failure class '{}' has no documented mapping",
+                    campaignId, failureClassStr);
             return createBlockedDecision(
                     campaignId, merchantId, recoveryDecisionId, strategy,
                     ComplianceReason.UNKNOWN_CLASSIFICATION,
-                    "Unknown failure classification cannot be authorized for recovery"
-            );
-        }
-
-        BigDecimal confidence = classification != null ? classification.getConfidence() : campaign.getConfidence();
-        if (confidence == null || confidence.compareTo(minConfidenceThreshold) < 0) {
-            log.info("Compliance evaluation blocked for campaign '{}': confidence ({}) below min threshold ({})",
-                    campaignId, confidence, minConfidenceThreshold);
-            return createBlockedDecision(
-                    campaignId, merchantId, recoveryDecisionId, strategy,
-                    ComplianceReason.LOW_CONFIDENCE,
-                    "Classification confidence (" + (confidence != null ? confidence : "null") +
-                            ") is below minimum threshold (" + minConfidenceThreshold + ")"
+                    "Failure class '" + failureClassStr + "' has no documented mapping and cannot be authorized for recovery"
             );
         }
 

@@ -172,6 +172,8 @@ public class RazorpayTestModeEndToEndIntegrationTest {
                         "status": "failed",
                         "error_code": "BAD_REQUEST_ERROR",
                         "error_description": "insufficient funds in account",
+                        "error_source": "customer",
+                        "error_reason": "insufficient_funds",
                         "notes": {
                           "merchant_id": "%s"
                         }
@@ -191,19 +193,10 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         assertThat(dbEvent).isNotNull();
         assertThat(dbEvent.getEventType()).isEqualTo("payment.failed");
 
-        // Step B: AI Failure Classification
-        when(aiClassificationClient.classify(any(ClassificationRequestDto.class))).thenReturn(
-                new ClassificationResponseDto(
-                        FailureClass.INSUFFICIENT_FUNDS,
-                        new BigDecimal("0.95"),
-                        RecommendedAction.RETRY_LATER,
-                        "Diagnosed insufficient funds on attempt 1",
-                        "v2.0-langgraph",
-                        Map.of("detected_pattern", "INSUFFICIENT_FUNDS", "attempt_count", 0)
-                )
-        );
-
-        ClassificationResult classification = classificationService.classifyAndPersist(dbEvent, "BAD_REQUEST_ERROR", "insufficient funds in account");
+        // Step B: Deterministic failure classification (M3 U2.2 behaviour change: was a mocked AI classification; the
+        // fixture now carries Razorpay's documented error_reason / error_source, see ADR-003)
+        ClassificationResult classification = classificationService.classifyAndPersist(dbEvent,
+                com.mend.taxonomy.ProviderFailure.of("BAD_REQUEST_ERROR", "insufficient_funds", "customer"));
         assertThat(classification).isNotNull();
         assertThat(classification.getFailureClass()).isEqualTo("INSUFFICIENT_FUNDS");
 
@@ -213,36 +206,13 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         assertThat(campaign.getCurrentState()).isEqualTo(CampaignStatus.ACTION_PENDING);
         assertThat(campaign.getMerchantId()).isEqualTo(testMerchant.getId());
 
-        // Step D: Agent Orchestration (Attempt 1)
-        when(aiClassificationClient.orchestrateAgent(any(AgentOrchestrationRequestDto.class))).thenReturn(
-                new AgentOrchestrationResponseDto(
-                        "trace_attempt_1",
-                        testMerchant.getId().toString(),
-                        campaign.getId().toString(),
-                        paymentId,
-                        "RETRY_PAYMENT",
-                        new BigDecimal("0.95"),
-                        "LOW",
-                        "Attempt 1: Recommend RETRY_PAYMENT after exponential backoff.",
-                        List.of("INSUFFICIENT_FUNDS_PATTERN", "FIRST_FAILURE_ATTEMPT"),
-                        false,
-                        "COMPLIANCE_ALLOWED",
-                        "EXECUTE",
-                        null,
-                        1,
-                        false
-                )
-        );
-
+        // Step D: Deterministic orchestration (attempt 1): INSUFFICIENT_FUNDS at attempt 0 -> RETRY_LATER -> RETRY_PAYMENT
         ActionIntent actionIntent = recoveryOrchestratorService.orchestrateRecovery(testMerchant.getId(), campaign.getId());
         assertThat(actionIntent).isNotNull();
         assertThat(actionIntent.getActionType()).isEqualTo(ActionType.RETRY_PAYMENT.name());
 
-        // Verify Agent Decision Persistence in DB
-        List<AgentDecisionRecord> decisionRecords = agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId());
-        assertThat(decisionRecords).isNotEmpty();
-        assertThat(decisionRecords.get(0).getSelectedAction()).contains("RETRY_PAYMENT");
-        assertThat(decisionRecords.get(0).getExecutionStatus()).isEqualTo("AUTHORIZED");
+        // M3 U2.2 behaviour change (ADR-003): no agent decision is made or recorded (was: an AUTHORIZED agent record)
+        assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
 
         // Step E: Scheduler Execution
         actionScheduler.pollAndExecuteDueActions();
@@ -280,35 +250,14 @@ public class RazorpayTestModeEndToEndIntegrationTest {
                 null
         );
 
-        // Step H: Agent Re-Evaluation (Attempt 2 - Dynamic Decision Shift)
-        when(aiClassificationClient.orchestrateAgent(any(AgentOrchestrationRequestDto.class))).thenReturn(
-                new AgentOrchestrationResponseDto(
-                        "trace_attempt_2",
-                        testMerchant.getId().toString(),
-                        campaign.getId().toString(),
-                        paymentId,
-                        "REQUEST_CUSTOMER_ACTION",
-                        new BigDecimal("0.92"),
-                        "LOW",
-                        "Attempt 2: Multiple insufficient balance failures detected. Shifting strategy from immediate retry to customer email dunning.",
-                        List.of("PREVIOUS_RETRY_FAILED", "MULTIPLE_INSUFFICIENT_FUNDS"),
-                        false,
-                        "COMPLIANCE_ALLOWED",
-                        "EXECUTE",
-                        null,
-                        2,
-                        false
-                )
-        );
-
+        // Step H: Deterministic re-evaluation (attempt 2): INSUFFICIENT_FUNDS at attempt 2 -> CUSTOMER_ACTION_REQUIRED
         ActionIntent actionIntent2 = recoveryOrchestratorService.orchestrateRecovery(testMerchant.getId(), campaign.getId());
         assertThat(actionIntent2).isNotNull();
         assertThat(actionIntent2.getActionType()).isEqualTo(ActionType.REQUEST_CUSTOMER_ACTION.name());
 
-        // Verify Decision #2 in DB differs from Decision #1
-        List<AgentDecisionRecord> updatedRecords = agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId());
-        assertThat(updatedRecords.size()).isGreaterThanOrEqualTo(2);
-        assertThat(updatedRecords.get(0).getSelectedAction()).contains("REQUEST_CUSTOMER_ACTION");
+        // M3 U2.2 behaviour change: the shift RETRY_PAYMENT -> REQUEST_CUSTOMER_ACTION comes from the deterministic strategy
+        // table (attempt count), not from an agent; still no agent record (was: two agent records)
+        assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
 
         // Step I: Customer Pays -> Final Terminal State Transition (RECOVERED)
         campaignLifecycleService.transitionState(
@@ -341,34 +290,16 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         campaign.setConfidence(new BigDecimal("0.80"));
         campaign = campaignRepository.save(campaign);
 
-        // Mock low confidence AI response to trigger compliance/human review block
-        when(aiClassificationClient.orchestrateAgent(any(AgentOrchestrationRequestDto.class))).thenReturn(
-                new AgentOrchestrationResponseDto(
-                        "trace_compliance_block",
-                        testMerchant.getId().toString(),
-                        campaign.getId().toString(),
-                        "pay_compliance_blocked",
-                        "REVIEW_REQUIRED",
-                        new BigDecimal("0.50"),
-                        "HIGH",
-                        "Low confidence. Require manual operational review.",
-                        List.of("HIGH_RISK_BANK_DECLINE"),
-                        true,
-                        "HUMAN_REVIEW_REQUIRED",
-                        "HUMAN_APPROVAL",
-                        null,
-                        1,
-                        false
-                )
-        );
-
+        // M3 U2.2 behaviour change (ADR-003 §4): was a mocked low-confidence agent asking for review. Now the block is
+        // deterministic: BANK_DECLINED is a pre-M3 (AI-era) class with no documented mapping, so compliance fails closed.
         ActionIntent intent = recoveryOrchestratorService.orchestrateRecovery(testMerchant.getId(), campaign.getId());
-        // Intent should be null because human approval / review required stops automatic execution
         assertThat(intent).isNull();
-
-        List<AgentDecisionRecord> records = agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId());
-        assertThat(records).isNotEmpty();
-        assertThat(records.get(0).getExecutionStatus()).isEqualTo("REVIEW_REQUIRED");
+        assertThat(complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId()))
+                .first().satisfies(d -> {
+                    assertThat(d.getStatus()).isEqualTo(ComplianceStatus.COMPLIANCE_BLOCKED);
+                    assertThat(d.getReason()).isEqualTo(ComplianceReason.STRATEGY_NOT_SUPPORTED);   // legacy class -> MANUAL_REVIEW
+                });
+        assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
 
         // Verify campaign remains in safe state
         Campaign safeCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();

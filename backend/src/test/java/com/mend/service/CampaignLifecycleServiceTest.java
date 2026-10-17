@@ -117,7 +117,8 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
         assertNotNull(campaign.getId());
         assertEquals(CampaignStatus.ACTION_PENDING, campaign.getCurrentState());
         assertEquals("INSUFFICIENT_FUNDS", campaign.getFailureClass());
-        assertEquals(new BigDecimal("0.95"), campaign.getConfidence());
+        // M3 behaviour change (ADR-003): classification confidence is no longer copied onto the campaign (was 0.95)
+        assertNull(campaign.getConfidence());
 
         // Verify Audit Logs
         List<AuditLog> auditLogs = auditService.getCampaignAuditLogs(campaign.getId());

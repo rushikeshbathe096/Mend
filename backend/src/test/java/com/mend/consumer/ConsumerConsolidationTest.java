@@ -201,10 +201,10 @@ public class ConsumerConsolidationTest {
     }
 
     @Test
-    @DisplayName("STEP 9 Fallback Test: AI Service Failure gracefully persists UNKNOWN classification result and ACKs stream record")
+    @DisplayName("STEP 9: an undocumented error_reason persists UNCLASSIFIED (no AI call, no fabricated fallback) and ACKs the stream record")
     void testAiServiceUnavailableFallbackAndAck() throws Exception {
-        when(aiClassificationClient.classify(any(ClassificationRequestDto.class)))
-                .thenThrow(new RuntimeException("Simulated AI connection timeout"));
+        // M3 U2.2 behaviour change (ADR-003): there is no AI call to fail; the unmapped reason "payment_gateway_down" is
+        // UNCLASSIFIED (was: AI timeout -> fabricated UNKNOWN / 0.30 / REVIEW_REQUIRED / v1.0.0-fallback)
 
         String externalEventId = "evt_fallback_" + UUID.randomUUID().toString().substring(0, 8);
         ownEventIds.add(externalEventId);
@@ -255,10 +255,11 @@ public class ConsumerConsolidationTest {
         assertThat(resultOpt).isPresent();
         ClassificationResult fallbackResult = resultOpt.get();
 
-        assertThat(fallbackResult.getFailureClass()).isEqualTo("UNKNOWN");
-        assertThat(fallbackResult.getConfidence()).isEqualByComparingTo(new BigDecimal("0.30"));
-        assertThat(fallbackResult.getStrategyRecommendation()).isEqualTo("REVIEW_REQUIRED");
-        assertThat(fallbackResult.getModelVersion()).isEqualTo("v1.0.0-fallback");
+        assertThat(fallbackResult.getFailureClass()).isEqualTo("UNCLASSIFIED");
+        assertThat(fallbackResult.getConfidence()).isNull();
+        assertThat(fallbackResult.getStrategyRecommendation()).isNull();
+        assertThat(fallbackResult.getModelVersion()).isNull();
+        org.mockito.Mockito.verifyNoInteractions(aiClassificationClient);
     }
 
     @Test

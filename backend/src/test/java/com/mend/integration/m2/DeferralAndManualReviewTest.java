@@ -49,6 +49,7 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
     @Autowired private ActionIntentRepository intents;
     @Autowired private CampaignRepository campaigns;
     @Autowired private MerchantRepository merchants;
+    @Autowired private MerchantConfigRepository merchantConfigs;
     @Autowired private ComplianceDecisionRepository complianceDecisions;
     @Autowired private ClassificationResultRepository classifications;
     @Autowired private WebhookEventRepository webhooks;
@@ -233,9 +234,14 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, "pay_m2u9mr" + UUID.randomUUID().toString().substring(0, 8), null, null);
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "Classified", "SYSTEM", null);
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
-        // An unrecognised failure class with high confidence: the strategy engine recommends MANUAL_REVIEW.
-        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "SUSPECTED_DISPUTE",
-                new BigDecimal("0.95"), "MANUAL_REVIEW", "needs a human", "v1.0.0"));
+        // M3 behaviour change (ADR-003 §4): an unrecognised class is now UNCLASSIFIED and fails closed, so it can no longer
+        // reach approval. MANUAL_REVIEW comes from the merchant's enabled actions instead: INSUFFICIENT_FUNDS computes
+        // RETRY_LATER, which this merchant has not enabled (was: class "SUSPECTED_DISPUTE" with confidence 0.95).
+        MerchantConfig config = new MerchantConfig(UUID.randomUUID(), merchantId);
+        config.setEnabledRecoveryActions("CUSTOMER_ACTION_REQUIRED");
+        merchantConfigs.save(config);
+        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSUFFICIENT_FUNDS",
+                null, null, "Razorpay error_reason 'insufficient_funds'", null));
         assertEquals(RecoveryStrategy.MANUAL_REVIEW, recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId()).getStrategy());
 
         assertNull(actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId()));
@@ -286,8 +292,9 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
                     + "\",\"status\":\"failed\",\"amount\":49900,\"currency\":\"INR\"}}}}");
             webhooks.save(event);
         });
-        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "CARD_EXPIRED",
-                new BigDecimal("0.95"), "CUSTOMER_ACTION_REQUIRED", "customer update", "v1.0.0"));
+        // M3 behaviour change: the pre-M3 class CARD_EXPIRED fails closed; its taxonomy equivalent is INSTRUMENT_INVALID.
+        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSTRUMENT_INVALID",
+                null, null, "Razorpay error_reason 'card_expired'", null));
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
         ReviewQueue review = reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaign.getId(), ReviewQueueStatus.PENDING).orElseThrow();
 

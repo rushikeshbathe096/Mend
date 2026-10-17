@@ -122,7 +122,8 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         assertEquals(ComplianceStatus.COMPLIANCE_ALLOWED, complianceDecision.getStatus());
         assertEquals(ComplianceReason.ALLOWED, complianceDecision.getReason());
         assertEquals(RecoveryStrategy.RETRY_LATER, complianceDecision.getStrategy());
-        assertEquals("v1.0", complianceDecision.getPolicyVersion());
+        // M3 behaviour change (ADR-003 §4): compliance policy v2.0 (taxonomy-class rule, no confidence rule); was v1.0
+        assertEquals("v2.0", complianceDecision.getPolicyVersion());
 
         // 6. DB Verification
         List<ComplianceDecisionEntity> persistedDecisions = complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId());
@@ -135,7 +136,7 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("End-to-End Pipeline: Low Confidence Strategy -> Compliance Gate (Blocked)")
+    @DisplayName("End-to-End Pipeline: UNCLASSIFIED failure -> MANUAL_REVIEW strategy -> Compliance Gate (Blocked)")
     void testEndToEndComplianceBlockedPipeline() {
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), "EVT-COMP-2", "payment.failed");
         event.setMerchantId(merchantId);
@@ -145,11 +146,12 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "Classified", "SYSTEM", null);
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
 
-        // Low confidence classification (0.60 < 0.80)
+        // M3 behaviour change (ADR-003 §4): was a low-confidence (0.60 < 0.80) INSUFFICIENT_FUNDS row; confidence is no
+        // longer consulted, so the deterministic way to the same MANUAL_REVIEW block is an UNCLASSIFIED failure.
         ClassificationResult classification = new ClassificationResult(
                 UUID.randomUUID(), event.getId(), campaign.getId(),
-                "INSUFFICIENT_FUNDS", new BigDecimal("0.60"),
-                "SCHEDULE_RETRY", "Low confidence", "v1.0.0"
+                "UNCLASSIFIED", null,
+                null, "No documented Razorpay error_reason or error_source mapping: UNCLASSIFIED", null
         );
         classificationResultRepository.save(classification);
 

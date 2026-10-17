@@ -244,7 +244,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runHighRiskHumanReview(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("72000.00");
-        Setup setup = prepareCampaign(merchantId, "high_risk_review", "AUTHENTICATION_FAILED", "0.90",
+        Setup setup = prepareCampaign(merchantId, "high_risk_review", "AUTHENTICATION_FAILURE", "0.90",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
@@ -276,7 +276,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runCustomerAction(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("12999.00");
-        Setup setup = prepareCampaign(merchantId, "customer_action", "CARD_EXPIRED", "0.98",
+        Setup setup = prepareCampaign(merchantId, "customer_action", "INSTRUMENT_INVALID", "0.98",
                 "CUSTOMER_ACTION_REQUIRED", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "REQUEST_CUSTOMER_ACTION", "CUSTOMER_ACTION_REQUIRED",
@@ -312,7 +312,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runProviderAmbiguity(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("2999.00");
-        Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "NETWORK_TIMEOUT", "0.92",
+        Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "GATEWAY_ERROR", "0.92",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
@@ -388,7 +388,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runAgentFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("3499.00");
-        Setup setup = prepareCampaign(merchantId, "agent_failure", "UNKNOWN", "0.40", null, amount, response, steps, false);
+        Setup setup = prepareCampaign(merchantId, "agent_failure", "UNCLASSIFIED", "0.40", null, amount, response, steps, false);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "MANUAL_REVIEW", "FALLBACK_STRATEGY",
                 false, "AI/MCP execution unavailable; deterministic heuristic fallback applied. Low confidence (40%) and unknown failure class mean no automated action is safe.", "SAFE_FALLBACK");

@@ -23,7 +23,7 @@ public class RecoveryStrategyEngineTest {
 
     @BeforeEach
     void setUp() {
-        engine = new RecoveryStrategyEngine(new BigDecimal("0.80"));
+        engine = new RecoveryStrategyEngine();
         merchantId = UUID.randomUUID();
         campaignId = UUID.randomUUID();
     }
@@ -65,57 +65,85 @@ public class RecoveryStrategyEngineTest {
         assertTrue(decision.getReason().contains("insufficient funds"));
     }
 
-    @Test
-    @DisplayName("2. BANK_DECLINED -> RETRY_LATER for attempt 0, CUSTOMER_ACTION_REQUIRED for attempt 1+")
-    void testBankDeclinedRule() {
-        // Attempt 0
-        Campaign campaign0 = createCampaign(CampaignStatus.ELIGIBLE, 0, "BANK_DECLINED", new BigDecimal("0.85"));
-        RecoveryDecision decision0 = engine.evaluate(new RecoveryContext(campaign0, createClassification("BANK_DECLINED", new BigDecimal("0.85")), null));
-        assertEquals(RecoveryStrategy.RETRY_LATER, decision0.getStrategy());
+    // M3 behaviour change (ADR-003 §4): tests 2-6 were written against AI-era classes and the 0.80 confidence rule. Each is
+    // kept and now asserts the deterministic taxonomy class that replaced it; the AI-era class itself fails closed.
 
-        // Attempt 1
-        Campaign campaign1 = createCampaign(CampaignStatus.ELIGIBLE, 1, "BANK_DECLINED", new BigDecimal("0.85"));
-        RecoveryDecision decision1 = engine.evaluate(new RecoveryContext(campaign1, createClassification("BANK_DECLINED", new BigDecimal("0.85")), null));
-        assertEquals(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, decision1.getStrategy());
+    @Test
+    @DisplayName("2. BANK_TECHNICAL / GATEWAY_ERROR -> RETRY_IMMEDIATELY at attempt 0, RETRY_LATER at 1+ (was BANK_DECLINED; now MANUAL_REVIEW)")
+    void testBankDeclinedRule() {
+        for (String transientClass : new String[]{"BANK_TECHNICAL", "GATEWAY_ERROR"}) {
+            Campaign campaign0 = createCampaign(CampaignStatus.ELIGIBLE, 0, transientClass, null);
+            assertEquals(RecoveryStrategy.RETRY_IMMEDIATELY,
+                    engine.evaluate(new RecoveryContext(campaign0, createClassification(transientClass, null), null)).getStrategy());
+            Campaign campaign1 = createCampaign(CampaignStatus.ELIGIBLE, 1, transientClass, null);
+            assertEquals(RecoveryStrategy.RETRY_LATER,
+                    engine.evaluate(new RecoveryContext(campaign1, createClassification(transientClass, null), null)).getStrategy());
+        }
+        Campaign legacy = createCampaign(CampaignStatus.ELIGIBLE, 0, "BANK_DECLINED", new BigDecimal("0.85"));
+        assertEquals(RecoveryStrategy.MANUAL_REVIEW,
+                engine.evaluate(new RecoveryContext(legacy, createClassification("BANK_DECLINED", new BigDecimal("0.85")), null)).getStrategy());
     }
 
     @Test
-    @DisplayName("3. CARD_EXPIRED -> CUSTOMER_ACTION_REQUIRED")
+    @DisplayName("3. INSTRUMENT_INVALID -> CUSTOMER_ACTION_REQUIRED, HIGH (was CARD_EXPIRED)")
     void testCardExpiredRule() {
-        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "CARD_EXPIRED", new BigDecimal("0.95"));
-        RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification("CARD_EXPIRED", new BigDecimal("0.95")), null));
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "INSTRUMENT_INVALID", null);
+        RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification("INSTRUMENT_INVALID", null), null));
 
         assertEquals(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, decision.getStrategy());
         assertEquals("HIGH", decision.getPriority());
     }
 
     @Test
-    @DisplayName("4. AUTHENTICATION_FAILED -> CUSTOMER_ACTION_REQUIRED")
+    @DisplayName("4. AUTHENTICATION_FAILURE -> CUSTOMER_ACTION_REQUIRED (was AUTHENTICATION_FAILED)")
     void testAuthenticationFailedRule() {
-        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "AUTHENTICATION_FAILED", new BigDecimal("0.90"));
-        RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification("AUTHENTICATION_FAILED", new BigDecimal("0.90")), null));
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "AUTHENTICATION_FAILURE", null);
+        RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification("AUTHENTICATION_FAILURE", null), null));
 
         assertEquals(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, decision.getStrategy());
     }
 
     @Test
-    @DisplayName("5. UNKNOWN -> MANUAL_REVIEW")
+    @DisplayName("5. UNCLASSIFIED and legacy UNKNOWN -> MANUAL_REVIEW")
     void testUnknownRule() {
-        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "UNKNOWN", new BigDecimal("0.85"));
-        RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification("UNKNOWN", new BigDecimal("0.85")), null));
-
-        assertEquals(RecoveryStrategy.MANUAL_REVIEW, decision.getStrategy());
+        for (String c : new String[]{"UNCLASSIFIED", "UNKNOWN"}) {
+            Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, c, new BigDecimal("0.85"));
+            RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification(c, new BigDecimal("0.85")), null));
+            assertEquals(RecoveryStrategy.MANUAL_REVIEW, decision.getStrategy(), c);
+        }
     }
 
     @Test
-    @DisplayName("6. LOW AI confidence -> MANUAL_REVIEW")
+    @DisplayName("6. Confidence is never consulted (was: low AI confidence -> MANUAL_REVIEW); the decision records no confidence")
     void testLowConfidenceRule() {
-        // Confidence 0.60 is below min-confidence threshold 0.80
         Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "INSUFFICIENT_FUNDS", new BigDecimal("0.60"));
         RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification("INSUFFICIENT_FUNDS", new BigDecimal("0.60")), null));
 
-        assertEquals(RecoveryStrategy.MANUAL_REVIEW, decision.getStrategy());
-        assertTrue(decision.getReason().contains("below minimum threshold"));
+        assertEquals(RecoveryStrategy.RETRY_LATER, decision.getStrategy());
+        assertNull(decision.getConfidence(), "no confidence is copied into the strategy decision");
+        assertFalse(decision.getReason().contains("threshold"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0} @ attempt {1} -> {2}")
+    @org.junit.jupiter.params.provider.CsvSource({
+            "INSUFFICIENT_FUNDS, 0, RETRY_LATER",
+            "INSUFFICIENT_FUNDS, 1, RETRY_LATER",
+            "INSUFFICIENT_FUNDS, 2, CUSTOMER_ACTION_REQUIRED",
+            "LIMIT_EXCEEDED, 0, CUSTOMER_ACTION_REQUIRED",
+            "BANK_TECHNICAL, 0, RETRY_IMMEDIATELY",
+            "BANK_TECHNICAL, 1, RETRY_LATER",
+            "GATEWAY_ERROR, 0, RETRY_IMMEDIATELY",
+            "GATEWAY_ERROR, 1, RETRY_LATER",
+            "AUTHENTICATION_FAILURE, 0, CUSTOMER_ACTION_REQUIRED",
+            "CUSTOMER_DECLINED, 0, CUSTOMER_ACTION_REQUIRED",
+            "INSTRUMENT_INVALID, 0, CUSTOMER_ACTION_REQUIRED",
+            "MANDATE_INVALID, 0, CUSTOMER_ACTION_REQUIRED",
+            "UNCLASSIFIED, 0, MANUAL_REVIEW",
+    })
+    @DisplayName("ADR-003 §4 strategy table, one row per taxonomy class")
+    void strategyTablePerTaxonomyClass(String failureClass, int attempts, RecoveryStrategy expected) {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, attempts, failureClass, null);
+        assertEquals(expected, engine.evaluate(new RecoveryContext(campaign, createClassification(failureClass, null), null)).getStrategy());
     }
 
     @Test
