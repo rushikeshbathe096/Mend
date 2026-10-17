@@ -122,3 +122,22 @@ U2.0 review (fresh subagent; AGENTS.md + U2.0 spec + design pack; file:line spot
 - MINOR 9, 10, 11, 12, NIT 13 — FIXED in docs (transaction wording, extraction of code/reason/source, distinct enum
   name `PaymentFailureClass`, reply-task gaps, header).
 Next: commit, then U2.1 review.
+
+#### U2.1 deterministic failure taxonomy
+Plan: pure-Java `com.mend.taxonomy` table keyed by `error_reason` (docs-cited), source fallback only without a reason,
+test per documented reason written independently of the table, doc-derived fixture, purity guard. Not wired (U2.2).
+Commits: `314bf9e` taxonomy + tests, `563ccc3` (source fallback only without a reason; from the U2.0 review),
+`0014eed` U2.1 review fixes.
+Tests: `FailureTaxonomyTest` `Tests run: 53, Failures: 0`; `TaxonomyPurityTest` 1. Full suite after `0014eed`:
+`[INFO] Tests run: 867, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+Review (fresh subagent, fetched the Razorpay page itself: all mapped reasons exist):
+- FIXED MAJOR `authorisation_declined_by_psp` → unmapped (PSP declined, not the customer); FIXED MINOR
+  `payment_session_expired`, `payment_collect_request_expired` → unmapped (no actor in the docs). Table 40 → 37 reasons.
+- FIXED MINOR canonical-constructor normalisation; test gap (customer/business source never decides); purity test now walks
+  subpackages and flags fully qualified references; NIT asString; NIT single-URL citation explained in ADR-003.
+- ACCEPTED NIT wildcard static import (readability only). Out of scope noted: the doc-derived fixture's `_source` is a
+  mintlify mirror of razorpay.com; LIMIT_EXCEEDED→CUSTOMER_ACTION_REQUIRED is the pre-M3 rule (kept, ADR-003 §4).
+- Revert proofs: psp decline mapped again → `tableIsFullyTested:74 expected: <37> but was: <38>`,
+  `unmappedReasonIsUnclassified:83 expected: <UNCLASSIFIED> but was: <CUSTOMER_DECLINED>`; a qualified
+  `org.springframework` reference in the package → `TaxonomyPurityTest.onlyJavaImports:35` fails.
+Next: U2.2 (in progress: V19, ClassificationService on the taxonomy, eligibility, strategy).
