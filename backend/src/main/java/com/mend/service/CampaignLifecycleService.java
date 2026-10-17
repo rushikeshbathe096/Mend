@@ -5,6 +5,7 @@ import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.ClassificationResultRepository;
 import com.mend.domain.repository.MerchantRepository;
@@ -149,6 +150,49 @@ public class CampaignLifecycleService {
         );
 
         log.info("Transitioned campaignId='{}' [{} -> {}], reason='{}'", campaignId, previousState, targetState, reason);
+
+        return updated;
+    }
+
+    /**
+     * Bug sweep item 2: the campaign goes to RECOVERED and records who recovered it, in one save. This is the only way to
+     * use the pre-action → RECOVERED edges (CREATED / CLASSIFIED / ELIGIBLE / SCHEDULED), and those edges need
+     * {@link RecoveryAttribution#ORIGINAL_PAYMENT_LATE_CAPTURE}; {@link #transitionState} still rejects them.
+     */
+    @Transactional
+    public Campaign recover(
+            UUID merchantId,
+            UUID campaignId,
+            RecoveryAttribution attribution,
+            String reason,
+            String actorType,
+            UUID actorId) {
+
+        Campaign campaign = campaignRepository.findById(campaignId)
+                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
+
+        if (!campaign.getMerchantId().equals(merchantId)) {
+            throw new TenantAccessDeniedException("Campaign " + campaignId + " does not belong to merchant " + merchantId);
+        }
+
+        CampaignStatus previousState = campaign.getCurrentState();
+        campaignStateMachine.validateRecovery(previousState, attribution);
+
+        campaign.setCurrentState(CampaignStatus.RECOVERED);
+        campaign.setRecoveryAttribution(attribution);
+        Campaign updated = campaignRepository.saveAndFlush(campaign);
+
+        auditService.logStateTransition(
+                merchantId,
+                campaignId,
+                previousState,
+                CampaignStatus.RECOVERED,
+                actorType != null ? actorType : "SYSTEM",
+                actorId,
+                reason
+        );
+
+        log.info("Recovered campaignId='{}' [{} -> RECOVERED], attribution={}, reason='{}'", campaignId, previousState, attribution, reason);
 
         return updated;
     }

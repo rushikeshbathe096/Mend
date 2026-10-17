@@ -232,7 +232,7 @@ class CorrelationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("Late capture on a campaign before any action (ELIGIBLE): CANCELLED with attribution, never chased")
+    @DisplayName("Late capture on a campaign before any action (ELIGIBLE): RECOVERED with late-capture attribution, never chased")
     void lateCaptureBeforeAnyAction() {
         String payId = randomId("pay_U8e");
         Campaign campaign = webhookCampaign(payId, CampaignStatus.ELIGIBLE);
@@ -240,8 +240,28 @@ class CorrelationTest extends AbstractIntegrationTest {
         capturedOriginal(payId);
 
         Campaign after = reload(campaign);
-        assertEquals(CampaignStatus.CANCELLED, after.getCurrentState());
+        // Bug sweep behaviour change (item 2): the money is back, so the campaign is RECOVERED (was CANCELLED, an M2 deviation:
+        // the state machine had no pre-action -> RECOVERED edge). The attribution keeps it out of MEND's recoveries.
+        assertEquals(CampaignStatus.RECOVERED, after.getCurrentState());
         assertEquals(RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE, after.getRecoveryAttribution());
+    }
+
+    /** Bug sweep item 2 regression: every pre-action state ends RECOVERED (not CANCELLED) on a late capture of the original payment. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = CampaignStatus.class, names = {"CREATED", "CLASSIFIED", "ELIGIBLE", "SCHEDULED"})
+    @DisplayName("Late capture before any action, from each pre-action state: RECOVERED, ORIGINAL_PAYMENT_LATE_CAPTURE, audited")
+    void lateCaptureBeforeAnyActionFromEveryPreActionState(CampaignStatus preActionState) {
+        String payId = randomId("pay_BS2");
+        Campaign campaign = webhookCampaign(payId, preActionState);
+
+        capturedOriginal(payId);
+
+        Campaign after = reload(campaign);
+        assertEquals(CampaignStatus.RECOVERED, after.getCurrentState());
+        assertEquals(RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE, after.getRecoveryAttribution());
+        List<String> trail = auditTypes(campaign);
+        assertTrue(trail.contains("ORIGINAL_PAYMENT_LATE_CAPTURE"), trail.toString());
+        assertFalse(after.recoveredByMend(), "a late capture is never a MEND recovery");
     }
 
     @Test

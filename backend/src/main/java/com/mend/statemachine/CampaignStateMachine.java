@@ -1,6 +1,7 @@
 package com.mend.statemachine;
 
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.exception.InvalidStateTransitionException;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +14,14 @@ import java.util.Set;
 public class CampaignStateMachine {
 
     private final Map<CampaignStatus, Set<CampaignStatus>> allowedTransitions = new EnumMap<>(CampaignStatus.class);
+
+    /**
+     * Bug sweep item 2: pre-action states that may go to RECOVERED, but only when the original payment was captured late
+     * ({@link RecoveryAttribution#ORIGINAL_PAYMENT_LATE_CAPTURE}). Not part of {@link #isValidTransition}: a generic
+     * transition, or a MEND recovery, from these states is still invalid.
+     */
+    private static final Set<CampaignStatus> LATE_CAPTURE_ONLY_RECOVERED_FROM = EnumSet.of(
+            CampaignStatus.CREATED, CampaignStatus.CLASSIFIED, CampaignStatus.ELIGIBLE, CampaignStatus.SCHEDULED);
 
     public CampaignStateMachine() {
         // Define explicit state transition matrix
@@ -44,6 +53,23 @@ public class CampaignStateMachine {
         if (!isValidTransition(currentState, targetState)) {
             throw new InvalidStateTransitionException(
                     String.format("Invalid state transition from %s to %s", currentState, targetState)
+            );
+        }
+    }
+
+    /** May {@code currentState} go to RECOVERED with this attribution? A recovery always needs an attribution. */
+    public boolean isValidRecovery(CampaignStatus currentState, RecoveryAttribution attribution) {
+        if (attribution == null) {
+            return false;
+        }
+        return isValidTransition(currentState, CampaignStatus.RECOVERED)
+                || (attribution == RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE && LATE_CAPTURE_ONLY_RECOVERED_FROM.contains(currentState));
+    }
+
+    public void validateRecovery(CampaignStatus currentState, RecoveryAttribution attribution) {
+        if (!isValidRecovery(currentState, attribution)) {
+            throw new InvalidStateTransitionException(
+                    String.format("Invalid recovery from %s with attribution %s", currentState, attribution)
             );
         }
     }
