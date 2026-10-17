@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { MetricCard, formatCurrency } from '@/components/common/MetricCard';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { CardSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import {
   AnalyticsOverviewDto,
@@ -26,17 +28,9 @@ export default function AnalyticsPage() {
   const [strategyPerformance, setStrategyPerformance] = useState<AnalyticsStrategyPerformanceDto | null>(null);
   const [reviewSummary, setReviewSummary] = useState<ReviewQueueSummaryDto | null>(null);
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAnalytics = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchAnalytics } = useLoad(currentMerchantId, async (isCurrent) => {
     try {
       const [overviewData, recoveryData, funnelData, failureData, strategyData, reviewsData] = await Promise.all([
         api.get<AnalyticsOverviewDto>('/analytics/overview', { merchantId: currentMerchantId }),
@@ -47,22 +41,18 @@ export default function AnalyticsPage() {
         api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }).catch(() => null),
       ]);
 
+      if (!isCurrent()) return;
       setOverview(overviewData);
       setRecovery(recoveryData);
       setFunnel(funnelData);
       setFailureBreakdown(failureData);
       setStrategyPerformance(strategyData);
       setReviewSummary(reviewsData);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load recovery analytics telemetry.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load recovery analytics telemetry.'));
     }
-  }, [currentMerchantId]);
-
-  useEffect(() => {
-    fetchAnalytics();
-  }, [fetchAnalytics]);
+  });
 
   return (
     <ConsoleLayout>

@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Toast } from '@/components/common/Toast';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { MerchantConfigDto, UpdateMerchantConfigRequest } from '@/types';
 
@@ -26,7 +28,6 @@ const AVAILABLE_ACTIONS = [
 export default function MerchantSettingsPage() {
   const { currentMerchantId, currentMerchantName } = useAuth();
 
-  const [config, setConfig] = useState<MerchantConfigDto | null>(null);
   const [form, setForm] = useState<UpdateMerchantConfigRequest>({
     maxAttempts: 3,
     maxContactAttempts: 2,
@@ -36,22 +37,14 @@ export default function MerchantSettingsPage() {
     enabledRecoveryActions: ['PAYMENT_RETRY', 'CUSTOMER_NOTIFY'],
   });
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchSettings = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchSettings } = useLoad(currentMerchantId, async (isCurrent) => {
     try {
       const res = await api.get<MerchantConfigDto>('/merchants/config', { merchantId: currentMerchantId });
-      setConfig(res);
+      if (!isCurrent()) return;
       setForm({
         maxAttempts: res.maxAttempts ?? 3,
         maxContactAttempts: res.maxContactAttempts ?? 2,
@@ -60,16 +53,11 @@ export default function MerchantSettingsPage() {
         escalationThreshold: res.escalationThreshold ?? 0.7,
         enabledRecoveryActions: res.enabledRecoveryActions || ['PAYMENT_RETRY', 'CUSTOMER_NOTIFY'],
       });
-    } catch (err: any) {
-      setError(err.message || 'Failed to load merchant configuration settings.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load merchant configuration settings.'));
     }
-  }, [currentMerchantId]);
-
-  useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+  });
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,11 +77,10 @@ export default function MerchantSettingsPage() {
     }
 
     try {
-      const updated = await api.put<MerchantConfigDto>('/merchants/config', form, { merchantId: currentMerchantId });
-      setConfig(updated);
+      await api.put<MerchantConfigDto>('/merchants/config', form, { merchantId: currentMerchantId });
       setToastMessage('Merchant recovery configuration saved successfully!');
-    } catch (err: any) {
-      setError(err.message || 'Failed to update merchant configuration.');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to update merchant configuration.'));
     } finally {
       setSaving(false);
     }

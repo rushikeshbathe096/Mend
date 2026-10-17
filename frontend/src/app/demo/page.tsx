@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { CardSkeleton } from '@/components/common/Skeleton';
 import { api, ApiError } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { DemoScenarioDto, DemoTriggerResponse } from '@/types';
 
@@ -32,7 +34,6 @@ export default function DemoEnginePage() {
   const { currentMerchantId } = useAuth();
 
   const [scenarios, setScenarios] = useState<DemoScenarioDto[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The backend registers /api/v1/demo only when mend.demo.enabled=true (dev profile); otherwise it answers 404.
   const [demoDisabled, setDemoDisabled] = useState(false);
@@ -41,31 +42,22 @@ export default function DemoEnginePage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [result, setResult] = useState<DemoTriggerResponse | null>(null);
 
-  const fetchScenarios = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setDemoDisabled(false);
+  const { loading, reload: fetchScenarios } = useLoad(currentMerchantId, async (isCurrent) => {
     try {
       const data = await api.get<DemoScenarioDto[]>('/demo/scenarios', { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setScenarios(data || []);
-    } catch (err: any) {
+      setDemoDisabled(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.status === 404) {
         setDemoDisabled(true);
       } else {
-        setError(err.message || 'Failed to load the demo scenario catalog.');
+        setError(errorMessage(err, 'Failed to load the demo scenario catalog.'));
       }
-    } finally {
-      setLoading(false);
     }
-  }, [currentMerchantId]);
-
-  useEffect(() => {
-    fetchScenarios();
-  }, [fetchScenarios]);
+  });
 
   const runScenario = async (scenarioId: string) => {
     setRunningScenario(scenarioId);
@@ -74,7 +66,7 @@ export default function DemoEnginePage() {
     try {
       const res = await api.post<DemoTriggerResponse>('/demo/trigger-scenario', { scenario: scenarioId }, { merchantId: currentMerchantId });
       setResult(res);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setRunError(err.message || 'The demo scenario failed to run.');
       } else {

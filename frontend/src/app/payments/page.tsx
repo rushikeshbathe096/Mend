@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
@@ -9,6 +9,8 @@ import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton } from '@/components/common/Skeleton';
 import { formatCurrency } from '@/components/common/MetricCard';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { PaymentSummaryDto, PageResponse, AnalyticsRecoveryDto } from '@/types';
 
@@ -53,30 +55,21 @@ export default function PaymentsPage() {
   const [activeSearch, setActiveSearch] = useState('');
   const [failureClassOptions, setFailureClassOptions] = useState<string[]>(COMMON_FAILURE_CLASSES);
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchFailureClasses = useCallback(async () => {
-    if (isAuthLoading || !currentMerchantId) return;
+  useLoad(isAuthLoading || !currentMerchantId ? null : currentMerchantId, async (isCurrent) => {
     try {
       const recovery = await api.get<AnalyticsRecoveryDto>('/analytics/recovery', { merchantId: currentMerchantId });
       const keys = Object.keys(recovery.failureClassBreakdown || {}).filter((k) => k && k !== 'UNKNOWN');
-      if (keys.length > 0) {
+      if (isCurrent() && keys.length > 0) {
         setFailureClassOptions(Array.from(new Set([...keys, ...COMMON_FAILURE_CLASSES])));
       }
     } catch {
       // Failure-class options remain at the common defaults when analytics are unavailable
     }
-  }, [currentMerchantId, isAuthLoading]);
+  });
 
-  const fetchPayments = useCallback(async () => {
-    if (isAuthLoading || !currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchPayments } = useLoad(isAuthLoading || !currentMerchantId ? null : `${currentMerchantId}|${page}|${pageSize}|${selectedStatus}|${selectedFailureClass}|${activeSearch}`, async (isCurrent) => {
     try {
       let query = `/payments?page=${page}&size=${pageSize}`;
       if (selectedStatus !== 'ALL') {
@@ -90,23 +83,15 @@ export default function PaymentsPage() {
       }
 
       const res = await api.get<PageResponse<PaymentSummaryDto>>(query, { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setPayments(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load payments from the backend.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load payments from the backend.'));
     }
-  }, [currentMerchantId, isAuthLoading, page, pageSize, selectedStatus, selectedFailureClass, activeSearch]);
-
-  useEffect(() => {
-    fetchPayments();
-  }, [fetchPayments]);
-
-  useEffect(() => {
-    fetchFailureClasses();
-  }, [fetchFailureClasses]);
+  });
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();

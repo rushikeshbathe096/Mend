@@ -114,7 +114,7 @@ export interface ClassificationResultDto {
   confidence: number;
   strategyRecommendation?: string;
   reasoning?: string;
-  evidence?: Record<string, any>;
+  evidence?: Record<string, unknown>;
   modelVersion?: string;
   createdAt: string;
 }
@@ -187,8 +187,8 @@ export interface AuditLogDto {
   actorType?: string;
   actorId?: string;
   reason?: string;
-  evidence?: Record<string, any>;
-  metadata?: Record<string, any>;
+  evidence?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -426,7 +426,7 @@ export interface OperationalHealthDto {
   complianceBlocks?: number;
   activeCampaigns?: number;
   message?: string;
-  components?: Record<string, any>;
+  components?: Record<string, unknown>;
 }
 
 export interface StartRecoveryRequest {

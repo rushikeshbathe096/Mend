@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
@@ -9,6 +9,8 @@ import { Pagination } from '@/components/common/Pagination';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { CampaignDto, PageResponse } from '@/types';
 
@@ -60,17 +62,9 @@ export default function CampaignsPage() {
   const [selectedFailureClass, setSelectedFailureClass] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchCampaigns = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchCampaigns } = useLoad(!currentMerchantId ? null : `${currentMerchantId}|${page}|${pageSize}|${selectedState}`, async (isCurrent) => {
     try {
       let query = `/campaigns?page=${page}&size=${pageSize}&sortBy=createdAt&sortOrder=desc`;
       if (selectedState !== 'ALL') {
@@ -78,19 +72,15 @@ export default function CampaignsPage() {
       }
 
       const res = await api.get<PageResponse<CampaignDto>>(query, { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setCampaigns(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load campaigns from backend.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load campaigns from backend.'));
     }
-  }, [currentMerchantId, page, pageSize, selectedState]);
-
-  useEffect(() => {
-    fetchCampaigns();
-  }, [fetchCampaigns]);
+  });
 
   const resetCreateForm = () => {
     setCreatePaymentId('');
@@ -127,8 +117,8 @@ export default function CampaignsPage() {
       setCreateOpen(false);
       setPage(0);
       fetchCampaigns();
-    } catch (err: any) {
-      setCreateError(err.message || 'Campaign creation failed on the backend.');
+    } catch (err: unknown) {
+      setCreateError(errorMessage(err, 'Campaign creation failed on the backend.'));
     } finally {
       setCreateLoading(false);
     }

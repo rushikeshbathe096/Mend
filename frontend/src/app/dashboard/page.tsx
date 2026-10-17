@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
@@ -9,6 +9,7 @@ import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton, CardSkeleton } from '@/components/common/Skeleton';
 import { StartRecoveryModal } from '@/components/recovery/StartRecoveryModal';
 import { api } from '@/lib/api';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { AnalyticsOverviewDto, CampaignDto, ActionIntentDto, PageResponse, ReviewQueueSummaryDto, AnalyticsFunnelDto } from '@/types';
 
@@ -22,22 +23,9 @@ export default function DashboardPage() {
   const [funnel, setFunnel] = useState<AnalyticsFunnelDto | null>(null);
 
   const [isStartRecoveryOpen, setIsStartRecoveryOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  const fetchDashboardData = useCallback(async () => {
-    if (isAuthLoading) {
-      return;
-    }
-    if (!currentMerchantId) {
-      setLoading(false);
-      setError('No merchant account selected.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchDashboardData } = useLoad(isAuthLoading || !currentMerchantId ? null : currentMerchantId, async (isCurrent) => {
     const [overviewRes, campaignsRes, actionsRes, reviewsRes, funnelRes] = await Promise.allSettled([
       api.get<AnalyticsOverviewDto>('/analytics/overview', { merchantId: currentMerchantId }),
       api.get<PageResponse<CampaignDto>>('/campaigns?page=0&size=5&sortBy=createdAt&sortOrder=desc', { merchantId: currentMerchantId }),
@@ -45,6 +33,7 @@ export default function DashboardPage() {
       api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }),
       api.get<AnalyticsFunnelDto>('/analytics/funnel', { merchantId: currentMerchantId }),
     ]);
+    if (!isCurrent()) return;
 
     let primaryError: string | null = null;
 
@@ -78,16 +67,9 @@ export default function DashboardPage() {
       console.warn('Failed to load funnel analytics:', funnelRes.reason);
     }
 
-    if (primaryError) {
-      setError(primaryError);
-    }
-
-    setLoading(false);
-  }, [currentMerchantId, isAuthLoading]);
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, [fetchDashboardData]);
+    setFetchError(primaryError);
+  });
+  const error = !isAuthLoading && !currentMerchantId ? 'No merchant account selected.' : fetchError;
 
   const isInitialLoading = loading || isAuthLoading;
 

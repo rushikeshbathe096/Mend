@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
 import { Modal } from '@/components/common/Modal';
@@ -8,6 +8,8 @@ import { Pagination } from '@/components/common/Pagination';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { WebhookEventDetailDto, PageResponse } from '@/types';
 import { WEBHOOK_EVENT_STATUSES } from '@/lib/webhookStatus';
@@ -27,17 +29,9 @@ export default function WebhooksPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedWebhook, setSelectedWebhook] = useState<WebhookEventDetailDto | null>(null);
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchWebhooks = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchWebhooks } = useLoad(!currentMerchantId ? null : `${currentMerchantId}|${page}|${pageSize}|${selectedStatus}`, async (isCurrent) => {
     try {
       let query = `/webhooks?page=${page}&size=${pageSize}`;
       if (selectedStatus !== 'ALL') {
@@ -45,19 +39,15 @@ export default function WebhooksPage() {
       }
 
       const res = await api.get<PageResponse<WebhookEventDetailDto>>(query, { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setWebhooks(res.content || []);
       setTotalPages(res.totalPages || 1);
       setTotalElements(res.totalElements || 0);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load webhook event log from backend.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load webhook event log from backend.'));
     }
-  }, [currentMerchantId, page, pageSize, selectedStatus]);
-
-  useEffect(() => {
-    fetchWebhooks();
-  }, [fetchWebhooks]);
+  });
 
   const filteredWebhooks = webhooks.filter((w) => {
     return (

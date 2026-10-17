@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { Modal } from '@/components/common/Modal';
 import { Badge } from '@/components/common/Badge';
 import { formatCurrency } from '@/components/common/MetricCard';
 import { TableSkeleton } from '@/components/common/Skeleton';
 import { ErrorAlert } from '@/components/common/Feedback';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -24,7 +26,13 @@ interface StartRecoveryModalProps {
 
 type ModalStep = 'select' | 'review' | 'orchestrating' | 'result';
 
-export function StartRecoveryModal({ isOpen, onClose, onRecoveryComplete }: StartRecoveryModalProps) {
+/** Renders a fresh body for every opening, so step, selection and result start over each time it opens. */
+export function StartRecoveryModal(props: StartRecoveryModalProps) {
+  if (!props.isOpen) return null;
+  return <StartRecoveryModalBody {...props} />;
+}
+
+function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRecoveryModalProps) {
   const { currentMerchantId, isLoading: isAuthLoading } = useAuth();
 
   const [step, setStep] = useState<ModalStep>('select');
@@ -33,7 +41,6 @@ export function StartRecoveryModal({ isOpen, onClose, onRecoveryComplete }: Star
   const [payments, setPayments] = useState<PaymentSummaryDto[]>([]);
   const [selectedPayment, setSelectedPayment] = useState<PaymentSummaryDto | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loadingPayments, setLoadingPayments] = useState(true);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
 
   // Step 3 & 4: Orchestration & Result state
@@ -41,31 +48,19 @@ export function StartRecoveryModal({ isOpen, onClose, onRecoveryComplete }: Star
   const [orchestrationError, setOrchestrationError] = useState<string | null>(null);
   const [resultData, setResultData] = useState<StartRecoveryResponseDto | null>(null);
 
-  const fetchEligiblePayments = useCallback(async () => {
-    if (isAuthLoading || !currentMerchantId) return;
-    setLoadingPayments(true);
-    setPaymentsError(null);
+  const { loading, reload: fetchEligiblePayments } = useLoad(isAuthLoading || !currentMerchantId ? null : currentMerchantId, async (isCurrent) => {
     try {
       const res = await api.get<PageResponse<PaymentSummaryDto>>('/payments?page=0&size=50', {
         merchantId: currentMerchantId,
       });
+      if (!isCurrent()) return;
       setPayments(res.content || []);
-    } catch (err: any) {
-      setPaymentsError(err.message || 'Failed to load merchant payment failures.');
-    } finally {
-      setLoadingPayments(false);
+      setPaymentsError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setPaymentsError(errorMessage(err, 'Failed to load merchant payment failures.'));
     }
-  }, [currentMerchantId, isAuthLoading]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setStep('select');
-      setSelectedPayment(null);
-      setResultData(null);
-      setOrchestrationError(null);
-      fetchEligiblePayments();
-    }
-  }, [isOpen, fetchEligiblePayments]);
+  });
+  const loadingPayments = loading || isAuthLoading;
 
   const filteredPayments = payments.filter((p) => {
     if (!searchQuery.trim()) return true;
@@ -97,7 +92,7 @@ export function StartRecoveryModal({ isOpen, onClose, onRecoveryComplete }: Star
       setResultData(response);
       setStep('result');
       onRecoveryComplete();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setOrchestrationError(err.message || 'Recovery orchestration failed.');
       } else {

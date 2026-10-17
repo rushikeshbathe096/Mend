@@ -8,7 +8,7 @@ import { LoginResponse, BootstrapResponse } from '@/types';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, bootstrapLogin } = useAuth();
+  const { login } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'bootstrap'>('login');
   
@@ -34,7 +34,7 @@ export default function LoginPage() {
       const data = await api.post<LoginResponse>('/auth/login', { email, password });
       login(data);
       router.push('/dashboard');
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setError(err.message || 'Invalid credentials or login failure');
       } else {
@@ -51,7 +51,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const data = await api.post<BootstrapResponse>('/auth/bootstrap', {
+      await api.post<BootstrapResponse>('/auth/bootstrap', {
         merchantName,
         adminEmail: bootstrapEmail,
         adminPassword: bootstrapPassword,
@@ -66,7 +66,7 @@ export default function LoginPage() {
 
       login(loginData);
       router.push('/dashboard');
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setError(err.message || 'Bootstrap failed');
       } else {

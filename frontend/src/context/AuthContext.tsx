@@ -1,7 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, Membership, LoginResponse, BootstrapResponse } from '@/types';
+import React, { createContext, useContext, useSyncExternalStore } from 'react';
+import { User, LoginResponse } from '@/types';
 
 interface AuthContextType {
   user: User | null;
@@ -17,123 +17,114 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [currentMerchantId, setCurrentMerchantId] = useState<string | null>(null);
-  const [currentMerchantName, setCurrentMerchantName] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+const TOKEN_KEY = 'mend_token';
+const USER_KEY = 'mend_user';
+const MERCHANT_KEY = 'mend_merchant_id';
 
-  useEffect(() => {
+interface StoredAuth {
+  user: User | null;
+  token: string | null;
+  merchantId: string | null;
+  merchantName: string | null;
+}
+
+const SIGNED_OUT: StoredAuth = { user: null, token: null, merchantId: null, merchantName: null };
+
+/**
+ * The session lives in localStorage; components read it through useSyncExternalStore (no setState in an effect).
+ * The server snapshot is null ("not loaded yet"), so the first client render matches the server render and isLoading
+ * becomes false once the browser snapshot is read.
+ */
+const listeners = new Set<() => void>();
+let cachedRaw: string | null = null;
+let cachedAuth: StoredAuth = SIGNED_OUT;
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  window.addEventListener('storage', listener);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener('storage', listener);
+  };
+}
+
+function notify() {
+  listeners.forEach((listener) => listener());
+}
+
+function readStoredAuth(): StoredAuth {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const userRaw = localStorage.getItem(USER_KEY);
+  const storedMerchantId = localStorage.getItem(MERCHANT_KEY);
+  const raw = JSON.stringify([token, userRaw, storedMerchantId]);
+  if (raw === cachedRaw) {
+    return cachedAuth;   // same snapshot object while nothing changed (useSyncExternalStore requirement)
+  }
+  cachedRaw = raw;
+  cachedAuth = SIGNED_OUT;
+  if (token && userRaw) {
     try {
-      const storedToken = localStorage.getItem('mend_token');
-      const storedUserRaw = localStorage.getItem('mend_user');
-      const storedMerchantId = localStorage.getItem('mend_merchant_id');
-
-      if (storedToken && storedUserRaw) {
-        const parsedUser: User = JSON.parse(storedUserRaw);
-        setToken(storedToken);
-        setUser(parsedUser);
-
-        if (storedMerchantId) {
-          const found = parsedUser.memberships?.find((m) => m.merchantId === storedMerchantId);
-          if (found) {
-            setCurrentMerchantId(storedMerchantId);
-            setCurrentMerchantName(found.merchantName);
-          } else if (parsedUser.memberships && parsedUser.memberships.length > 0) {
-            const first = parsedUser.memberships[0];
-            setCurrentMerchantId(first.merchantId);
-            setCurrentMerchantName(first.merchantName);
-            localStorage.setItem('mend_merchant_id', first.merchantId);
-          } else {
-            setCurrentMerchantId(null);
-            setCurrentMerchantName(null);
-            localStorage.removeItem('mend_merchant_id');
-          }
-        } else if (parsedUser.memberships && parsedUser.memberships.length > 0) {
-          const first = parsedUser.memberships[0];
-          setCurrentMerchantId(first.merchantId);
-          setCurrentMerchantName(first.merchantName);
-          localStorage.setItem('mend_merchant_id', first.merchantId);
-        } else {
-          setCurrentMerchantId(null);
-          setCurrentMerchantName(null);
-          localStorage.removeItem('mend_merchant_id');
-        }
-      }
+      const user: User = JSON.parse(userRaw);
+      // A stored merchant the user is no longer a member of falls back to the first membership.
+      const membership = user.memberships?.find((m) => m.merchantId === storedMerchantId) ?? user.memberships?.[0] ?? null;
+      cachedAuth = {
+        user,
+        token,
+        merchantId: membership?.merchantId ?? null,
+        merchantName: membership?.merchantName ?? null,
+      };
     } catch (e) {
       console.error('Failed to load stored auth state:', e);
-    } finally {
-      setIsLoading(false);
     }
-  }, []);
+  }
+  return cachedAuth;
+}
+
+function writeSession(token: string, user: User, merchantId: string | null) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (merchantId) {
+    localStorage.setItem(MERCHANT_KEY, merchantId);
+  } else {
+    localStorage.removeItem(MERCHANT_KEY);
+  }
+  notify();
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const stored = useSyncExternalStore(subscribe, readStoredAuth, () => null);
+  const auth = stored ?? SIGNED_OUT;
 
   const login = (data: LoginResponse) => {
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem('mend_token', data.token);
-    localStorage.setItem('mend_user', JSON.stringify(data.user));
-
-    if (data.user.memberships && data.user.memberships.length > 0) {
-      const first = data.user.memberships[0];
-      setCurrentMerchantId(first.merchantId);
-      setCurrentMerchantName(first.merchantName);
-      localStorage.setItem('mend_merchant_id', first.merchantId);
-    }
+    writeSession(data.token, data.user, data.user.memberships?.[0]?.merchantId ?? null);
   };
 
   const bootstrapLogin = (token: string, user: User, merchantId: string) => {
-    setToken(token);
-    setUser(user);
-
-    let validMerchantId = merchantId;
-    let merchantName = 'Merchant';
-    if (user.memberships && user.memberships.length > 0) {
-      const found = user.memberships.find((m) => m.merchantId === merchantId);
-      if (found) {
-        merchantName = found.merchantName;
-      } else {
-        const first = user.memberships[0];
-        validMerchantId = first.merchantId;
-        merchantName = first.merchantName;
-      }
-    }
-
-    setCurrentMerchantId(validMerchantId);
-    setCurrentMerchantName(merchantName);
-    localStorage.setItem('mend_token', token);
-    localStorage.setItem('mend_user', JSON.stringify(user));
-    localStorage.setItem('mend_merchant_id', validMerchantId);
+    const known = user.memberships?.some((m) => m.merchantId === merchantId);
+    writeSession(token, user, known || !user.memberships?.length ? merchantId : user.memberships[0].merchantId);
   };
 
   const logout = () => {
-    setToken(null);
-    setUser(null);
-    setCurrentMerchantId(null);
-    setCurrentMerchantName(null);
-    localStorage.removeItem('mend_token');
-    localStorage.removeItem('mend_user');
-    localStorage.removeItem('mend_merchant_id');
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(MERCHANT_KEY);
+    notify();
   };
 
   const selectMerchant = (merchantId: string) => {
-    if (!user) return;
-    const found = user.memberships?.find(m => m.merchantId === merchantId);
-    if (found) {
-      setCurrentMerchantId(merchantId);
-      setCurrentMerchantName(found.merchantName);
-      localStorage.setItem('mend_merchant_id', merchantId);
-    }
+    if (!auth.user?.memberships?.some((m) => m.merchantId === merchantId)) return;
+    localStorage.setItem(MERCHANT_KEY, merchantId);
+    notify();
   };
 
   return (
     <AuthContext.Provider
       value={{
-        user,
-        token,
-        currentMerchantId,
-        currentMerchantName,
-        isLoading,
+        user: auth.user,
+        token: auth.token,
+        currentMerchantId: auth.merchantId,
+        currentMerchantName: auth.merchantName,
+        isLoading: stored === null,
         login,
         bootstrapLogin,
         logout,

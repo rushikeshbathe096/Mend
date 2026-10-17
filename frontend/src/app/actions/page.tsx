@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
 import { Badge } from '@/components/common/Badge';
@@ -9,6 +9,8 @@ import { Pagination } from '@/components/common/Pagination';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton } from '@/components/common/Skeleton';
 import { formatCurrency } from '@/components/common/MetricCard';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -45,7 +47,7 @@ export default function RecoveryActionsPage() {
   const [reviews, setReviews] = useState<ReviewItemDto[]>([]);
   const [summary, setSummary] = useState<ReviewQueueSummaryDto | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [reviewsLoadedAt, setReviewsLoadedAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // Decision modal state
@@ -56,50 +58,52 @@ export default function RecoveryActionsPage() {
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [decisionResult, setDecisionResult] = useState<string | null>(null);
 
-  const fetchIntents = useCallback(async () => {
-    if (!currentMerchantId) return;
+  /** Loads one page of intents; returns the error message, or null. Sets state only after the request (useLoad contract). */
+  const fetchIntents = useCallback(async (isCurrent: () => boolean = () => true): Promise<string | null> => {
+    if (!currentMerchantId) return null;
     try {
       let query = `/recovery/actions?page=${intentsPage}&size=${pageSize}`;
       if (selectedStatus !== 'ALL') {
         query += `&status=${selectedStatus}`;
       }
       const res = await api.get<PageResponse<ActionIntentDto>>(query, { merchantId: currentMerchantId });
-      setActions(res.content || []);
-      setTotalPages(res.totalPages || 1);
-      setTotalElements(res.totalElements || 0);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load recovery action intents.');
+      if (isCurrent()) {
+        setActions(res.content || []);
+        setTotalPages(res.totalPages || 1);
+        setTotalElements(res.totalElements || 0);
+      }
+      return null;
+    } catch (err: unknown) {
+      return errorMessage(err, 'Failed to load recovery action intents.');
     }
   }, [currentMerchantId, intentsPage, pageSize, selectedStatus]);
 
-  const fetchApprovals = useCallback(async () => {
-    if (!currentMerchantId) return;
+  /** Loads the pending reviews and the summary; returns the error message, or null. */
+  const fetchApprovals = useCallback(async (isCurrent: () => boolean = () => true): Promise<string | null> => {
+    if (!currentMerchantId) return null;
     try {
       const [pending, summaryData] = await Promise.all([
         api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50', { merchantId: currentMerchantId }),
         api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }),
       ]);
-      setReviews(pending.content || []);
-      setSummary(summaryData);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load the human approval queue.');
+      if (isCurrent()) {
+        setReviews(pending.content || []);
+        setSummary(summaryData);
+        setReviewsLoadedAt(Date.now());
+      }
+      return null;
+    } catch (err: unknown) {
+      return errorMessage(err, 'Failed to load the human approval queue.');
     }
   }, [currentMerchantId]);
 
-  const fetchAll = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    await Promise.all([fetchIntents(), fetchApprovals()]);
-    setLoading(false);
-  }, [currentMerchantId, fetchIntents, fetchApprovals]);
-
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+  const { loading, reload: fetchAll } = useLoad(
+    currentMerchantId ? `${currentMerchantId}|${intentsPage}|${pageSize}|${selectedStatus}` : null,
+    async (isCurrent) => {
+      const errors = await Promise.all([fetchIntents(isCurrent), fetchApprovals(isCurrent)]);
+      if (isCurrent()) setError(errors.find((e) => e !== null) ?? null);
+    },
+  );
 
   const openDecisionModal = (review: ReviewItemDto, action: 'approve' | 'reject') => {
     setActiveReview(review);
@@ -128,8 +132,9 @@ export default function RecoveryActionsPage() {
         { merchantId: currentMerchantId }
       );
       setDecisionResult(result.message || `Review ${decisionAction}ed successfully.`);
-      await Promise.all([fetchApprovals(), fetchIntents()]);
-    } catch (err: any) {
+      const errors = await Promise.all([fetchApprovals(), fetchIntents()]);
+      setError(errors.find((e) => e !== null) ?? null);
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setDecisionError(err.message || 'The decision could not be recorded.');
       } else {
@@ -238,7 +243,7 @@ export default function RecoveryActionsPage() {
               ) : (
                 <div className="space-y-4">
                   {reviews.map((review) => {
-                    const expired = review.expiresAt ? new Date(review.expiresAt).getTime() < Date.now() : false;
+                    const expired = review.expiresAt ? new Date(review.expiresAt).getTime() < reviewsLoadedAt : false;
                     return (
                       <div
                         key={review.id}
