@@ -1,0 +1,16 @@
+# Gitleaks config for CI (secret-scan job). Default rules, plus an allowlist of the exact public placeholder values used
+# by tests; they are not credentials. Only these literal values are allowed, never whole files or paths, so a real
+# secret added to the same files is still reported.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public test placeholders"
+regexTarget = "match"
+regexes = [
+  '''SECRET_32 = "0123456789abcdef0123456789abcdef"''',
+  '''razorpay\.key-id=rzp_test_key_phase20''',
+  '''jwt\.secret=test_secret_key_123456789012345678901234567890''',
+  '''testKeyId = "rzp_test_12345678"''',
+  '''testKeySecret = "secret_1234567890abcdef"''',
+]

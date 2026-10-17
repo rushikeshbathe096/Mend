@@ -158,7 +158,7 @@ public final class IsolatedTestDatabase implements BeforeAllCallback {
             }
         }
 
-        private static String setting(String property, String env, String fallback) {
+        static String setting(String property, String env, String fallback) {
             String value = System.getProperty(property);
             if (value == null || value.isBlank()) {
                 value = System.getenv(env);

@@ -52,3 +52,35 @@ No blockers. Findings and dispositions:
 Commit `fb1f09f`. Verify: backend `[INFO] Tests run: 812, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`;
 frontend `npm run lint` exit 0 (`✖ 1 problem (0 errors, 1 warning)`), `Tests: 53 passed, 53 total`, build exit 0.
 Next: merge `bugfix/pre-m3` into local `main` (`--no-ff`), tag `pre-m3-bugfix`; then Phase 1 U1.1.
+
+### Phase 1 — CI pipeline (branch `ci/pipeline`)
+
+Plan: U1.1 four scripts (migrations via a JUnit test that builds its own empty database, so no Flyway CLI or new
+dependency); U1.2 workflow with postgres/redis services and caches; U1.3 gitleaks-action + dependency-review, validated
+with actionlint (docker image, not a build dependency) and a YAML parse; U1.4 README section.
+Commits: `166777b` scripts, `55661db` workflow + `.gitleaks.toml`, `2ee1ad0` README, `ab9e903` review fixes.
+
+U1.1 local runs (copied from output):
+- `JWT_SECRET=$(openssl rand -base64 48) scripts/ci/backend.sh` → exit 0, `[INFO] Tests run: 813, Failures: 0, Errors: 0, Skipped: 0`, 59 s
+- `scripts/ci/migrations.sh` → exit 0, `[migrations] fresh database mend_test_…: applied 18 migrations, current version 18, validate OK`
+- `scripts/ci/frontend.sh` → exit 0, `✖ 1 problem (0 errors, 1 warning)`, `Tests: 53 passed, 53 total`, `✓ Compiled successfully`
+- `scripts/ci/ai-service.sh` → exit 0 (fresh venv from requirements.txt), `51 passed in 1.79s`
+- Failure propagation: a temporary broken `V19` → `migrations.sh exit 1` (`relation "no_such_table" does not exist`); removed.
+U1.3: actionlint 1.7.7 exit 0; YAML parse OK (jobs backend, migrations, frontend, ai-service, secret-scan,
+dependency-review); shellcheck 0.10.0 on the scripts exit 0; gitleaks 8.21.2 over the history: 6 findings, all literal
+test placeholders → `.gitleaks.toml` allowlists exactly those values → "118 commits scanned … no leaks found".
+U1.4: README "CI" section. **The first real GitHub Actions run happens when the owner pushes: TBD, not claimed.**
+Finding (not changed): ai-service tests rewrite two tracked benchmark JSON files when run (restored with git checkout;
+those tests go in U2.6).
+
+Review (fresh subagent; AGENTS.md + phase-1 spec + diff): no blockers.
+- FIXED: secret-scan job permissions (`pull-requests: read`, comments off); dependency-review `pull-requests: write`
+  dropped; concurrency no longer cancels runs on main; backend.sh comment about JWT_SECRET corrected (it does override
+  `jwt.secret` in test contexts; no test depends on the value); FreshDatabaseMigrationTest uses Flyway's own view and
+  `MigrationVersion` (robust to dotted/gapped versions); README notes dependency-review prerequisites.
+- REJECTED: "gitleaks allowlist unverified" — it was run locally with the config over full history (no leaks);
+  "every PR runs twice" — the spec asks for push + pull_request; "validation not evidenced" — recorded above.
+- Extra fix found while re-verifying: `migrations.sh` now runs `clean test` (a stale `target/classes` kept the removed V19).
+Verify after fixes: backend `[INFO] Tests run: 813, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
+`Tests: 53 passed, 53 total`, build OK, lint exit 0; `migrations.sh` → applied 18, validate OK; actionlint exit 0.
+Next: merge into local main (`--no-ff`), tag `ci-v1`; Phase 2 U2.0 on `m3/honest-intelligence`.
