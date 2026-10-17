@@ -39,6 +39,8 @@ public class CampaignLifecycleService {
     private final RecoveryOrchestratorService recoveryOrchestratorService;
 
     private final InvoiceKeyResolver invoiceKeyResolver;
+    /** Bug sweep item 5: SYNTHETIC (simulated) recoveries are only possible with the mock provider. */
+    private final boolean mockProvider;
 
     public CampaignLifecycleService(
             CampaignRepository campaignRepository,
@@ -47,8 +49,10 @@ public class CampaignLifecycleService {
             CampaignStateMachine campaignStateMachine,
             AuditService auditService,
             @Lazy RecoveryOrchestratorService recoveryOrchestratorService,
-            InvoiceKeyResolver invoiceKeyResolver) {
+            InvoiceKeyResolver invoiceKeyResolver,
+            @org.springframework.beans.factory.annotation.Value("${mend.payment.provider:mock}") String paymentProvider) {
         this.invoiceKeyResolver = invoiceKeyResolver;
+        this.mockProvider = "mock".equalsIgnoreCase(paymentProvider);
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.merchantRepository = merchantRepository;
@@ -158,6 +162,7 @@ public class CampaignLifecycleService {
      * Bug sweep item 2: the campaign goes to RECOVERED and records who recovered it, in one save. This is the only way to
      * use the pre-action → RECOVERED edges (CREATED / CLASSIFIED / ELIGIBLE / SCHEDULED), and those edges need
      * {@link RecoveryAttribution#ORIGINAL_PAYMENT_LATE_CAPTURE}; {@link #transitionState} still rejects them.
+     * {@link RecoveryAttribution#SYNTHETIC} is refused unless the mock provider is active (bug sweep item 5).
      */
     @Transactional
     public Campaign recover(
@@ -173,6 +178,10 @@ public class CampaignLifecycleService {
 
         if (!campaign.getMerchantId().equals(merchantId)) {
             throw new TenantAccessDeniedException("Campaign " + campaignId + " does not belong to merchant " + merchantId);
+        }
+
+        if (attribution == RecoveryAttribution.SYNTHETIC && !mockProvider) {
+            throw new IllegalStateException("SYNTHETIC recovery is only possible with the mock payment provider");
         }
 
         CampaignStatus previousState = campaign.getCurrentState();

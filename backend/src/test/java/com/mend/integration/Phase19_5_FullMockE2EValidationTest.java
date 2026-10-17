@@ -284,8 +284,12 @@ public class Phase19_5_FullMockE2EValidationTest {
         // "attribution unknown", not as recovered by MEND (Group 4, docs/audit/cleanup-report.md); was 1 and 100.0.
         assertEquals(0, analytics.getRecoveredCampaigns());
         assertEquals(0.0, analytics.getRecoveryRate());
-        assertEquals(1, analytics.getRecoveredAttributionUnknownCount());
-        assertEquals(0, amountAtRisk.compareTo(analytics.getAmountRecoveredAttributionUnknown()));
+        // Bug sweep behaviour change (item 5): the synthetic capture is now attributed SYNTHETIC (V18) and reported as such,
+        // still never as MEND; it is no longer "attribution unknown" (was 1 and amountAtRisk).
+        assertEquals(0, analytics.getRecoveredAttributionUnknownCount());
+        assertEquals(1, analytics.getRecoveredSyntheticCount());
+        assertEquals(0, amountAtRisk.compareTo(analytics.getAmountRecoveredSynthetic()));
+        assertEquals(RecoveryAttribution.SYNTHETIC, finalCampaign.getRecoveryAttribution());
         assertEquals(0, amountAtRisk.compareTo(analytics.getRevenueAtRisk()));
         assertEquals(0, analytics.getAmountUnknownCount());
 

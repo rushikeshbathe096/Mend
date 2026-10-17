@@ -7,6 +7,7 @@ import com.mend.domain.entity.ComplianceDecisionEntity;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
@@ -366,10 +367,11 @@ public class ActionExecutionService {
         }
         switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> {
-                campaignLifecycleService.transitionState(
+                // Bug sweep item 5: simulated money is attributed SYNTHETIC (refused outside mock mode), never MEND.
+                campaignLifecycleService.recover(
                         campaign.getMerchantId(),
                         campaign.getId(),
-                        CampaignStatus.RECOVERED,
+                        RecoveryAttribution.SYNTHETIC,
                         "SYNTHETIC mock provider capture (Ref: " + captured.reference() + ")",
                         "SYSTEM",
                         null

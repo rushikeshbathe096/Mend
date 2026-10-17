@@ -116,6 +116,8 @@ public class AnalyticsQueryService {
         dto.setAmountRecoveredLateCapture(WebhookAmountResolver.toDisplay(all.lateCaptureMinor));
         dto.setRecoveredAttributionUnknownCount(all.attributionUnknown);
         dto.setAmountRecoveredAttributionUnknown(WebhookAmountResolver.toDisplay(all.attributionUnknownMinor));
+        dto.setRecoveredSyntheticCount(all.synthetic);
+        dto.setAmountRecoveredSynthetic(WebhookAmountResolver.toDisplay(all.syntheticMinor));
         dto.setCampaignsEligible(eligibleCount);
         dto.setActionsAttempted(totalAttempts);
         dto.setSuccessfulRecoveries(recoveredCampaigns);
@@ -439,6 +441,8 @@ public class AnalyticsQueryService {
         long lateCaptureMinor;
         long attributionUnknown;
         long attributionUnknownMinor;
+        long synthetic;
+        long syntheticMinor;
 
         void add(Campaign campaign, Long amountMinorOrNull) {
             count++;
@@ -459,6 +463,10 @@ public class AnalyticsQueryService {
                 case ORIGINAL_PAYMENT_LATE_CAPTURE -> {
                     lateCapture++;
                     lateCaptureMinor = Math.addExact(lateCaptureMinor, amount);
+                }
+                case SYNTHETIC -> {
+                    synthetic++;
+                    syntheticMinor = Math.addExact(syntheticMinor, amount);
                 }
                 case null -> {
                     attributionUnknown++;

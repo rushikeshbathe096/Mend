@@ -498,4 +498,30 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
     private static tools.jackson.databind.JsonNode readJson(String body) {
         return new tools.jackson.databind.ObjectMapper().readTree(body);
     }
+
+    // ---- Bug sweep item 5: SYNTHETIC attribution is impossible in razorpay mode ----
+
+    @Autowired
+    private org.springframework.context.ApplicationContext bugSweepContext;
+
+    @Test
+    @DisplayName("Bug sweep item 5: razorpay mode has no synthetic simulator and refuses a SYNTHETIC recovery")
+    void syntheticAttributionIsImpossibleInRazorpayMode() {
+        assertTrue(bugSweepContext.getBeansOfType(com.mend.provider.mock.SyntheticDebitSimulator.class).isEmpty(),
+                "no SyntheticDebitSimulator, so the dispatcher can never produce SyntheticCaptured");
+
+        UUID merchant = UUID.randomUUID();
+        merchantRepository.save(new Merchant(merchant, "BS5 razorpay merchant"));
+        Campaign campaign = new Campaign(UUID.randomUUID(), merchant);
+        campaign.setPaymentId("pay_bs5rzp" + UUID.randomUUID().toString().replace("-", "").substring(0, 10));
+        campaign.setCurrentState(CampaignStatus.EXECUTING);
+        UUID campaignId = campaignRepository.save(campaign).getId();
+
+        assertThrows(IllegalStateException.class, () -> campaignLifecycleService.recover(merchant, campaignId,
+                RecoveryAttribution.SYNTHETIC, "should never happen", "SYSTEM", null));
+
+        Campaign after = campaignRepository.findById(campaignId).orElseThrow();
+        assertEquals(CampaignStatus.EXECUTING, after.getCurrentState());
+        assertNull(after.getRecoveryAttribution());
+    }
 }
