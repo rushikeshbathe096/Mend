@@ -17,14 +17,20 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class ComplianceService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceService.class);
+
+    /** Existing-action states besides {@link ActionIntentStatus#isInFlight()}: not yet claimed, or succeeded. */
+    private static final Set<ActionIntentStatus> NOT_IN_FLIGHT_EXISTING_ACTION = EnumSet.of(
+            ActionIntentStatus.PENDING, ActionIntentStatus.SCHEDULED, ActionIntentStatus.READY, ActionIntentStatus.SUCCEEDED);
 
     private final CampaignRepository campaignRepository;
     private final ClassificationResultRepository classificationResultRepository;
@@ -180,14 +186,15 @@ public class ComplianceService {
         if (attemptCount == null) return false;
         List<ActionIntent> intents = actionIntentRepository.findByCampaignId(campaignId);
         return intents.stream().anyMatch(intent ->
-                attemptCount.equals(intent.getAttemptNumber()) &&
-                        (intent.getStatus() == ActionIntentStatus.PENDING ||
-                                intent.getStatus() == ActionIntentStatus.SCHEDULED ||
-                                intent.getStatus() == ActionIntentStatus.READY ||
-                                intent.getStatus() == ActionIntentStatus.CLAIMED ||
-                                intent.getStatus() == ActionIntentStatus.EXECUTING ||
-                                intent.getStatus() == ActionIntentStatus.SUCCEEDED)
-        );
+                attemptCount.equals(intent.getAttemptNumber()) && countsAsExistingAction(intent.getStatus()));
+    }
+
+    /**
+     * An intent in one of these states is an active or completed action for its attempt. The in-flight states come from
+     * {@link ActionIntentStatus#isInFlight()} so this list cannot drift from the one-in-flight rule (V13).
+     */
+    static boolean countsAsExistingAction(ActionIntentStatus status) {
+        return status != null && (status.isInFlight() || NOT_IN_FLIGHT_EXISTING_ACTION.contains(status));
     }
 
     private RecoveryStrategy parseStrategy(String strategyStr) {
