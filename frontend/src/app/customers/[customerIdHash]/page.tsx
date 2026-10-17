@@ -12,6 +12,11 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { CustomerProfileDto } from '@/types';
 
+/** A field the backend did not send is shown as unknown, never as 0. */
+function countOrDash(value: number | undefined): string | number {
+  return value ?? '—';
+}
+
 export default function CustomerProfilePage() {
   const params = useParams();
   const customerIdHash = params?.customerIdHash as string;
@@ -107,12 +112,33 @@ export default function CustomerProfilePage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
               <MetricCard title="Total Campaigns" value={summary.totalCampaigns} subtext="Recovery campaigns attributed" variant="default" />
               <MetricCard title="Active Recovery" value={summary.activeCampaigns} subtext="Campaigns in progress" variant="amber" />
-              <MetricCard title="Recovered" value={summary.recoveredCampaigns} subtext="Successful recoveries" variant="emerald" />
+              <MetricCard title="Recovered by MEND" value={summary.recoveredCampaigns} subtext="Captured on a MEND recovery action" variant="emerald" />
               <MetricCard
                 title="Recovered Value"
                 value={formatCurrency(summary.totalRecoveredAmount)}
-                subtext="Of failed volume"
+                subtext="MEND recoveries only"
                 variant="indigo"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+              <MetricCard
+                title="Late Capture"
+                value={countOrDash(summary.recoveredLateCaptureCount)}
+                subtext={`${formatCurrency(summary.amountRecoveredLateCapture)} · original payment captured later, not MEND`}
+                variant="default"
+              />
+              <MetricCard
+                title="Attribution Unknown"
+                value={countOrDash(summary.recoveredAttributionUnknownCount)}
+                subtext={`${formatCurrency(summary.amountRecoveredAttributionUnknown)} · recovered, attribution not recorded`}
+                variant="default"
+              />
+              <MetricCard
+                title="Amount Unknown"
+                value={countOrDash(summary.amountUnknownCount)}
+                subtext="Campaigns with no verified amount, excluded from totals"
+                variant="amber"
               />
             </div>
 

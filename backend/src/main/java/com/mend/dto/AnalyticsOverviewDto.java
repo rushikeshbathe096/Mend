@@ -1,5 +1,13 @@
 package com.mend.dto;
 
+import java.math.BigDecimal;
+
+/**
+ * Money fields are display values in major units (rupees, scale 2) summed exactly from minor units; a campaign whose
+ * original amount cannot be resolved is left out of every sum and counted in {@code amountUnknownCount} (never a
+ * default value). "Recovered" means recovered by MEND ({@code recovery_attribution = MEND}); late captures of the
+ * original payment and RECOVERED rows without an attribution are reported separately.
+ */
 public class AnalyticsOverviewDto {
     private long totalCampaigns;
     private long recoveredCampaigns;
@@ -11,9 +19,9 @@ public class AnalyticsOverviewDto {
     private long successfulIntents;
 
     private long totalPaymentFailures;
-    private double revenueAtRisk;
-    private double amountRecovered;
-    private double amountRemainingAtRisk;
+    private BigDecimal revenueAtRisk;
+    private BigDecimal amountRecovered;
+    private BigDecimal amountRemainingAtRisk;
     private long campaignsEligible;
     private long actionsAttempted;
     private long successfulRecoveries;
@@ -21,6 +29,12 @@ public class AnalyticsOverviewDto {
     private long complianceBlocks;
     private long averageIngestionToCampaignLatencyMs;
     private long averageExecutionLatencyMs;
+
+    private long amountUnknownCount;
+    private long recoveredLateCaptureCount;
+    private BigDecimal amountRecoveredLateCapture;
+    private long recoveredAttributionUnknownCount;
+    private BigDecimal amountRecoveredAttributionUnknown;
 
     public AnalyticsOverviewDto() {
     }
@@ -116,27 +130,27 @@ public class AnalyticsOverviewDto {
         this.totalPaymentFailures = totalPaymentFailures;
     }
 
-    public double getRevenueAtRisk() {
+    public BigDecimal getRevenueAtRisk() {
         return revenueAtRisk;
     }
 
-    public void setRevenueAtRisk(double revenueAtRisk) {
+    public void setRevenueAtRisk(BigDecimal revenueAtRisk) {
         this.revenueAtRisk = revenueAtRisk;
     }
 
-    public double getAmountRecovered() {
+    public BigDecimal getAmountRecovered() {
         return amountRecovered;
     }
 
-    public void setAmountRecovered(double amountRecovered) {
+    public void setAmountRecovered(BigDecimal amountRecovered) {
         this.amountRecovered = amountRecovered;
     }
 
-    public double getAmountRemainingAtRisk() {
+    public BigDecimal getAmountRemainingAtRisk() {
         return amountRemainingAtRisk;
     }
 
-    public void setAmountRemainingAtRisk(double amountRemainingAtRisk) {
+    public void setAmountRemainingAtRisk(BigDecimal amountRemainingAtRisk) {
         this.amountRemainingAtRisk = amountRemainingAtRisk;
     }
 
@@ -194,5 +208,45 @@ public class AnalyticsOverviewDto {
 
     public void setAverageExecutionLatencyMs(long averageExecutionLatencyMs) {
         this.averageExecutionLatencyMs = averageExecutionLatencyMs;
+    }
+
+    public long getAmountUnknownCount() {
+        return amountUnknownCount;
+    }
+
+    public void setAmountUnknownCount(long amountUnknownCount) {
+        this.amountUnknownCount = amountUnknownCount;
+    }
+
+    public long getRecoveredLateCaptureCount() {
+        return recoveredLateCaptureCount;
+    }
+
+    public void setRecoveredLateCaptureCount(long recoveredLateCaptureCount) {
+        this.recoveredLateCaptureCount = recoveredLateCaptureCount;
+    }
+
+    public BigDecimal getAmountRecoveredLateCapture() {
+        return amountRecoveredLateCapture;
+    }
+
+    public void setAmountRecoveredLateCapture(BigDecimal amountRecoveredLateCapture) {
+        this.amountRecoveredLateCapture = amountRecoveredLateCapture;
+    }
+
+    public long getRecoveredAttributionUnknownCount() {
+        return recoveredAttributionUnknownCount;
+    }
+
+    public void setRecoveredAttributionUnknownCount(long recoveredAttributionUnknownCount) {
+        this.recoveredAttributionUnknownCount = recoveredAttributionUnknownCount;
+    }
+
+    public BigDecimal getAmountRecoveredAttributionUnknown() {
+        return amountRecoveredAttributionUnknown;
+    }
+
+    public void setAmountRecoveredAttributionUnknown(BigDecimal amountRecoveredAttributionUnknown) {
+        this.amountRecoveredAttributionUnknown = amountRecoveredAttributionUnknown;
     }
 }

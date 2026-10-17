@@ -1,18 +1,15 @@
 package com.mend.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.ComplianceStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.repository.*;
 import com.mend.dto.AnalyticsOverviewDto;
 import com.mend.dto.AnalyticsRecoveryDto;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,11 +20,14 @@ import java.time.Duration;
 
 import java.util.*;
 
+/**
+ * Merchant analytics. Amounts come only from the strict minor-unit parser ({@link WebhookAmountResolver#extractMoneyMinor})
+ * and are summed exactly in minor units; a campaign without a resolvable amount is counted as "amount unknown" and left
+ * out of every sum (invariants 1 and 3). "Recovered" counts only {@code recovery_attribution = MEND}; late captures of
+ * the original payment and RECOVERED rows with no attribution are reported separately.
+ */
 @Service
 public class AnalyticsQueryService {
-
-    private static final Logger log = LoggerFactory.getLogger(AnalyticsQueryService.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final CampaignRepository campaignRepository;
     private final ActionIntentRepository actionIntentRepository;
@@ -36,6 +36,7 @@ public class AnalyticsQueryService {
     private final WebhookEventRepository webhookEventRepository;
     private final ComplianceDecisionRepository complianceDecisionRepository;
     private final ClassificationResultRepository classificationResultRepository;
+    private final WebhookAmountResolver amountResolver;
 
     public AnalyticsQueryService(
             CampaignRepository campaignRepository,
@@ -44,7 +45,8 @@ public class AnalyticsQueryService {
             RecoveryDecisionRepository recoveryDecisionRepository,
             @Autowired(required = false) WebhookEventRepository webhookEventRepository,
             @Autowired(required = false) ComplianceDecisionRepository complianceDecisionRepository,
-            @Autowired(required = false) ClassificationResultRepository classificationResultRepository) {
+            @Autowired(required = false) ClassificationResultRepository classificationResultRepository,
+            WebhookAmountResolver amountResolver) {
         this.campaignRepository = campaignRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -52,14 +54,23 @@ public class AnalyticsQueryService {
         this.webhookEventRepository = webhookEventRepository;
         this.complianceDecisionRepository = complianceDecisionRepository;
         this.classificationResultRepository = classificationResultRepository;
+        this.amountResolver = amountResolver;
     }
 
     @Transactional(readOnly = true)
     public AnalyticsOverviewDto getAnalyticsOverview(UUID merchantId, AuthenticatedUser currentUser) {
         validateTenantAccess(merchantId, currentUser);
 
+        List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
+        List<WebhookEvent> webhooks = webhookEventRepository != null ? webhookEventRepository.findByMerchantId(merchantId) : List.of();
+        Map<String, Long> amounts = amountsByPaymentId(webhooks);
+        Tally all = new Tally();
+        for (Campaign campaign : campaigns) {
+            all.add(campaign, amounts.get(campaign.getPaymentId()));
+        }
+
         long totalCampaigns = campaignRepository.countByMerchantId(merchantId);
-        long recoveredCampaigns = campaignRepository.countByMerchantIdAndCurrentState(merchantId, CampaignStatus.RECOVERED);
+        long recoveredCampaigns = all.recoveredByMend;
         long activeCampaigns = campaignRepository.countByMerchantIdAndCurrentStateIn(
                 merchantId,
                 List.of(CampaignStatus.CREATED, CampaignStatus.CLASSIFIED, CampaignStatus.ELIGIBLE, CampaignStatus.ACTION_PENDING, CampaignStatus.EXECUTING)
@@ -93,36 +104,18 @@ public class AnalyticsQueryService {
         long totalPaymentFailures = webhookEventRepository != null ? webhookEventRepository.countByMerchantId(merchantId) : totalCampaigns;
         dto.setTotalPaymentFailures(totalPaymentFailures);
 
-        List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
-        List<WebhookEvent> webhooks = webhookEventRepository != null ? webhookEventRepository.findByMerchantId(merchantId) : List.of();
+        long eligibleCount = campaigns.stream()
+                .filter(c -> c.getCurrentState() != CampaignStatus.CREATED && c.getCurrentState() != CampaignStatus.CANCELLED)
+                .count();
 
-        // Calculate revenue at risk, recovered amount, and remaining at risk
-        double totalRevenueAtRisk = 0.0;
-        double totalAmountRecovered = 0.0;
-
-        Map<String, Double> webhookAmountMap = new HashMap<>();
-        for (WebhookEvent ev : webhooks) {
-            double amt = extractAmountFromWebhook(ev);
-            if (ev.getExternalEventId() != null) {
-                webhookAmountMap.put(ev.getExternalEventId(), amt);
-            }
-        }
-
-        long eligibleCount = 0;
-        for (Campaign campaign : campaigns) {
-            double campaignAmt = webhookAmountMap.getOrDefault(campaign.getPaymentId(), 1000.00);
-            totalRevenueAtRisk += campaignAmt;
-            if (campaign.getCurrentState() == CampaignStatus.RECOVERED) {
-                totalAmountRecovered += campaignAmt;
-            }
-            if (campaign.getCurrentState() != CampaignStatus.CREATED && campaign.getCurrentState() != CampaignStatus.CANCELLED) {
-                eligibleCount++;
-            }
-        }
-
-        dto.setRevenueAtRisk(roundTwoDecimals(totalRevenueAtRisk));
-        dto.setAmountRecovered(roundTwoDecimals(totalAmountRecovered));
-        dto.setAmountRemainingAtRisk(roundTwoDecimals(Math.max(0.0, totalRevenueAtRisk - totalAmountRecovered)));
+        dto.setRevenueAtRisk(WebhookAmountResolver.toDisplay(all.atRiskMinor));
+        dto.setAmountRecovered(WebhookAmountResolver.toDisplay(all.recoveredByMendMinor));
+        dto.setAmountRemainingAtRisk(WebhookAmountResolver.toDisplay(all.notRecoveredMinor));
+        dto.setAmountUnknownCount(all.amountUnknown);
+        dto.setRecoveredLateCaptureCount(all.lateCapture);
+        dto.setAmountRecoveredLateCapture(WebhookAmountResolver.toDisplay(all.lateCaptureMinor));
+        dto.setRecoveredAttributionUnknownCount(all.attributionUnknown);
+        dto.setAmountRecoveredAttributionUnknown(WebhookAmountResolver.toDisplay(all.attributionUnknownMinor));
         dto.setCampaignsEligible(eligibleCount);
         dto.setActionsAttempted(totalAttempts);
         dto.setSuccessfulRecoveries(recoveredCampaigns);
@@ -195,7 +188,7 @@ public class AnalyticsQueryService {
                 String fc = campaign.getFailureClass();
                 failureClassBreakdown.put(fc, failureClassBreakdown.getOrDefault(fc, 0L) + 1);
                 failureClassTotalMap.put(fc, failureClassTotalMap.getOrDefault(fc, 0L) + 1);
-                if (campaign.getCurrentState() == CampaignStatus.RECOVERED) {
+                if (campaign.recoveredByMend()) {
                     failureClassRecoveredMap.put(fc, failureClassRecoveredMap.getOrDefault(fc, 0L) + 1);
                 }
             }
@@ -204,7 +197,7 @@ public class AnalyticsQueryService {
                 String strategy = campaign.getStrategy();
                 strategyBreakdown.put(strategy, strategyBreakdown.getOrDefault(strategy, 0L) + 1);
                 strategyTotalMap.put(strategy, strategyTotalMap.getOrDefault(strategy, 0L) + 1);
-                if (campaign.getCurrentState() == CampaignStatus.RECOVERED) {
+                if (campaign.recoveredByMend()) {
                     strategyRecoveredMap.put(strategy, strategyRecoveredMap.getOrDefault(strategy, 0L) + 1);
                 }
             }
@@ -334,7 +327,7 @@ public class AnalyticsQueryService {
         List<ActionIntent> intents = actionIntentRepository.findByMerchantId(merchantId);
         long actionScheduled = intents.size();
         long actionExecuted = intents.stream().filter(i -> i.getStatus() == ActionIntentStatus.SUCCEEDED || i.getStatus() == ActionIntentStatus.FAILED).count();
-        long recovered = campaigns.stream().filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED).count();
+        long recovered = campaigns.stream().filter(Campaign::recoveredByMend).count();
 
         List<com.mend.dto.AnalyticsFunnelDto.FunnelStageDto> stages = new ArrayList<>();
         long baseCount = Math.max(totalFailures, totalCampaigns);
@@ -356,46 +349,22 @@ public class AnalyticsQueryService {
         validateTenantAccess(merchantId, currentUser);
 
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
-        List<WebhookEvent> webhooks = webhookEventRepository != null ? webhookEventRepository.findByMerchantId(merchantId) : List.of();
+        Map<String, Long> amounts = amountsByPaymentId(merchantId);
 
-        Map<String, Double> webhookAmountMap = new HashMap<>();
-        for (WebhookEvent ev : webhooks) {
-            if (ev.getExternalEventId() != null) {
-                webhookAmountMap.put(ev.getExternalEventId(), extractAmountFromWebhook(ev));
-            }
-        }
-
-        Map<String, Long> totalMap = new HashMap<>();
-        Map<String, Long> recoveredMap = new HashMap<>();
-        Map<String, Double> revenueAtRiskMap = new HashMap<>();
-        Map<String, Double> revenueRecoveredMap = new HashMap<>();
-
+        Map<String, Tally> byClass = new HashMap<>();
         for (Campaign campaign : campaigns) {
             String fc = campaign.getFailureClass() != null && !campaign.getFailureClass().isBlank()
                     ? campaign.getFailureClass()
                     : "UNKNOWN";
-
-            double amt = webhookAmountMap.getOrDefault(campaign.getPaymentId(), 1000.00);
-            totalMap.put(fc, totalMap.getOrDefault(fc, 0L) + 1);
-            revenueAtRiskMap.put(fc, revenueAtRiskMap.getOrDefault(fc, 0.0) + amt);
-
-            if (campaign.getCurrentState() == CampaignStatus.RECOVERED) {
-                recoveredMap.put(fc, recoveredMap.getOrDefault(fc, 0L) + 1);
-                revenueRecoveredMap.put(fc, revenueRecoveredMap.getOrDefault(fc, 0.0) + amt);
-            }
+            byClass.computeIfAbsent(fc, k -> new Tally()).add(campaign, amounts.get(campaign.getPaymentId()));
         }
 
         List<com.mend.dto.AnalyticsFailureBreakdownDto.FailureClassMetricDto> list = new ArrayList<>();
-        for (Map.Entry<String, Long> entry : totalMap.entrySet()) {
-            String fc = entry.getKey();
-            long count = entry.getValue();
-            long recCount = recoveredMap.getOrDefault(fc, 0L);
-            double rate = count > 0 ? roundTwoDecimals((double) recCount / count * 100.0) : 0.0;
-            double atRisk = roundTwoDecimals(revenueAtRiskMap.getOrDefault(fc, 0.0));
-            double recRev = roundTwoDecimals(revenueRecoveredMap.getOrDefault(fc, 0.0));
-
+        for (Map.Entry<String, Tally> entry : byClass.entrySet()) {
+            Tally t = entry.getValue();
             list.add(new com.mend.dto.AnalyticsFailureBreakdownDto.FailureClassMetricDto(
-                    fc, count, recCount, rate, atRisk, recRev
+                    entry.getKey(), t.count, t.recoveredByMend, percent(t.recoveredByMend, t.count),
+                    WebhookAmountResolver.toDisplay(t.atRiskMinor), WebhookAmountResolver.toDisplay(t.recoveredByMendMinor), t.amountUnknown
             ));
         }
 
@@ -407,43 +376,22 @@ public class AnalyticsQueryService {
         validateTenantAccess(merchantId, currentUser);
 
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
-        List<WebhookEvent> webhooks = webhookEventRepository != null ? webhookEventRepository.findByMerchantId(merchantId) : List.of();
+        Map<String, Long> amounts = amountsByPaymentId(merchantId);
 
-        Map<String, Double> webhookAmountMap = new HashMap<>();
-        for (WebhookEvent ev : webhooks) {
-            if (ev.getExternalEventId() != null) {
-                webhookAmountMap.put(ev.getExternalEventId(), extractAmountFromWebhook(ev));
-            }
-        }
-
-        Map<String, Long> totalMap = new HashMap<>();
-        Map<String, Long> recoveredMap = new HashMap<>();
-        Map<String, Double> revenueRecoveredMap = new HashMap<>();
-
+        Map<String, Tally> byStrategy = new HashMap<>();
         for (Campaign campaign : campaigns) {
             String strat = campaign.getStrategy() != null && !campaign.getStrategy().isBlank()
                     ? campaign.getStrategy()
                     : "UNASSIGNED";
-
-            double amt = webhookAmountMap.getOrDefault(campaign.getPaymentId(), 1000.00);
-            totalMap.put(strat, totalMap.getOrDefault(strat, 0L) + 1);
-
-            if (campaign.getCurrentState() == CampaignStatus.RECOVERED) {
-                recoveredMap.put(strat, recoveredMap.getOrDefault(strat, 0L) + 1);
-                revenueRecoveredMap.put(strat, revenueRecoveredMap.getOrDefault(strat, 0.0) + amt);
-            }
+            byStrategy.computeIfAbsent(strat, k -> new Tally()).add(campaign, amounts.get(campaign.getPaymentId()));
         }
 
         List<com.mend.dto.AnalyticsStrategyPerformanceDto.StrategyMetricDto> list = new ArrayList<>();
-        for (Map.Entry<String, Long> entry : totalMap.entrySet()) {
-            String strat = entry.getKey();
-            long total = entry.getValue();
-            long recCount = recoveredMap.getOrDefault(strat, 0L);
-            double rate = total > 0 ? roundTwoDecimals((double) recCount / total * 100.0) : 0.0;
-            double recRev = roundTwoDecimals(revenueRecoveredMap.getOrDefault(strat, 0.0));
-
+        for (Map.Entry<String, Tally> entry : byStrategy.entrySet()) {
+            Tally t = entry.getValue();
             list.add(new com.mend.dto.AnalyticsStrategyPerformanceDto.StrategyMetricDto(
-                    strat, total, recCount, rate, recRev
+                    entry.getKey(), t.count, t.recoveredByMend, percent(t.recoveredByMend, t.count),
+                    WebhookAmountResolver.toDisplay(t.recoveredByMendMinor), t.amountUnknown
             ));
         }
 
@@ -464,28 +412,68 @@ public class AnalyticsQueryService {
         }
     }
 
-    private double extractAmountFromWebhook(WebhookEvent event) {
-        if (event == null || event.getRawPayload() == null || event.getRawPayload().isBlank()) {
-            return 1000.00;
-        }
-        try {
-            JsonNode root = objectMapper.readTree(event.getRawPayload());
-            JsonNode paymentNode = root.path("payload").path("payment").path("entity");
-            if (paymentNode.isMissingNode() || paymentNode.isNull()) {
-                paymentNode = root.path("payment").path("entity");
-            }
-            if (paymentNode.isMissingNode() || paymentNode.isNull()) {
-                paymentNode = root;
-            }
+    /** Original amount in minor units per payment id, strict parser only; a payment id without one is absent (unknown). */
+    private Map<String, Long> amountsByPaymentId(UUID merchantId) {
+        return amountsByPaymentId(webhookEventRepository != null ? webhookEventRepository.findByMerchantId(merchantId) : List.of());
+    }
 
-            if (paymentNode.has("amount") && !paymentNode.get("amount").isNull()) {
-                long amountInPaise = paymentNode.get("amount").asLong();
-                return BigDecimal.valueOf(amountInPaise).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP).doubleValue();
+    private Map<String, Long> amountsByPaymentId(List<WebhookEvent> webhooks) {
+        Map<String, Long> amounts = new HashMap<>();
+        for (WebhookEvent ev : webhooks) {
+            if (ev.getExternalEventId() != null) {
+                amountResolver.extractMoneyMinor(ev).ifPresent(amount -> amounts.put(ev.getExternalEventId(), amount.amountMinor()));
             }
-        } catch (Exception e) {
-            log.trace("Error parsing webhook payload amount: {}", e.getMessage());
         }
-        return 1000.00;
+        return amounts;
+    }
+
+    /** Percentage (not money), two decimals. */
+    private double percent(long part, long total) {
+        return total > 0 ? roundTwoDecimals((double) part / total * 100.0) : 0.0;
+    }
+
+    /**
+     * Exact minor-unit sums for a group of campaigns. A campaign with no resolvable amount adds 0 to every sum and 1 to
+     * {@code amountUnknown}; RECOVERED campaigns are split by attribution (NULL = recovered before V15, attribution unknown).
+     */
+    private static final class Tally {
+        long count;
+        long amountUnknown;
+        long atRiskMinor;
+        long notRecoveredMinor;
+        long recoveredByMend;
+        long recoveredByMendMinor;
+        long lateCapture;
+        long lateCaptureMinor;
+        long attributionUnknown;
+        long attributionUnknownMinor;
+
+        void add(Campaign campaign, Long amountMinorOrNull) {
+            count++;
+            long amount = amountMinorOrNull == null ? 0 : amountMinorOrNull;
+            if (amountMinorOrNull == null) {
+                amountUnknown++;
+            }
+            atRiskMinor = Math.addExact(atRiskMinor, amount);
+            if (campaign.getCurrentState() != CampaignStatus.RECOVERED) {
+                notRecoveredMinor = Math.addExact(notRecoveredMinor, amount);
+                return;
+            }
+            switch (campaign.getRecoveryAttribution()) {
+                case MEND -> {
+                    recoveredByMend++;
+                    recoveredByMendMinor = Math.addExact(recoveredByMendMinor, amount);
+                }
+                case ORIGINAL_PAYMENT_LATE_CAPTURE -> {
+                    lateCapture++;
+                    lateCaptureMinor = Math.addExact(lateCaptureMinor, amount);
+                }
+                case null -> {
+                    attributionUnknown++;
+                    attributionUnknownMinor = Math.addExact(attributionUnknownMinor, amount);
+                }
+            }
+        }
     }
 
     private double roundTwoDecimals(double val) {

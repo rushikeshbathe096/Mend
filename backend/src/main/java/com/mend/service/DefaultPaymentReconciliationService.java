@@ -15,6 +15,7 @@ import com.mend.domain.repository.CampaignAttemptRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.provider.PaymentEvidenceStatus;
+import com.mend.provider.PaymentLinkSnapshot;
 import com.mend.provider.PaymentLinkState;
 import com.mend.provider.PaymentStatusInterpreter;
 import com.mend.provider.ProviderAttemptKey;
@@ -177,7 +178,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
 
         // Owner decision D1 (M1): a payment link accepts several attempts, so one failed attempt does not end it.
         // For an intent that issued a link, a FAILED payment changes nothing; the intent stays EXECUTING.
-        if (Boolean.FALSE.equals(isSuccessEvent) && isPaymentLinkReference(intent.getResponseReference())) {
+        if (Boolean.FALSE.equals(isSuccessEvent) && PaymentLinkSnapshot.isLinkId(intent.getResponseReference())) {
             log.info("event=link_attempt_failed intent_id={} campaign_id={} webhook_event_id={}",
                     intent.getId(), campaign.getId(), event.getId());
             return ReconciliationResult.unsupported("Failed attempt on payment link " + intent.getResponseReference()
@@ -429,7 +430,7 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             // CLAIMED cannot dispatch any more (the dispatch fence needs CLAIMED); these may already exist at the provider.
             if (status == ActionIntentStatus.EXECUTING || status == ActionIntentStatus.NEEDS_RECONCILIATION
                     || status == ActionIntentStatus.AWAITING_PAYMENT) {
-                possiblyLive.add(isPaymentLinkReference(intent.getResponseReference())
+                possiblyLive.add(PaymentLinkSnapshot.isLinkId(intent.getResponseReference())
                         ? intent.getResponseReference()
                         : "attempt_key=" + ProviderAttemptKey.forIntent(intent.getId()).value() + " (" + intent.getActionType() + ", " + status + ")");
             }
@@ -627,10 +628,6 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
 
     private ActionIntentStatus currentStatus(ActionIntent intent) {
         return actionIntentRepository.findById(intent.getId()).map(ActionIntent::getStatus).orElse(intent.getStatus());
-    }
-
-    private static boolean isPaymentLinkReference(String responseReference) {
-        return responseReference != null && responseReference.startsWith("plink_");
     }
 
     /** Untrusted payload: only a non-blank string value counts; null, numbers or objects are ignored. */

@@ -92,6 +92,24 @@ public class Campaign {
         return recoveryAttribution;
     }
 
+    /**
+     * The attempt number of this campaign's current recovery action: {@code attempt_count}, or 1 while it is null or below
+     * 1 (a fresh campaign has {@code attempt_count = 0}; its first intent is attempt 1). The one rule for intent creation
+     * ({@code ActionIntentService}) and the compliance duplicate check. Not a getter name, so JPA and Jackson ignore it.
+     */
+    public int currentAttemptNumber() {
+        return (attemptCount == null || attemptCount < 1) ? 1 : attemptCount;
+    }
+
+    /**
+     * The one "recovered" rule for every metric (analytics, customer summary): RECOVERED with MEND attribution. Late
+     * captures of the original payment and RECOVERED rows without attribution (before V15) are not MEND recoveries.
+     */
+    public boolean recoveredByMend() {
+        return currentState == CampaignStatus.RECOVERED
+                && recoveryAttribution == com.mend.domain.enums.RecoveryAttribution.MEND;
+    }
+
     public void setRecoveryAttribution(com.mend.domain.enums.RecoveryAttribution recoveryAttribution) {
         this.recoveryAttribution = recoveryAttribution;
     }

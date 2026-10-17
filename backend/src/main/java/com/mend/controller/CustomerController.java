@@ -2,6 +2,7 @@ package com.mend.controller;
 
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.repository.*;
 import com.mend.dto.*;
 import com.mend.exception.InvalidRequestException;
@@ -16,9 +17,13 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/v1/customers")
@@ -107,17 +112,26 @@ public class CustomerController {
         List<Campaign> campaigns = campaignRepository.findByMerchantIdAndCustomerIdHash(merchantId, customerIdHash);
         long total = campaigns.size();
         long active = campaigns.stream().filter(c -> c.getCurrentState() != CampaignStatus.RECOVERED && c.getCurrentState() != CampaignStatus.EXHAUSTED && c.getCurrentState() != CampaignStatus.CANCELLED).count();
-        long recovered = campaigns.stream().filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED).count();
+        // Same attribution rule as analytics: only MEND recoveries count as recovered; late capture and unknown
+        // attribution are reported separately.
+        long recovered = campaigns.stream().filter(Campaign::recoveredByMend).count();
 
-        BigDecimal totalFailed = campaigns.stream()
-                .map(this::resolveAmount)
-                .filter(java.util.Objects::nonNull)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalRecovered = campaigns.stream()
-                .filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED)
-                .map(this::resolveAmount)
-                .filter(java.util.Objects::nonNull)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // Same amount rule as analytics: each amount is resolved once (strict); a campaign without one is excluded from
+        // every sum and counted in amountUnknownCount, never given a default.
+        Map<UUID, BigDecimal> amounts = new HashMap<>();
+        campaigns.forEach(c -> amounts.put(c.getId(), resolveAmount(c)));
+        long amountUnknown = amounts.values().stream().filter(Objects::isNull).count();
+
+        BigDecimal totalFailed = sumAmounts(campaigns.stream(), amounts);
+        BigDecimal totalRecovered = sumAmounts(campaigns.stream().filter(Campaign::recoveredByMend), amounts);
+
+        List<Campaign> lateCapture = campaigns.stream()
+                .filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED
+                        && c.getRecoveryAttribution() == RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE)
+                .toList();
+        List<Campaign> attributionUnknown = campaigns.stream()
+                .filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED && c.getRecoveryAttribution() == null)
+                .toList();
 
         List<String> riskSignals = new ArrayList<>();
         if (total > 3) {
@@ -135,10 +149,24 @@ public class CustomerController {
                 .max(Instant::compareTo)
                 .orElse(Instant.now());
 
-        return new CustomerSummaryDto(
+        CustomerSummaryDto summary = new CustomerSummaryDto(
                 customerIdHash, merchantId, total, active, recovered,
                 totalFailed, totalRecovered, riskSignals, lastActivity
         );
+        summary.setRecoveredLateCaptureCount(lateCapture.size());
+        summary.setAmountRecoveredLateCapture(sumAmounts(lateCapture.stream(), amounts));
+        summary.setRecoveredAttributionUnknownCount(attributionUnknown.size());
+        summary.setAmountRecoveredAttributionUnknown(sumAmounts(attributionUnknown.stream(), amounts));
+        summary.setAmountUnknownCount(amountUnknown);
+        return summary;
+    }
+
+    /** Exact sum of the resolved amounts; a campaign without one adds nothing (never a default). */
+    private static BigDecimal sumAmounts(Stream<Campaign> campaigns, Map<UUID, BigDecimal> amounts) {
+        return campaigns
+                .map(c -> amounts.get(c.getId()))
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private BigDecimal resolveAmount(Campaign campaign) {

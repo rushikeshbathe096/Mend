@@ -34,6 +34,8 @@ export default function DemoEnginePage() {
   const [scenarios, setScenarios] = useState<DemoScenarioDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The backend registers /api/v1/demo only when mend.demo.enabled=true (dev profile); otherwise it answers 404.
+  const [demoDisabled, setDemoDisabled] = useState(false);
 
   const [runningScenario, setRunningScenario] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -46,11 +48,16 @@ export default function DemoEnginePage() {
     }
     setLoading(true);
     setError(null);
+    setDemoDisabled(false);
     try {
       const data = await api.get<DemoScenarioDto[]>('/demo/scenarios', { merchantId: currentMerchantId });
       setScenarios(data || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to load the demo scenario catalog.');
+      if (err instanceof ApiError && err.status === 404) {
+        setDemoDisabled(true);
+      } else {
+        setError(err.message || 'Failed to load the demo scenario catalog.');
+      }
     } finally {
       setLoading(false);
     }
@@ -113,6 +120,11 @@ export default function DemoEnginePage() {
             <CardSkeleton />
             <CardSkeleton />
           </div>
+        ) : demoDisabled ? (
+          <EmptyState
+            title="Demo disabled"
+            description="The demo scenarios are turned off in this environment. They are available only when the backend runs with the dev profile (SPRING_PROFILES_ACTIVE=dev)."
+          />
         ) : scenarios.length === 0 ? (
           <EmptyState title="No Demo Scenarios Available" description="The demo catalog could not be loaded from the backend." />
         ) : (

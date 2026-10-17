@@ -32,6 +32,10 @@ public class RedisWebhookEventConsumer {
     private final String consumerGroup;
     private final String consumerName;
 
+    /** False in tests, which drive pollAndProcessMessages explicitly (as for the scheduler, outbox and reconciler). */
+    @org.springframework.beans.factory.annotation.Value("${mend.consumer.scheduled-enabled:true}")
+    private boolean scheduledEnabled = true;
+
     @Autowired
     public RedisWebhookEventConsumer(
             StringRedisTemplate redisTemplate,
@@ -66,6 +70,12 @@ public class RedisWebhookEventConsumer {
     }
 
     @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${mend.consumer.poll-interval-ms:2000}")
+    public void scheduledPoll() {
+        if (scheduledEnabled) {
+            pollAndProcessMessages();
+        }
+    }
+
     public int pollAndProcessMessages() {
         initConsumerGroup();
         int count = pollStream(streamName);

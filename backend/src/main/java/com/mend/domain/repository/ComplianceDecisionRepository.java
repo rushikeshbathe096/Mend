@@ -1,7 +1,6 @@
 package com.mend.domain.repository;
 
 import com.mend.domain.entity.ComplianceDecisionEntity;
-import com.mend.domain.enums.ComplianceStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -16,7 +15,6 @@ public interface ComplianceDecisionRepository extends JpaRepository<ComplianceDe
 
     Optional<ComplianceDecisionEntity> findFirstByCampaignIdOrderByEvaluatedAtDesc(UUID campaignId);
 
-    boolean existsByCampaignIdAndStatus(UUID campaignId, ComplianceStatus status);
 
     List<ComplianceDecisionEntity> findByMerchantId(UUID merchantId);
 }

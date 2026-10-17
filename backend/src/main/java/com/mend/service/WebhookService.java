@@ -9,10 +9,8 @@ import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.MerchantRepository;
 import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
-import com.mend.dto.event.WebhookEventEnvelope;
 import com.mend.dto.event.WebhookOutboxPayload;
 import com.mend.dto.WebhookResponseDto;
-import com.mend.events.WebhookEventMessage;
 import com.mend.exception.InvalidRequestException;
 import com.mend.exception.WebhookSignatureException;
 import com.mend.security.RazorpaySignatureVerifier;
@@ -150,36 +148,8 @@ public class WebhookService {
     }
 
     private String serializeOutboxPayload(WebhookEvent event) {
-        Instant occurredAt = event.getEventCreatedAt() != null ? event.getEventCreatedAt() : event.getReceivedAt();
-        if (occurredAt == null) {
-            occurredAt = Instant.now();
-        }
-
-        WebhookEventMessage message = new WebhookEventMessage(
-                event.getId(),
-                event.getExternalEventId(),
-                event.getMerchantId(),
-                event.getEventType(),
-                occurredAt,
-                event.getPayloadHash(),
-                WebhookEventMessage.DEFAULT_VERSION,
-                event.getRawPayload()
-        );
-        WebhookEventEnvelope envelope = new WebhookEventEnvelope(
-                event.getExternalEventId(),
-                1,
-                event.getSource() != null ? event.getSource() : "RAZORPAY",
-                event.getExternalEventId(),
-                event.getEventType(),
-                event.getMerchantId(),
-                event.getId(),
-                occurredAt,
-                event.getReceivedAt() != null ? event.getReceivedAt() : occurredAt,
-                event.getPayloadHash()
-        );
-
         try {
-            return objectMapper.writeValueAsString(new WebhookOutboxPayload(message, envelope));
+            return objectMapper.writeValueAsString(WebhookOutboxPayload.forWebhook(event));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to serialize webhook outbox payload", e);
         }

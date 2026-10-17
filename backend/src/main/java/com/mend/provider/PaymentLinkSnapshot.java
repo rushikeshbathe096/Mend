@@ -38,4 +38,12 @@ public record PaymentLinkSnapshot(
         }
         capturedPaymentIds = List.copyOf(capturedPaymentIds);
     }
+
+    /**
+     * True when a stored provider reference names a payment link (provider link ids start with {@code plink_}), so it can
+     * be looked up by id; anything else (null, a payment id, a debit reference) is looked up by attempt key instead.
+     */
+    public static boolean isLinkId(String providerReference) {
+        return providerReference != null && providerReference.startsWith("plink_");
+    }
 }

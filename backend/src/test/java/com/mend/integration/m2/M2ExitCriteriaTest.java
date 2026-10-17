@@ -23,6 +23,20 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import javax.sql.DataSource;
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Statement;
+
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -61,6 +75,7 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private MockPaymentProvider mock;
     @Autowired private BlockingPaymentProvider provider;
+    @Autowired private DataSource dataSource;
 
     @MockitoBean private RecoveryOrchestratorService recoveryOrchestratorService;
 
@@ -167,11 +182,85 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
     }
 
     /** Fails the test if a worker thread died: the scheduler handles per-intent errors itself, so anything escaping is a bug. */
-    private static void join(Future<?> future) throws Exception {
+    private void join(Future<?> future) throws Exception {
         try {
-            future.get(20, TimeUnit.SECONDS);
+            awaitOrDumpEvidence(future, 20, "worker");
         } catch (ExecutionException crashed) {
             throw new AssertionError("worker thread failed", crashed.getCause());
+        }
+    }
+
+    /**
+     * On a timeout, writes the evidence needed to classify it (thread dump with lock owners, Hikari pool state,
+     * pg_stat_activity, ungranted pg_locks) to target/m2-exit-evidence-*.txt before rethrowing. Uses its own
+     * DriverManager connection and a file, so neither a starved pool nor a blocked stdout can hide the evidence.
+     */
+    private void awaitOrDumpEvidence(Future<?> future, long seconds, String what) throws Exception {
+        try {
+            future.get(seconds, TimeUnit.SECONDS);
+        } catch (TimeoutException timedOut) {
+            Path file = Path.of("target", "m2-exit-evidence-" + System.currentTimeMillis() + ".txt");
+            try {
+                Files.writeString(file, evidence(what));
+                System.err.println("M2ExitCriteriaTest: timeout evidence written to " + file.toAbsolutePath());
+            } catch (IOException | RuntimeException ignored) {
+                // evidence is best effort; the timeout itself is still reported
+            }
+            throw timedOut;
+        }
+    }
+
+    private String evidence(String what) {
+        StringBuilder out = new StringBuilder("timeout waiting for " + what + " at " + Instant.now() + "\n\n== Hikari ==\n");
+        if (dataSource instanceof HikariDataSource hikari) {
+            HikariPoolMXBean pool = hikari.getHikariPoolMXBean();
+            out.append("maximumPoolSize=").append(hikari.getMaximumPoolSize()).append(" minimumIdle=").append(hikari.getMinimumIdle())
+                    .append(" connectionTimeout=").append(hikari.getConnectionTimeout())
+                    .append(" active=").append(pool.getActiveConnections()).append(" idle=").append(pool.getIdleConnections())
+                    .append(" total=").append(pool.getTotalConnections()).append(" waiting=").append(pool.getThreadsAwaitingConnection()).append('\n');
+            try (Connection c = DriverManager.getConnection(hikari.getJdbcUrl(), hikari.getUsername(), hikari.getPassword());
+                 Statement st = c.createStatement()) {
+                out.append("\n== pg_stat_activity ==\n");
+                table(out, st.executeQuery("SELECT pid, state, wait_event_type, wait_event, xact_start, query_start, now() - query_start AS running, "
+                        + "left(query,120) AS query FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()"));
+                out.append("\n== pg_locks WHERE NOT granted ==\n");
+                table(out, st.executeQuery("SELECT * FROM pg_locks WHERE NOT granted"));
+                out.append("\n== blocking pids ==\n");
+                table(out, st.executeQuery("SELECT pid, pg_blocking_pids(pid) FROM pg_stat_activity WHERE datname = current_database() "
+                        + "AND cardinality(pg_blocking_pids(pid)) > 0"));
+            } catch (Exception queryFailed) {
+                out.append("database evidence failed: ").append(queryFailed).append('\n');
+            }
+        }
+        out.append("\n== threads ==\n");
+        for (ThreadInfo info : ManagementFactory.getThreadMXBean().dumpAllThreads(true, true)) {
+            out.append('"').append(info.getThreadName()).append("\" ").append(info.getThreadState());
+            if (info.getLockName() != null) {
+                out.append(" on ").append(info.getLockName());
+            }
+            if (info.getLockOwnerName() != null) {
+                out.append(" owned by \"").append(info.getLockOwnerName()).append('"');
+            }
+            out.append('\n');
+            for (StackTraceElement frame : info.getStackTrace()) {
+                out.append("    at ").append(frame).append('\n');
+            }
+            for (var monitor : info.getLockedMonitors()) {
+                out.append("    - holds ").append(monitor).append(" (frame ").append(monitor.getLockedStackDepth()).append(")\n");
+            }
+            for (var sync : info.getLockedSynchronizers()) {
+                out.append("    - holds ").append(sync).append('\n');
+            }
+        }
+        return out.toString();
+    }
+
+    private static void table(StringBuilder out, ResultSet rows) throws java.sql.SQLException {
+        ResultSetMetaData meta = rows.getMetaData();
+        while (rows.next()) {
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                out.append(meta.getColumnLabel(i)).append('=').append(rows.getString(i)).append(i < meta.getColumnCount() ? " | " : "\n");
+            }
         }
     }
 
@@ -290,7 +379,7 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
     /**
      * One race: 3 schedulers + the manual path, 2 campaigns sharing an invoice; a 4th thread watches the in-flight count.
      * After the race the provider recovers and one reconciler cycle + one poll run, so SAFE_RETRY resends happen and are
-     * counted separately from first sends. The observer polls in a loop and can miss short states; the database index
+     * counted separately from first sends. The observer polls every ~5 ms and can miss short states; the database index
      * (U6) is the real guarantee, the observer only checks that nothing visible contradicts it.
      */
     private void invoiceRace(Random random, boolean randomReleaseOrder, Outcome outcome) throws Exception {
@@ -336,6 +425,9 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
                         + "WHERE merchant_id = ? AND status IN ('CLAIMED','EXECUTING','NEEDS_RECONCILIATION','AWAITING_PAYMENT') "
                         + "GROUP BY invoice_key) t", Integer.class, merchantId);
                 maxInFlight.accumulateAndGet(worst == null ? 0 : worst, Math::max);
+                // A busy loop ran ~65k queries per run (75% of the test log) and was the thread found stuck in the one
+                // observer timeout; pausing keeps it to one short-lived connection at a time. See docs/audit/cleanup-report.md.
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
             }
         });
 
@@ -377,7 +469,7 @@ class M2ExitCriteriaTest extends AbstractIntegrationTest {
         worker("worker-1").pollAndExecuteDueActions();
 
         done.set(true);
-        observer.get(10, TimeUnit.SECONDS);
+        awaitOrDumpEvidence(observer, 10, "observer");
 
         assertTrue(maxInFlight.get() <= 1, "observed in-flight intents for one invoice: " + maxInFlight.get());
         long finalInFlight = List.of(reload(x), reload(y)).stream().filter(i -> IN_FLIGHT.contains(i.getStatus().name())).count();

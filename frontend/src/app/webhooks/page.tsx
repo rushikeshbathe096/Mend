@@ -10,18 +10,9 @@ import { TableSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { WebhookEventDetailDto, PageResponse } from '@/types';
+import { WEBHOOK_EVENT_STATUSES } from '@/lib/webhookStatus';
 
-const WEBHOOK_STATUSES = [
-  'ALL',
-  'RECEIVED',
-  'UNVERIFIED',
-  'VERIFIED',
-  'PROCESSING',
-  'PROCESSED',
-  'FAILED',
-  'IGNORED',
-  'DUPLICATE',
-];
+const WEBHOOK_STATUSES = ['ALL', ...WEBHOOK_EVENT_STATUSES];
 
 export default function WebhooksPage() {
   const { currentMerchantId } = useAuth();

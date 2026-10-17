@@ -2,6 +2,8 @@ package com.mend.service;
 
 import com.mend.compliance.ComplianceDecision;
 import com.mend.domain.entity.*;
+import com.mend.domain.enums.ActionIntentStatus;
+import com.mend.domain.enums.ActionType;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.ComplianceReason;
 import com.mend.domain.enums.ComplianceStatus;
@@ -13,11 +15,15 @@ import com.mend.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -50,6 +56,12 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
 
     @Autowired
     private AuditService auditService;
+
+    @Autowired
+    private CampaignRepository campaignRepository;
+
+    @Autowired
+    private ActionIntentRepository actionIntentRepository;
 
     private UUID merchantId;
     private UUID tenantBId;
@@ -172,5 +184,99 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         // Cross-tenant compliance history query -> Blocked
         assertThrows(TenantAccessDeniedException.class, () ->
                 complianceService.getComplianceHistory(tenantBId, campaignA.getId(), merchantAdminUser));
+    }
+
+    /**
+     * Regression (cleanup finding 1): the duplicate-action check used to miss the M2 in-flight states, so a second intent
+     * for the same attempt could pass compliance while the first was awaiting payment or in reconciliation.
+     */
+    @ParameterizedTest
+    @EnumSource(value = ActionIntentStatus.class, names = {"AWAITING_PAYMENT", "NEEDS_RECONCILIATION"})
+    @DisplayName("A second intent for the same attempt is blocked while the first is AWAITING_PAYMENT / NEEDS_RECONCILIATION")
+    void secondIntentForSameAttemptIsBlockedWhileFirstIsInM2InFlightState(ActionIntentStatus firstIntentStatus) {
+        Campaign campaign = eligibleCampaignWithFirstIntent("PAY-COMP-DUP-" + firstIntentStatus, firstIntentStatus);
+
+        ComplianceDecision decision = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId());
+
+        assertTrue(decision.isBlocked());
+        assertEquals(ComplianceReason.DUPLICATE_ACTION, decision.getReason());
+    }
+
+    /**
+     * Regression (cleanup follow-up finding 1): a fresh campaign has attempt_count = 0 while its first intent is attempt 1.
+     * The duplicate check compared 0 with 1 and never matched; it now uses Campaign.currentAttemptNumber(), the rule
+     * intent creation uses.
+     */
+    @ParameterizedTest
+    @EnumSource(value = ActionIntentStatus.class, names = {"CLAIMED", "EXECUTING", "NEEDS_RECONCILIATION", "AWAITING_PAYMENT"})
+    @DisplayName("Fresh campaign (attempt_count = 0) with an in-flight attempt-1 intent is blocked as DUPLICATE_ACTION")
+    void freshCampaignWithInFlightFirstIntentIsBlocked(ActionIntentStatus firstIntentStatus) {
+        Campaign campaign = eligibleCampaignWithFirstIntent("PAY-COMP-FRESH-" + firstIntentStatus, firstIntentStatus, 0);
+        assertEquals(0, campaignRepository.findById(campaign.getId()).orElseThrow().getAttemptCount());
+
+        ComplianceDecision decision = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId());
+
+        assertTrue(decision.isBlocked());
+        assertEquals(ComplianceReason.DUPLICATE_ACTION, decision.getReason());
+    }
+
+    @Test
+    @DisplayName("Control: an ended (FAILED) first intent for the same attempt does not block")
+    void endedFirstIntentDoesNotBlock() {
+        Campaign campaign = eligibleCampaignWithFirstIntent("PAY-COMP-DUP-FAILED", ActionIntentStatus.FAILED);
+
+        ComplianceDecision decision = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId());
+
+        assertTrue(decision.isAllowed());
+        assertEquals(ComplianceReason.ALLOWED, decision.getReason());
+    }
+
+    @Test
+    @DisplayName("Existing-action states = every in-flight state + PENDING, SCHEDULED, READY, SUCCEEDED")
+    void existingActionStatesIncludeEveryInFlightState() {
+        EnumSet<ActionIntentStatus> expected = EnumSet.of(
+                ActionIntentStatus.PENDING, ActionIntentStatus.SCHEDULED, ActionIntentStatus.READY,
+                ActionIntentStatus.CLAIMED, ActionIntentStatus.EXECUTING, ActionIntentStatus.NEEDS_RECONCILIATION,
+                ActionIntentStatus.AWAITING_PAYMENT, ActionIntentStatus.SUCCEEDED);
+        for (ActionIntentStatus status : ActionIntentStatus.values()) {
+            assertEquals(expected.contains(status), ComplianceService.countsAsExistingAction(status), status.name());
+            if (status.isInFlight()) {
+                assertTrue(ComplianceService.countsAsExistingAction(status), status + " is in flight");
+            }
+        }
+        assertFalse(ComplianceService.countsAsExistingAction(null));
+    }
+
+    /**
+     * An ELIGIBLE campaign whose strategy is allowed (same context as the allowed pipeline above), on attempt 1, with a
+     * first intent for attempt 1 in {@code firstIntentStatus}. Execution sets attempt_count to the intent's attempt number.
+     */
+    private Campaign eligibleCampaignWithFirstIntent(String paymentId, ActionIntentStatus firstIntentStatus) {
+        return eligibleCampaignWithFirstIntent(paymentId, firstIntentStatus, 1);
+    }
+
+    private Campaign eligibleCampaignWithFirstIntent(String paymentId, ActionIntentStatus firstIntentStatus, Integer attemptCount) {
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), paymentId, "payment.failed");
+        event.setMerchantId(merchantId);
+        event = webhookEventRepository.save(event);
+
+        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, "CUST-DUP", null);
+        campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "Classified", "SYSTEM", null);
+        campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
+        classificationResultRepository.save(new ClassificationResult(
+                UUID.randomUUID(), event.getId(), campaign.getId(),
+                "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
+                "SCHEDULE_RETRY", "Soft failure", "v1.0.0"));
+        recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
+
+        campaign.setAttemptCount(attemptCount);
+        campaign = campaignRepository.saveAndFlush(campaign);
+
+        ActionIntent first = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
+                ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.RETRY_LATER.name(), null,
+                firstIntentStatus, "intent:" + UUID.randomUUID(), Instant.now());
+        first.setInvoiceKey(campaign.getInvoiceKey());
+        actionIntentRepository.saveAndFlush(first);
+        return campaign;
     }
 }

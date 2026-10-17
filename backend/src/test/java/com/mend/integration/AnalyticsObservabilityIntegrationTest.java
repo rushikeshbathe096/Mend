@@ -167,11 +167,18 @@ public class AnalyticsObservabilityIntegrationTest extends AbstractIntegrationTe
         assertNotNull(dto);
 
         assertEquals(2, dto.getTotalCampaigns());
-        assertEquals(1, dto.getRecoveredCampaigns());
+        // cleanup behaviour change: campaignA1 is RECOVERED with no recovery_attribution (legacy row), so it is reported
+        // as "attribution unknown", not as recovered by MEND (Group 4, docs/audit/cleanup-report.md).
+        assertEquals(0, dto.getRecoveredCampaigns());
+        assertEquals(1, dto.getRecoveredAttributionUnknownCount());
         assertEquals(1, dto.getActiveCampaigns());
-        assertEquals(50.0, dto.getRecoveryRate());
+        // cleanup behaviour change: the rate counts recoveries by MEND only (was 50.0 with the legacy row counted).
+        assertEquals(0.0, dto.getRecoveryRate());
         assertEquals(1, dto.getComplianceBlocks());
-        assertTrue(dto.getRevenueAtRisk() > 0.0);
+        // cleanup behaviour change: neither campaign has a resolvable original amount (webhook evt_a1 is not keyed by
+        // pay_a1/pay_a2 and has no currency); revenue at risk was > 0 only from the fabricated 1000.00 default.
+        assertEquals(0, new BigDecimal("0.00").compareTo(dto.getRevenueAtRisk()));
+        assertEquals(2, dto.getAmountUnknownCount());
     }
 
     @Test

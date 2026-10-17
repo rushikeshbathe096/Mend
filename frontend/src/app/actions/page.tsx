@@ -19,7 +19,10 @@ import {
   ReviewDecisionResponse,
 } from '@/types';
 
-const ACTION_STATUSES = ['ALL', 'SCHEDULED', 'READY', 'CLAIMED', 'SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED'];
+const ACTION_STATUSES = [
+  'ALL', 'SCHEDULED', 'READY', 'CLAIMED', 'EXECUTING', 'NEEDS_RECONCILIATION', 'AWAITING_PAYMENT',
+  'SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED',
+];
 
 type Tab = 'approvals' | 'intents';
 

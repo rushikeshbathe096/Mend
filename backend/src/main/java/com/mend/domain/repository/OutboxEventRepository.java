@@ -30,5 +30,4 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
     Optional<OutboxEvent> findByAggregateTypeAndAggregateIdAndEventType(
             String aggregateType, UUID aggregateId, String eventType);
 
-    boolean existsByAggregateTypeAndAggregateId(String aggregateType, UUID aggregateId);
 }

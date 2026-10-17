@@ -47,12 +47,6 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
 
     List<ActionIntent> findByStatus(ActionIntentStatus status);
 
-    @Query("SELECT a FROM ActionIntent a WHERE a.status = :status AND a.scheduledAt <= :now ORDER BY a.scheduledAt ASC")
-    List<ActionIntent> findDueIntents(
-            @Param("status") ActionIntentStatus status,
-            @Param("now") Instant now,
-            Pageable pageable
-    );
 
     @Query("""
             SELECT a
