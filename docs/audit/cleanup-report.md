@@ -355,3 +355,77 @@ Both runs applied 16 migrations, so V16 also succeeds on a fresh database.
 9. **Local state**:
    - Two `mend_test_*` databases from aborted runs (`…1791726135…`, `…1791737945…`) remain until the 24 h sweep.
    - A git worktree from another session is registered at `/tmp/claude-1000/…/b1176de1…/scratchpad/main-wt` (`b669205`, detached). It was not created by this work and was left alone.
+
+## Follow-up: out-of-scope findings 1, 2, 3 and 5 fixed
+
+Owner request after the cleanup: fix four of the findings above, one commit each, with the full suite after each one. Nothing is merged or pushed.
+
+| finding | commit | subject | backend `./mvnw test` | seed (`randomizedInvoiceRaces`) |
+|---|---|---|---|---|
+| 2 | `0d7e36c` | security: no default JWT secret outside dev | `[INFO] Tests run: 665, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` | 429886477657 |
+| 1 | `e3b4773` | fix: compliance duplicate check includes M2 in-flight states | `[INFO] Tests run: 669, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` | 664747029071 |
+| 3 | `c6d5834` | fix: customer summary counts only MEND recoveries | `[INFO] Tests run: 671, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` | 831541495399 |
+| 5 | `f803138` | frontend: webhook filter only real statuses | `[INFO] Tests run: 671, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (backend unchanged) | 945862665975 |
+
+### Finding 2: no default JWT secret outside dev (`0d7e36c`)
+
+- `application.properties`: `jwt.secret=${JWT_SECRET:}`, so there is no default secret.
+- `application-dev.properties`: `jwt.secret=${JWT_SECRET:dev_default_jwt_secret_key_must_be_at_least_32_bytes_long}`, a dev-only value. `application-test.properties` keeps its own secret, unchanged.
+- `JwtService` fails startup with one of two clear messages:
+  - missing or blank: `jwt.secret is not configured: set JWT_SECRET (at least 32 bytes). Only the dev profile has a built-in development secret.`
+  - fewer than 32 UTF-8 bytes: `jwt.secret is too short: JWT_SECRET must be at least 32 bytes (HS256)`
+- `.env.example`: `JWT_SECRET` is marked required outside the dev profile, and the backend fails to start without it.
+- `README.md`: the Profiles table has a new `JWT_SECRET` column (required in `default`, optional in `dev`).
+- New `JwtSecretConfigurationTest` (5 tests). Each context loads the real `application*.properties` through `ConfigDataApplicationContextInitializer`:
+  - default profile with `JWT_SECRET=` → context fails, root cause is the "not configured" message
+  - default profile with a 31-byte secret → fails as "too short"
+  - default profile with a 32-byte secret → starts
+  - `dev` profile without `JWT_SECRET` → starts
+  - the constructor rejects null, blank and short secrets
+- Deviation: these are `ApplicationContextRunner` contexts (`JwtService` + `ObjectMapper` plus the shipped config files), not a full application boot. A full boot would need the database, and in the `dev` profile it would seed the run's shared test database.
+
+### Finding 1: the compliance duplicate check includes the M2 in-flight states (`e3b4773`)
+
+- `ComplianceService.countsAsExistingAction(status)` = `status.isInFlight()` (CLAIMED, EXECUTING, NEEDS_RECONCILIATION, AWAITING_PAYMENT) or one of PENDING, SCHEDULED, READY, SUCCEEDED. Those four are the non-in-flight states the check already counted. Any state added to `isInFlight()` later is counted automatically.
+- New tests in `ComplianceServiceTest` (+4):
+  - `secondIntentForSameAttemptIsBlockedWhileFirstIsInM2InFlightState`, parameterized for `AWAITING_PAYMENT` and `NEEDS_RECONCILIATION`: an ELIGIBLE campaign on attempt 1 already has an attempt-1 intent in that state, and compliance returns `DUPLICATE_ACTION`
+  - `endedFirstIntentDoesNotBlock` (control): a FAILED first intent is still `ALLOWED`
+  - `existingActionStatesIncludeEveryInFlightState`: checks the exact set over every `ActionIntentStatus`, and that every in-flight state is included
+- Checked against the old behaviour: with the old CLAIMED/EXECUTING-only in-flight list put back temporarily, the class ran `Tests run: 7, Failures: 3`, with exactly the 3 new regression tests failing. The fix was then restored.
+
+### Finding 3: the customer summary counts only MEND recoveries (`c6d5834`)
+
+- New `Campaign.recoveredByMend()`: RECOVERED with `recovery_attribution = MEND`. The method name has no `get`/`is` prefix, so JPA (field access) and Jackson both ignore it. `AnalyticsQueryService` now uses it in place of its private copy, so analytics and the customer summary apply one rule.
+- `CustomerSummaryDto`:
+  - `recoveredCampaigns` and `totalRecoveredAmount` count MEND recoveries only
+  - new fields, reported separately with the analytics names: `recoveredLateCaptureCount`, `amountRecoveredLateCapture`, `recoveredAttributionUnknownCount`, `amountRecoveredAttributionUnknown`
+  - `totalFailedAmount` and `activeCampaigns` are unchanged
+- Applies to both `GET /api/v1/customers` and `GET /api/v1/customers/{hash}`, which build the same summary.
+- New `CustomerSummaryAttributionIntegrationTest` (2 tests), with one customer whose four campaigns are MEND ₹499.00, late capture ₹250.00, unknown ₹100.00 and active ₹300.00:
+  - recovered = 1 / ₹499.00, late capture 1 / ₹250.00, unknown 1 / ₹100.00, failed total ₹1149.00, on both the profile and list endpoints
+  - every recovered field equals the corresponding `AnalyticsQueryService.getAnalyticsOverview` field for the same campaigns
+- No existing test changed.
+
+### Finding 5: the webhook filter offers only real statuses (`f803138`)
+
+- New `frontend/src/lib/webhookStatus.ts` defines `WEBHOOK_EVENT_STATUSES = ['RECEIVED', 'VERIFIED', 'PROCESSED', 'FAILED']`. The webhooks page filter is now `['ALL', ...WEBHOOK_EVENT_STATUSES]`, with `UNVERIFIED` and `DUPLICATE` removed.
+- New tests (+3):
+  - `webhookStatus.test.ts` reads `backend/.../WebhookEventStatus.java` and asserts the list is exactly its constants, in order, without UNVERIFIED or DUPLICATE
+  - `webhooks/page.test.tsx` asserts the rendered `<select>` options are exactly `ALL, RECEIVED, VERIFIED, PROCESSED, FAILED`
+- `npm test -- --ci` → `Tests: 42 passed, 42 total` (`Test Suites: 16 passed, 16 total`; was 39).
+- `npm run build` → `✓ Compiled successfully`.
+- Lint on the touched files: `webhooks/page.tsx` has the same 2 pre-existing errors before and after (`react-hooks/set-state-in-effect`). The new files add none.
+- The backend is unchanged in this commit. The full backend suite was still run at `f803138` (row above).
+
+### End state
+
+- Backend: 660 → **671** tests (+5 JWT, +4 compliance, +2 customer summary), all with 0 failures, 0 errors and 0 skipped. No test was deleted and no existing assertion changed.
+- Frontend: 39 → **42** jest tests, and `next build` succeeds.
+
+### Out-of-scope findings (new, not changed)
+
+1. **Attempt numbering in the duplicate check**: a new campaign has `attempt_count = 0`, but its first intent is attempt 1. The duplicate check (`attemptCount.equals(intent.getAttemptNumber())`) therefore matches only after execution has set `attempt_count` to the intent's attempt number (`ActionExecutionService` line 359). Before that, `ActionIntentService`'s idempotency key still returns the existing live intent, and the V13 index still holds.
+2. **Customer summary amounts**: `totalFailedAmount` still leaves out campaigns with no resolvable amount, and there is no `amountUnknownCount` as in analytics Group 4.
+3. **Frontend customer types and UI**: the `CustomerSummaryDto` type and the customer pages do not show the new late-capture and unknown fields yet (compare finding 4 above).
+4. **`Badge`** still has a `DUPLICATE` case. It is harmless, and the landing page uses `DUPLICATE` as a demo-scenario id, not as a webhook status.
+5. **`webhookStatus.test.ts`** reads a backend source file, so the frontend tests assume the monorepo layout.
