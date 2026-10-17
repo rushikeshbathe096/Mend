@@ -1,0 +1,78 @@
+# M3 — implementation plan and acceptance checklist
+
+Branch `m3/honest-intelligence` from local `main` @ `1c7fb7d` (`ci-v1`). Each unit: plan in
+`docs/next-phase/progress.md` → small commits → full verify → regression test + revert proof per behaviour change →
+fresh-subagent review → log. Fixed rules (not changeable): AI never on the payment hot path; AI never decides a financial
+action; no fabricated confidence, model versions, scores or fallbacks; one AI task only.
+
+## Units (refined from the inventory)
+
+- **U2.1 Deterministic failure taxonomy.** `com.mend.taxonomy` (pure Java, no Spring):
+  - `FailureClass` (9 classes, ADR-003 §1), `ProviderFailure(code, reason, source)`, `FailureTaxonomy.classify(...)`
+    returning `FailureClassification(class, matchedOn, rule, docUrl, tableVersion)`.
+  - The table maps every documented Razorpay reason that has a recovery meaning; each row carries the docs URL.
+  - Fallback by `source`: `gateway` / `razorpay` → `GATEWAY_ERROR` (documented as transient). Everything else →
+    `UNCLASSIFIED`.
+  - Tests: one per mapped reason (parameterized from the table), unmapped → UNCLASSIFIED, the source fallback, the
+    doc-derived fixture.
+  - Not wired yet.
+- **U2.2 AI off the hot path.**
+  - `ClassificationService` uses `FailureTaxonomy`; `DefaultEventProcessingService` passes reason, code and source.
+  - `RecoveryOrchestratorService` drops the agent step: strategy → compliance → intent.
+  - V19: `classification_results.confidence` becomes nullable (rows kept).
+  - Strategy and eligibility are keyed by class, and the confidence gates in eligibility, strategy and compliance are
+    removed in this unit. Reason: a deterministic class has no confidence, so the gates would block every campaign.
+    This moves that part of U2.3 forward; recorded as a DECISION.
+  - The ai-service timeout no longer touches payments.
+  - Proof: payment-flow tests with ai-service unreachable (`mend.ai.base-url=http://127.0.0.1:9`) and with no client
+    bean give identical results.
+- **U2.3 Delete theatre.**
+  - Backend: remove `agent/*`, `AgentOrchestrationController`, `AgentDecisionQueryController`, `dto/ai/Agent*`, the
+    classify/orchestrate client, AI fields on the review, payment and start-recovery DTOs, and `RecommendedAction`
+    storage of AI output.
+  - Remove demo fake agent steps and dev seed fake confidences.
+  - Migration only where needed (no V1–V18 edit). `agent_decision_records` stays as a legacy table (no writer, no API).
+  - Frontend: remove `AgentDecisionStack`, the agent tab, agent confidence and payment agent decisions; show the
+    failure class and the Razorpay reason.
+  - Tests that asserted theatre are rewritten to assert the deterministic behaviour; the count never drops.
+- **U2.4 Customer-reply parsing.**
+  - V20: `customer_replies` (merchant_id, campaign_id, text ≤ 2000, status, attempts, next_attempt_at, created_at) and
+    `reply_suggestions` (reply_id, intent, promised_date, abstain, valid, validation_error, model_id, model_version,
+    prompt_version, created_at).
+  - API `POST/GET /api/v1/campaigns/{id}/replies` (TenantGuard user call).
+  - `ReplyParsingJob` (scheduled, `SKIP LOCKED`, backoff, attempt cap).
+  - Strict validator.
+  - `ReplyPolicy`: OPT_OUT → campaign contact stopped (`campaigns.contact_opted_out_at`, compliance block
+    `CUSTOMER_OPTED_OUT`); ALREADY_PAID → reconciler lookup of the campaign's open intents (`ExecutionReconciler` path),
+    never RECOVERED; DISPUTE → review `CUSTOMER_DISPUTE`; others → shown only.
+  - Retention note: 90 days, purge job M5-owned.
+- **U2.5 Evaluation.**
+  - `docs/m3/eval/replies-v1.jsonl` (SYNTHETIC-labelled) and `docs/m3/eval/LABEL-GUIDE.md`.
+  - `ai-service/eval/run_eval.py` writes dataset version, model id, prompt version, per-class P/R/F1, macro F1,
+    confusion matrix, invalid-output rate and abstention rate.
+  - Keyword baseline run and recorded. The LLM runs only if an API key exists in the environment; otherwise TBD.
+- **U2.6 ai-service reduction.**
+  - Keep `/health` and `/api/v1/parse_reply`.
+  - Delete LangGraph agents, MCP tools, the checkpointer, benchmarks, and the agent/classification tests (replaced by
+    parse_reply tests).
+  - Drop unused deps (langgraph*, psycopg*, langchain-google-genai if not the chosen provider, python-dotenv, PyYAML);
+    keep exactly what is imported.
+  - pytest green; ci script green.
+- **U2.7 Close-out.** Full suites, `M3-summary.md` (≤ 15 lines), ADR-003 Accepted with evidence, checklist ticked,
+  AGENTS.md milestone line.
+
+## §50 acceptance checklist (derived from the M3 rules; the brief itself is not in the repository)
+
+- [ ] 1. The payment flow makes zero ai-service calls (proof test with ai-service unreachable). — U2.2
+- [ ] 2. No AI output can create, stop, hold or approve an action intent. — U2.2/U2.3
+- [ ] 3. No hardcoded confidence, invented model version, synthetic fallback or risk score remains in backend, ai-service or frontend (grep evidence). — U2.3/U2.6
+- [ ] 4. Failure taxonomy is deterministic, table-driven, cites the Razorpay docs per mapping, undocumented → UNCLASSIFIED. — U2.1
+- [ ] 5. Historical rows kept; no V1–V18 edit; new migrations never rewrite data. — U2.2–U2.4
+- [ ] 6. Exactly one AI task (reply parsing), asynchronous, schema-validated, invalid recorded as invalid. — U2.4
+- [ ] 7. Deterministic reply policy; LLM output never triggers a financial action; ALREADY_PAID never marks recovered. — U2.4
+- [ ] 8. Model id/version from the provider response; no key → "model unavailable", no output. — U2.4/U2.6
+- [ ] 9. Replies are PII: tenant-scoped API (TenantGuard), minimal storage, retention noted. — U2.4
+- [ ] 10. Eval dataset versioned + labelled SYNTHETIC; baseline metrics recorded; model metrics only if run. — U2.5
+- [ ] 11. ai-service reduced to parse_reply + health; unused deps removed; pytest green. — U2.6
+- [ ] 12. Test counts never drop; backend 0/0/0; frontend lint 0 errors, tests, build; ai-service pytest. — all
+- [ ] 13. ADR-003 Accepted with evidence; M3-summary.md; AGENTS.md milestone updated. — U2.7

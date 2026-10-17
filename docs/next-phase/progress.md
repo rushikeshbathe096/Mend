@@ -84,3 +84,21 @@ Review (fresh subagent; AGENTS.md + phase-1 spec + diff): no blockers.
 Verify after fixes: backend `[INFO] Tests run: 813, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
 `Tests: 53 passed, 53 total`, build OK, lint exit 0; `migrations.sh` → applied 18, validate OK; actionlint exit 0.
 Next: merge into local main (`--no-ff`), tag `ci-v1`; Phase 2 U2.0 on `m3/honest-intelligence`.
+
+### Phase 2 — M3 honest intelligence (branch `m3/honest-intelligence` from `main` @ `1c7fb7d`)
+
+#### U2.0 design pack
+Plan: inventory every AI call site with file:line; design doc with the M2 headings (standing DECISION); ADR-003 Proposed;
+plan with units refined from the inventory and a §50 checklist derived from the M3 rules.
+Written: `docs/m3/M3-analysis.md`, `docs/m3/M3-design-doc.md`, `docs/adr/ADR-003-honest-intelligence.md`, `docs/m3/M3-plan.md`.
+DECISIONS:
+- Taxonomy keyed by Razorpay `error_reason` (documented as programmatically handleable), fallback `error_source`
+  (`gateway`/`razorpay` documented transient → GATEWAY_ERROR); `error_code` values are not enumerated in the docs, so not
+  used. Source: https://razorpay.com/docs/errors/payments/list/ , https://razorpay.com/docs/errors/ (fetched 2026-10-18).
+- Two classes added with evidence: LIMIT_EXCEEDED (documented limit family), INSTRUMENT_INVALID (card_expired,
+  debit_instrument_blocked/inactive). Strategy per class = the pre-M3 equivalent class's strategy (no new action type, no
+  money-semantics change beyond the spec); UNCLASSIFIED → ineligible like UNKNOWN (fail closed).
+- Confidence-gate removal moves from U2.3 into U2.2: a deterministic class has no confidence, so the gates would block
+  every campaign once the AI call is gone.
+- Reply retention: 90 days stated; the purge job is M5-owned.
+Next: U2.1 taxonomy (review of U2.0 runs in parallel).
