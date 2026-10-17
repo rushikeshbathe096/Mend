@@ -118,6 +118,8 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
         List<CustomerSummaryDto> list = customerController.getCustomers(merchantId.toString(), null).getBody();
         assertEquals(1, list.size());
         assertEquals(1, list.get(0).getRecoveredCampaigns());
+        assertEquals(1, list.get(0).getRecoveredLateCaptureCount());
+        assertEquals(1, list.get(0).getRecoveredAttributionUnknownCount());
     }
 
     @Test
