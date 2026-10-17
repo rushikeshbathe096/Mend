@@ -6,8 +6,8 @@ import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.dto.ActionIntentDto;
 import com.mend.dto.PageResponse;
 import com.mend.exception.ResourceNotFoundException;
-import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -38,7 +38,7 @@ public class RecoveryActionQueryService {
             String sortOrder,
             AuthenticatedUser currentUser) {
 
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         String effectiveSortBy = (sortBy != null && !sortBy.isBlank()) ? sortBy : "createdAt";
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
@@ -60,7 +60,7 @@ public class RecoveryActionQueryService {
 
     @Transactional(readOnly = true)
     public ActionIntentDto getRecoveryAction(UUID merchantId, UUID actionId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         ActionIntent intent = actionIntentRepository.findByMerchantIdAndId(merchantId, actionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Recovery action not found for merchant " + merchantId + " with ID: " + actionId));
@@ -68,12 +68,4 @@ public class RecoveryActionQueryService {
         return ActionIntentDto.fromEntity(intent);
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 }

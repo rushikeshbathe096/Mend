@@ -132,6 +132,10 @@ public class CustomerController {
         List<Campaign> attributionUnknown = campaigns.stream()
                 .filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED && c.getRecoveryAttribution() == null)
                 .toList();
+        List<Campaign> synthetic = campaigns.stream()
+                .filter(c -> c.getCurrentState() == CampaignStatus.RECOVERED
+                        && c.getRecoveryAttribution() == RecoveryAttribution.SYNTHETIC)
+                .toList();
 
         List<String> riskSignals = new ArrayList<>();
         if (total > 3) {
@@ -158,6 +162,8 @@ public class CustomerController {
         summary.setRecoveredAttributionUnknownCount(attributionUnknown.size());
         summary.setAmountRecoveredAttributionUnknown(sumAmounts(attributionUnknown.stream(), amounts));
         summary.setAmountUnknownCount(amountUnknown);
+        summary.setRecoveredSyntheticCount(synthetic.size());
+        summary.setAmountRecoveredSynthetic(sumAmounts(synthetic.stream(), amounts));
         return summary;
     }
 

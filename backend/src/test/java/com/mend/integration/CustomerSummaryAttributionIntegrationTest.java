@@ -1,5 +1,6 @@
 package com.mend.integration;
 
+import com.mend.testsupport.TestUsers;
 import com.mend.controller.CustomerController;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.Merchant;
@@ -94,6 +95,23 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
         campaignWithUnknownAmount(null, false, CampaignStatus.RECOVERED, RecoveryAttribution.MEND);    // no webhook
     }
 
+    @Test
+    @DisplayName("Review fix: a SYNTHETIC (mock) recovery is reported separately, never as MEND, and agrees with analytics")
+    void syntheticRecoveryIsReportedSeparately() {
+        campaign(7700, CampaignStatus.RECOVERED, RecoveryAttribution.SYNTHETIC);                     // synthetic 77.00
+
+        CustomerSummaryDto summary = customerController
+                .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
+
+        assertEquals(1, summary.getRecoveredCampaigns(), "still only the MEND recovery");
+        assertMoney("499.00", summary.getTotalRecoveredAmount());
+        assertEquals(1, summary.getRecoveredSyntheticCount());
+        assertMoney("77.00", summary.getAmountRecoveredSynthetic());
+        assertEquals(overview.getRecoveredSyntheticCount(), summary.getRecoveredSyntheticCount());
+        assertEquals(0, overview.getAmountRecoveredSynthetic().compareTo(summary.getAmountRecoveredSynthetic()));
+    }
+
     private static void assertMoney(String expected, BigDecimal actual) {
         assertEquals(0, new BigDecimal(expected).compareTo(actual), "expected " + expected + " but was " + actual);
     }
@@ -127,7 +145,9 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
     void customerSummaryAgreesWithAnalytics() {
         CustomerSummaryDto summary = customerController
                 .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
-        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+        // Bug sweep behaviour change (item 1): user-facing service methods now require a user (TenantGuard);
+        // these calls pass a member of the merchant, as every production caller does. Assertions unchanged.
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
 
         assertEquals(overview.getRecoveredCampaigns(), summary.getRecoveredCampaigns());
         assertEquals(0, overview.getAmountRecovered().compareTo(summary.getTotalRecoveredAmount()));
@@ -160,7 +180,7 @@ class CustomerSummaryAttributionIntegrationTest extends AbstractIntegrationTest 
 
         CustomerSummaryDto summary = customerController
                 .getCustomerProfile(customerIdHash, merchantId.toString(), null).getBody().getSummary();
-        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
 
         assertEquals(overview.getTotalCampaigns(), summary.getTotalCampaigns());
         assertEquals(overview.getAmountUnknownCount(), summary.getAmountUnknownCount());

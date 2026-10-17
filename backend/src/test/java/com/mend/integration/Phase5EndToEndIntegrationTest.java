@@ -25,7 +25,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -59,12 +58,22 @@ public class Phase5EndToEndIntegrationTest {
     @Autowired
     private OutboxPublisherService outboxPublisherService;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private HttpClient httpClient;
+    private final java.util.List<String> ownEventIds = new java.util.ArrayList<>();
+
+    @org.junit.jupiter.api.AfterEach
+    void removeOwnRows() {
+        com.mend.testsupport.TestRows.deleteWebhookEvents(jdbc, ownEventIds);
+    }
 
     @BeforeEach
     void setUp() {
         httpClient = HttpClient.newHttpClient();
-        webhookEventRepository.deleteAll();
+        // Bug sweep item 6: own rows only (shared database); other classes' unpublished outbox rows are parked, not deleted.
+        jdbc.update("UPDATE outbox_events SET next_attempt_at = now() + interval '30 days' WHERE status <> 'PUBLISHED'");
         try {
             redisTemplate.delete(redisStreamProperties.getStreamName());
             redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
@@ -77,6 +86,7 @@ public class Phase5EndToEndIntegrationTest {
     @DisplayName("Phase 5 E2E: Webhook POST -> DB -> Redis Stream -> Consumer -> Downstream Processing -> ACK")
     void testEndToEndWebhookRedisPipeline() throws Exception {
         String eventId = "evt_p5_e2e_" + UUID.randomUUID().toString().substring(0, 8);
+        ownEventIds.add(eventId);
         String payload = String.format("""
                 {
                   "event": "payment.failed",
@@ -156,8 +166,7 @@ public class Phase5EndToEndIntegrationTest {
         assertThat(duplicateResponse.statusCode()).isEqualTo(200);
         assertThat(duplicateResponse.body()).contains("DUPLICATE");
 
-        // Verify only 1 webhook event entry exists in PostgreSQL DB
-        List<WebhookEvent> eventsInDb = webhookEventRepository.findAll();
-        assertThat(eventsInDb).hasSize(1);
+        // Verify only 1 webhook event entry exists in PostgreSQL DB for this event (was findAll() on a wiped table)
+        assertThat(com.mend.testsupport.TestRows.countWebhookEvents(jdbc, eventId)).isEqualTo(1);
     }
 }

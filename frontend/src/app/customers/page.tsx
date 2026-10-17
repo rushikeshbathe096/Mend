@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
-import { Badge } from '@/components/common/Badge';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { TableSkeleton } from '@/components/common/Skeleton';
 import { formatCurrency } from '@/components/common/MetricCard';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { CustomerSummaryDto } from '@/types';
 
@@ -23,29 +24,18 @@ export default function CustomersPage() {
 
   const [customers, setCustomers] = useState<CustomerSummaryDto[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchCustomers = useCallback(async () => {
-    if (!currentMerchantId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  const { loading, reload: fetchCustomers } = useLoad(currentMerchantId, async (isCurrent) => {
     try {
       const data = await api.get<CustomerSummaryDto[]>('/customers', { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setCustomers(data || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load customer recovery profiles.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load customer recovery profiles.'));
     }
-  }, [currentMerchantId]);
-
-  useEffect(() => {
-    fetchCustomers();
-  }, [fetchCustomers]);
+  });
 
   const filtered = customers.filter(
     (c) =>

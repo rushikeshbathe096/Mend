@@ -4,9 +4,12 @@ import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.events.RedisEventConstants;
+import com.mend.testsupport.TestRows;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -34,9 +37,19 @@ class RedisStreamRetryServiceTest {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    // Bug sweep item 6: this class deletes only the webhook events it saved (shared database), not the whole table.
+    private final java.util.List<java.util.UUID> ownEventIds = new java.util.ArrayList<>();
+
+    @AfterEach
+    void removeOwnRows() {
+        TestRows.deleteWebhookEventsById(jdbc, ownEventIds);
+    }
+
     @BeforeEach
     void setUp() {
-        webhookEventRepository.deleteAll();
         try {
             redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
             redisTemplate.delete(RedisEventConstants.DLQ_STREAM);
@@ -115,6 +128,7 @@ class RedisStreamRetryServiceTest {
         String extId = "evt_retry_exceeded_" + UUID.randomUUID().toString().substring(0, 8);
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), extId, "payment.failed");
         event = webhookEventRepository.save(event);
+        ownEventIds.add(event.getId());
 
         Map<Object, Object> valueMap = Map.of(
                 "eventId", event.getId().toString(),

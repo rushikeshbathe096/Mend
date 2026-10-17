@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
@@ -9,6 +9,8 @@ import { MetricCard, formatCurrency } from '@/components/common/MetricCard';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { PaymentDetailDto } from '@/types';
 
@@ -18,29 +20,18 @@ export default function PaymentDetailPage() {
   const { currentMerchantId, isLoading: isAuthLoading } = useAuth();
 
   const [detail, setDetail] = useState<PaymentDetailDto | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchPayment = useCallback(async () => {
-    if (isAuthLoading || !currentMerchantId || !paymentId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  const { loading, reload: fetchPayment } = useLoad(isAuthLoading || !currentMerchantId || !paymentId ? null : `${currentMerchantId}|${paymentId}`, async (isCurrent) => {
     try {
       const data = await api.get<PaymentDetailDto>(`/payments/${encodeURIComponent(paymentId)}`, { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setDetail(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load payment details from the backend.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load payment details from the backend.'));
     }
-  }, [currentMerchantId, isAuthLoading, paymentId]);
-
-  useEffect(() => {
-    fetchPayment();
-  }, [fetchPayment]);
+  });
 
   const summary = detail?.paymentSummary;
 

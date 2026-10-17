@@ -66,6 +66,9 @@ class PaymentReconciliationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private HttpClient httpClient;
     private Merchant merchantA;
     private Merchant merchantB;
@@ -73,14 +76,15 @@ class PaymentReconciliationTest {
     @BeforeEach
     void setUp() {
         httpClient = HttpClient.newHttpClient();
-        actionIntentRepository.deleteAll();
-        campaignAttemptRepository.deleteAll();
-        campaignRepository.deleteAll();
-        webhookEventRepository.deleteAll();
-        merchantRepository.deleteAll();
-
+        // Bug sweep item 6: was deleteAll() on intents, attempts, campaigns, webhooks and merchants (every class's rows).
         merchantA = merchantRepository.save(new Merchant(UUID.randomUUID(), "Merchant Alpha"));
         merchantB = merchantRepository.save(new Merchant(UUID.randomUUID(), "Merchant Beta"));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void removeOwnRows() {
+        com.mend.testsupport.TestRows.deleteMerchant(jdbc, merchantA.getId());
+        com.mend.testsupport.TestRows.deleteMerchant(jdbc, merchantB.getId());
     }
 
     @Test
@@ -481,6 +485,7 @@ class PaymentReconciliationTest {
     void testInvalidSignatureRejection() throws Exception {
         String payload = "{\"event_id\":\"evt_bad_sig_recon\",\"event\":\"payment.captured\"}";
         String badSignature = "invalid_signature";
+        long webhooksBefore = webhookEventRepository.count();
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(new URI("http://localhost:" + port + "/api/v1/webhooks/razorpay"))
@@ -492,7 +497,9 @@ class PaymentReconciliationTest {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         assertEquals(401, response.statusCode());
-        assertEquals(0, webhookEventRepository.count());
+        // Nothing persisted (was count() == 0 on a wiped table).
+        assertEquals(0, com.mend.testsupport.TestRows.countWebhookEvents(jdbc, "evt_bad_sig_recon"));
+        assertEquals(webhooksBefore, webhookEventRepository.count());
     }
 
     @Test

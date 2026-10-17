@@ -33,11 +33,10 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({ children }) => {
     }
   }, [isLoading, token, router]);
 
+  const showsReviews = Boolean(token && currentMerchantId && isAdmin);
+
   React.useEffect(() => {
-    if (!token || !currentMerchantId || !isAdmin) {
-      setPendingReviews(0);
-      return;
-    }
+    if (!showsReviews) return;
     let active = true;
     api
       .get<ReviewQueueSummaryDto>('/reviews/summary')
@@ -50,7 +49,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({ children }) => {
     return () => {
       active = false;
     };
-  }, [token, currentMerchantId, isAdmin, pathname]);
+  }, [showsReviews, token, currentMerchantId, pathname]);
+  const pendingReviewCount = showsReviews ? pendingReviews : 0;
 
   if (isLoading || !token) {
     return (
@@ -99,7 +99,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({ children }) => {
                 {active && <span className="absolute left-0 h-6 w-0.5 rounded-r bg-blue-400" />}
                 <svg className={`h-4 w-4 ${active ? 'text-blue-300' : 'text-slate-500 group-hover:text-slate-300'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={item.icon} /></svg>
                 <span>{item.label}</span>
-                {item.label === 'Recovery Actions' && pendingReviews > 0 && <span className="ml-auto rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">{pendingReviews}</span>}
+                {item.label === 'Recovery Actions' && pendingReviewCount > 0 && <span className="ml-auto rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">{pendingReviewCount}</span>}
               </Link>;
             })}
           </nav>

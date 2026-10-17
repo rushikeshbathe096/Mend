@@ -49,6 +49,9 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
     @Autowired
     private MockPaymentProvider mockPaymentProviderClient;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private UUID merchantId;
     private UUID tenantBId;
     private Campaign campaign;
@@ -58,11 +61,9 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
     void setUp() {
         mockPaymentProviderClient.reset();
 
-        actionIntentRepository.deleteAll();
-        campaignAttemptRepository.deleteAll();
-        complianceDecisionRepository.deleteAll();
-        campaignRepository.deleteAll();
-        merchantRepository.deleteAll();
+        // Bug sweep item 6: was deleteAll() on intents, attempts, decisions, campaigns and merchants (every class's rows).
+        // The scheduler polls across merchants, so other classes' claimable rows are parked instead; own rows go in tearDown.
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' WHERE status IN ('READY','SCHEDULED','PENDING')");
 
         merchantId = UUID.randomUUID();
         tenantBId = UUID.randomUUID();
@@ -89,6 +90,12 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
                 "v1.0.0"
         );
         complianceDecision = complianceDecisionRepository.save(complianceDecision);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        com.mend.testsupport.TestRows.deleteMerchant(jdbc, merchantId);
+        com.mend.testsupport.TestRows.deleteMerchant(jdbc, tenantBId);
     }
 
     private ActionIntent createActionIntent(ActionIntentStatus status, Instant scheduledAt, String actionType) {

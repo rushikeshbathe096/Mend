@@ -14,9 +14,12 @@ import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.event.WebhookEventEnvelope;
 import com.mend.dto.event.WebhookOutboxPayload;
 import com.mend.service.OutboxEventStateService;
+import com.mend.testsupport.TestRows;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -66,10 +69,21 @@ class RedisStreamPublisherConsumerTest {
 
     private Merchant testMerchant;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    // Bug sweep item 6: this class deletes only the webhook events it saved (shared database), not the whole table.
+    private final java.util.List<java.util.UUID> ownEventIds = new java.util.ArrayList<>();
+
+    @AfterEach
+    void removeOwnRows() {
+        TestRows.deleteWebhookEventsById(jdbc, ownEventIds);
+        TestRows.deleteMerchant(jdbc, testMerchant.getId());
+    }
+
     @BeforeEach
     void setUp() {
         processor.setSimulateFailure(false);
-        webhookEventRepository.deleteAll();
         try {
             redisTemplate.delete(streamProperties.getStreamName());
             redisTemplate.delete(com.mend.events.RedisEventConstants.RETRY_STREAM);
@@ -103,6 +117,7 @@ class RedisStreamPublisherConsumerTest {
         event.setPayloadHash("hash123456789");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
+        ownEventIds.add(event.getId());
 
         publishThroughOutbox(event);
 
@@ -131,6 +146,7 @@ class RedisStreamPublisherConsumerTest {
         event.setMerchantId(null); // Unknown merchant
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
+        ownEventIds.add(event.getId());
 
         publishThroughOutbox(event);
 
@@ -154,6 +170,7 @@ class RedisStreamPublisherConsumerTest {
         event.setSource("RAZORPAY");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
+        ownEventIds.add(event.getId());
 
         publishThroughOutbox(event);
 
@@ -174,6 +191,7 @@ class RedisStreamPublisherConsumerTest {
         event.setSource("RAZORPAY");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
+        ownEventIds.add(event.getId());
         WebhookOutboxPayload current = WebhookOutboxPayload.forWebhook(event);
         WebhookEventEnvelope e = current.envelope();
         WebhookEventEnvelope futureSchema = new WebhookEventEnvelope(e.getEventId(), 99, e.getProvider(), e.getProviderEventId(),
@@ -197,6 +215,7 @@ class RedisStreamPublisherConsumerTest {
         event.setSource("RAZORPAY");
         event.setPublishStatus(WebhookPublishStatus.PENDING);
         event = webhookEventRepository.save(event);
+        ownEventIds.add(event.getId());
 
         publishThroughOutbox(event);
 

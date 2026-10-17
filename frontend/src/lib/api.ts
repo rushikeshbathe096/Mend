@@ -1,10 +1,13 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
+/** Error body of a failed API response (the backend's ErrorResponse, or a fallback). */
+export type ApiErrorBody = { message?: string; error?: string } & Record<string, unknown>;
+
 export class ApiError extends Error {
   status: number;
-  data: any;
+  data: ApiErrorBody | undefined;
 
-  constructor(status: number, message: string, data?: any) {
+  constructor(status: number, message: string, data?: ApiErrorBody) {
     super(message);
     this.status = status;
     this.data = data;
@@ -96,7 +99,7 @@ export async function fetchApi<T>(endpoint: string, options: RequestOptions = {}
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      let errorData: any = {};
+      let errorData: ApiErrorBody = {};
       try {
         errorData = await response.json();
       } catch {
@@ -110,6 +113,8 @@ export async function fetchApi<T>(endpoint: string, options: RequestOptions = {}
         localStorage.removeItem('mend_user');
         localStorage.removeItem('mend_merchant_id');
         if (window.location.pathname !== '/login') {
+          // A full page load on purpose: this module runs outside React (no router), and the reload drops every in-memory
+          // session state. Kept as the one lint warning (@next/next/no-location-assign-relative-destination).
           window.location.assign('/login');
         }
       }
@@ -122,9 +127,9 @@ export async function fetchApi<T>(endpoint: string, options: RequestOptions = {}
     }
 
     return response.json();
-  } catch (error: any) {
+  } catch (error: unknown) {
     clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       throw new ApiError(408, 'Request timed out after 15 seconds. Please try again.', { error: 'Request Timeout' });
     }
     throw error;
@@ -135,10 +140,10 @@ export const api = {
   get: <T>(endpoint: string, options?: RequestOptions) => 
     fetchApi<T>(endpoint, { ...options, method: 'GET' }),
 
-  post: <T>(endpoint: string, body?: any, options?: RequestOptions) => 
+  post: <T>(endpoint: string, body?: unknown, options?: RequestOptions) => 
     fetchApi<T>(endpoint, { ...options, method: 'POST', body: body ? JSON.stringify(body) : undefined }),
 
-  put: <T>(endpoint: string, body?: any, options?: RequestOptions) => 
+  put: <T>(endpoint: string, body?: unknown, options?: RequestOptions) => 
     fetchApi<T>(endpoint, { ...options, method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
 
   delete: <T>(endpoint: string, options?: RequestOptions) => 

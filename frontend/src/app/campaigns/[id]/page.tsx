@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
@@ -13,6 +13,8 @@ import { AgentDecisionStack } from '@/components/common/AgentDecisionStack';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { intentStepStatus } from '@/lib/intentStatus';
 import { useAuth } from '@/context/AuthContext';
 import { CampaignDto, CampaignTimelineDto, AgentDecisionRecordDto, PageResponse, ReviewItemDto, CampaignDto as CD } from '@/types';
@@ -26,7 +28,6 @@ export default function CampaignDetailPage() {
   const [timeline, setTimeline] = useState<CampaignTimelineDto | null>(null);
   const [agentDecisions, setAgentDecisions] = useState<AgentDecisionRecordDto[]>([]);
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'timeline' | 'actions' | 'compliance' | 'ai' | 'audit'>('timeline');
 
@@ -35,39 +36,29 @@ export default function CampaignDetailPage() {
   const [controlError, setControlError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<'terminate' | 'pause' | null>(null);
 
-  const fetchCampaignDetails = useCallback(async () => {
-    if (!currentMerchantId || !campaignId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-
+  const { loading, reload: fetchCampaignDetails } = useLoad(!currentMerchantId || !campaignId ? null : `${currentMerchantId}|${campaignId}`, async (isCurrent) => {
     try {
       const [cData, tData, dData] = await Promise.all([
         api.get<CampaignDto>(`/campaigns/${campaignId}`, { merchantId: currentMerchantId }),
         api.get<CampaignTimelineDto>(`/campaigns/${campaignId}/timeline`, { merchantId: currentMerchantId }),
         api.get<AgentDecisionRecordDto[]>(`/campaigns/${campaignId}/decisions`, { merchantId: currentMerchantId }).catch(() => []),
       ]);
+      if (!isCurrent()) return;
 
       setCampaign(cData);
       setTimeline(tData);
       setAgentDecisions(dData || []);
+      setError(null);
 
       // Detect an active human-approval review for this campaign
       const reviews = await api.get<PageResponse<ReviewItemDto>>('/reviews?status=PENDING&page=0&size=50', { merchantId: currentMerchantId }).catch(() => null);
+      if (!isCurrent()) return;
       const mine = reviews?.content?.find((r) => r.campaignId === campaignId) || null;
       setPendingReview(mine);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load campaign lifecycle details.');
-    } finally {
-      setLoading(false);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load campaign lifecycle details.'));
     }
-  }, [currentMerchantId, campaignId]);
-
-  useEffect(() => {
-    fetchCampaignDetails();
-  }, [fetchCampaignDetails]);
+  });
 
   // Construct structured timeline steps
   const buildTimelineSteps = (): TimelineStep[] => {
@@ -319,7 +310,7 @@ export default function CampaignDetailPage() {
                 ].map((tab) => (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
+                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
                     className={`py-4 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
                       activeTab === tab.id
                         ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
@@ -469,9 +460,9 @@ export default function CampaignDetailPage() {
                   const endpoint = confirmAction === 'terminate' ? 'terminate' : 'pause';
                   await api.post<CD>(`/campaigns/${campaign.id}/${endpoint}`, {}, { merchantId: currentMerchantId });
                   setConfirmAction(null);
-                  await fetchCampaignDetails();
-                } catch (err: any) {
-                  setControlError(err.message || `Failed to ${confirmAction} the campaign on the backend.`);
+                  fetchCampaignDetails();
+                } catch (err: unknown) {
+                  setControlError(errorMessage(err, `Failed to ${confirmAction} the campaign on the backend.`));
                   setConfirmAction(null);
                 } finally {
                   setControlLoading(false);

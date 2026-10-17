@@ -62,6 +62,7 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
     @Autowired private ComplianceDecisionRepository complianceDecisionRepository;
     @Autowired private MerchantRepository merchantRepository;
     @Autowired private ObservingPaymentProvider paymentProvider;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private final List<UUID> campaignIds = new ArrayList<>();
     private final List<UUID> merchantIds = new ArrayList<>();
@@ -69,12 +70,13 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
     @BeforeEach
     void resetProvider() {
         paymentProvider.reset();
-        actionIntentRepository.deleteAll();
+        // Bug sweep item 6: park every other class's claimable rows instead of deleting all intents (shared database).
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' WHERE status IN ('READY','SCHEDULED','PENDING')");
     }
 
     @AfterEach
     void removeFixtures() {
-        actionIntentRepository.deleteAll();
+        // Own rows only: deleting a fixture campaign cascades to its intents and attempts.
         for (UUID campaignId : campaignIds) {
             campaignRepository.findById(campaignId).ifPresent(campaignRepository::delete);
         }

@@ -193,12 +193,14 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
     /**
      * M2 U9: MEND-side deferral. Only the claim-token holder, only from EXECUTING, and only for outcomes where nothing reached
      * the provider (the caller's classification): back to READY at {@code scheduledAt}, ownership cleared.
+     * Bug sweep item 4: the dispatch moves from executionAttempts (the SAFE_RETRY budget) to deferAttempts.
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE ActionIntent a
                SET a.version = a.version + 1, a.status = com.mend.domain.enums.ActionIntentStatus.READY,
                    a.scheduledAt = :scheduledAt,
+                   a.executionAttempts = a.executionAttempts - 1, a.deferAttempts = a.deferAttempts + 1,
                    a.claimToken = NULL, a.workerId = NULL, a.claimedAt = NULL, a.dispatchedAt = NULL
              WHERE a.id = :id
                AND a.status = com.mend.domain.enums.ActionIntentStatus.EXECUTING

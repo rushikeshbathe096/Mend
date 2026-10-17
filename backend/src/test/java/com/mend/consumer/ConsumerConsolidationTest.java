@@ -17,11 +17,14 @@ import com.mend.events.RedisEventConstants;
 import com.mend.processor.DefaultWebhookEventProcessor;
 import com.mend.security.RazorpaySignatureVerifier;
 import com.mend.service.OutboxPublisherService;
+import com.mend.testsupport.TestRows;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -80,20 +83,29 @@ public class ConsumerConsolidationTest {
     @MockitoBean
     private AiClassificationClient aiClassificationClient;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private HttpClient httpClient;
+    // Bug sweep item 6: own rows only (shared database); other classes' unpublished outbox rows are parked, not deleted.
+    private final java.util.List<String> ownEventIds = new java.util.ArrayList<>();
 
     @BeforeEach
     void setUp() {
         httpClient = HttpClient.newHttpClient();
         defaultWebhookEventProcessor.setSimulateFailure(false);
-        classificationResultRepository.deleteAll();
-        webhookEventRepository.deleteAll();
+        jdbc.update("UPDATE outbox_events SET next_attempt_at = now() + interval '30 days' WHERE status <> 'PUBLISHED'");
         try {
             redisTemplate.delete(redisStreamProperties.getStreamName());
             redisTemplate.delete(RedisEventConstants.RETRY_STREAM);
             redisTemplate.delete(RedisEventConstants.DLQ_STREAM);
         } catch (Exception ignored) {
         }
+    }
+
+    @AfterEach
+    void removeOwnRows() {
+        TestRows.deleteWebhookEvents(jdbc, ownEventIds);
     }
 
     @Test
@@ -127,6 +139,7 @@ public class ConsumerConsolidationTest {
         );
 
         String externalEventId = "evt_dup_" + UUID.randomUUID().toString().substring(0, 8);
+        ownEventIds.add(externalEventId);
         String payload = String.format("""
                 {
                   "event": "payment.failed",
@@ -172,8 +185,8 @@ public class ConsumerConsolidationTest {
         HttpResponse<String> resp2 = httpClient.send(req2, HttpResponse.BodyHandlers.ofString());
         assertThat(resp2.statusCode()).isEqualTo(200);
 
-        // Verify only 1 row in webhook_events
-        assertThat(webhookEventRepository.count()).isEqualTo(1);
+        // Verify only 1 row in webhook_events for this event (was count() on a wiped table)
+        assertThat(TestRows.countWebhookEvents(jdbc, externalEventId)).isEqualTo(1);
 
         // Run the post-commit outbox publisher, then process Redis Stream.
         assertThat(outboxPublisherService.publishDueEvents()).isGreaterThanOrEqualTo(0);
@@ -182,8 +195,9 @@ public class ConsumerConsolidationTest {
             count = redisWebhookEventConsumer.processPendingMessages();
         }
 
-        // Verify only 1 classification result row created
-        assertThat(classificationResultRepository.count()).isEqualTo(1);
+        // Verify only 1 classification result row created for this event (was count() on a wiped table)
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM classification_results c JOIN webhook_events w ON c.event_id = w.id "
+                + "WHERE w.external_event_id = ?", Long.class, externalEventId)).isEqualTo(1);
     }
 
     @Test
@@ -193,6 +207,7 @@ public class ConsumerConsolidationTest {
                 .thenThrow(new RuntimeException("Simulated AI connection timeout"));
 
         String externalEventId = "evt_fallback_" + UUID.randomUUID().toString().substring(0, 8);
+        ownEventIds.add(externalEventId);
         String payload = String.format("""
                 {
                   "event": "payment.failed",
@@ -250,6 +265,7 @@ public class ConsumerConsolidationTest {
     @DisplayName("STEP 9 Failure Test: Genuine processing error leaves message un-ACKed in stream")
     void testGenuineProcessingFailureLeavesMessageUnacked() throws Exception {
         String externalEventId = "evt_fail_ack_" + UUID.randomUUID().toString().substring(0, 8);
+        ownEventIds.add(externalEventId);
         String payload = String.format("""
                 {
                   "event": "payment.failed",

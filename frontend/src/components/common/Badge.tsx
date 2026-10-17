@@ -5,7 +5,7 @@ interface BadgeProps {
   type?: 'campaign' | 'action' | 'webhook' | 'general';
 }
 
-export const Badge: React.FC<BadgeProps> = ({ status, type = 'general' }) => {
+export const Badge: React.FC<BadgeProps> = ({ status }) => {
   const getStyle = (val: string): string => {
     const s = val?.toUpperCase() || '';
     switch (s) {

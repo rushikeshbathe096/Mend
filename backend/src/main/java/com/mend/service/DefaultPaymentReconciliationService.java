@@ -436,12 +436,11 @@ public class DefaultPaymentReconciliationService implements PaymentReconciliatio
             }
         }
 
-        CampaignStatus target = campaignStateMachine.isValidTransition(state, CampaignStatus.RECOVERED)
-                ? CampaignStatus.RECOVERED
-                : CampaignStatus.CANCELLED;   // before any action (e.g. ELIGIBLE): stop, never chase a paid invoice
-        campaignLifecycleService.transitionState(campaign.getMerchantId(), campaignId, target,
+        // Bug sweep item 2: every non-terminal state, including the pre-action ones (e.g. ELIGIBLE), ends RECOVERED: the money
+        // is back. The attribution keeps it out of MEND's recoveries; the campaign is never chased again either way.
+        CampaignStatus target = CampaignStatus.RECOVERED;
+        campaignLifecycleService.recover(campaign.getMerchantId(), campaignId, RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE,
                 "ORIGINAL_PAYMENT_LATE_CAPTURE: original payment " + paymentId + " captured; not attributed to MEND", "SYSTEM", null);
-        campaignRepository.setRecoveryAttribution(campaignId, RecoveryAttribution.ORIGINAL_PAYMENT_LATE_CAPTURE);
         auditService.logEvent(campaign.getMerchantId(), campaignId, "ORIGINAL_PAYMENT_LATE_CAPTURE", "SYSTEM", null,
                 "payment=" + paymentId + " " + state + "->" + target + " webhook_event=" + event.getId());
 

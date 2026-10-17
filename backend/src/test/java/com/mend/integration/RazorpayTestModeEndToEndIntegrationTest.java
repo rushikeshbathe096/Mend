@@ -120,18 +120,19 @@ public class RazorpayTestModeEndToEndIntegrationTest {
     private Merchant testMerchant;
     private ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @org.junit.jupiter.api.AfterEach
+    void removeOwnRows() {
+        com.mend.testsupport.TestRows.deleteMerchant(jdbc, testMerchant.getId());
+    }
+
     @BeforeEach
     void setUp() {
-        actionIntentRepository.deleteAll();
-        campaignAttemptRepository.deleteAll();
-        complianceDecisionRepository.deleteAll();
-        agentDecisionRecordRepository.deleteAll();
-        classificationResultRepository.deleteAll();
-        campaignRepository.deleteAll();
-        webhookEventRepository.deleteAll();
-        auditLogRepository.deleteAll();
-        merchantConfigRepository.deleteAll();
-        merchantRepository.deleteAll();
+        // Bug sweep item 6: was deleteAll() on ten shared tables (every class's rows, including the audit trail). The
+        // scheduler polls across merchants, so other classes' claimable rows are parked; own rows go in removeOwnRows.
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' WHERE status IN ('READY','SCHEDULED','PENDING')");
 
         testMerchant = merchantRepository.save(new Merchant(UUID.randomUUID(), "Test Merchant Operations"));
         merchantConfigRepository.save(new MerchantConfig(UUID.randomUUID(), testMerchant.getId()));

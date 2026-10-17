@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import type { RequestOptions } from '@/lib/api';
 import DashboardPage from './page';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -124,7 +125,7 @@ describe('DashboardPage', () => {
       isLoading: false,
     });
 
-    (api.get as jest.Mock).mockImplementation((url: string, options?: any) => {
+    (api.get as jest.Mock).mockImplementation((url: string, options?: RequestOptions) => {
       expect(options?.merchantId).toBe('89ac3047-cc4c-47cb-91a9-bf3505aa6a65');
       if (url === '/analytics/overview') return Promise.resolve(mockOverviewData);
       if (url.startsWith('/campaigns')) return Promise.resolve(mockCampaignsData);

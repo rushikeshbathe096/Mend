@@ -8,8 +8,8 @@ import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.repository.*;
 import com.mend.dto.AnalyticsOverviewDto;
 import com.mend.dto.AnalyticsRecoveryDto;
-import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,7 +59,7 @@ public class AnalyticsQueryService {
 
     @Transactional(readOnly = true)
     public AnalyticsOverviewDto getAnalyticsOverview(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
         List<WebhookEvent> webhooks = webhookEventRepository != null ? webhookEventRepository.findByMerchantId(merchantId) : List.of();
@@ -116,6 +116,8 @@ public class AnalyticsQueryService {
         dto.setAmountRecoveredLateCapture(WebhookAmountResolver.toDisplay(all.lateCaptureMinor));
         dto.setRecoveredAttributionUnknownCount(all.attributionUnknown);
         dto.setAmountRecoveredAttributionUnknown(WebhookAmountResolver.toDisplay(all.attributionUnknownMinor));
+        dto.setRecoveredSyntheticCount(all.synthetic);
+        dto.setAmountRecoveredSynthetic(WebhookAmountResolver.toDisplay(all.syntheticMinor));
         dto.setCampaignsEligible(eligibleCount);
         dto.setActionsAttempted(totalAttempts);
         dto.setSuccessfulRecoveries(recoveredCampaigns);
@@ -167,7 +169,7 @@ public class AnalyticsQueryService {
 
     @Transactional(readOnly = true)
     public AnalyticsRecoveryDto getAnalyticsRecovery(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
 
@@ -314,7 +316,7 @@ public class AnalyticsQueryService {
 
     @Transactional(readOnly = true)
     public com.mend.dto.AnalyticsFunnelDto getAnalyticsFunnel(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         long totalFailures = webhookEventRepository != null ? webhookEventRepository.countByMerchantId(merchantId) : 0;
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
@@ -346,7 +348,7 @@ public class AnalyticsQueryService {
 
     @Transactional(readOnly = true)
     public com.mend.dto.AnalyticsFailureBreakdownDto getAnalyticsFailureBreakdown(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
         Map<String, Long> amounts = amountsByPaymentId(merchantId);
@@ -373,7 +375,7 @@ public class AnalyticsQueryService {
 
     @Transactional(readOnly = true)
     public com.mend.dto.AnalyticsStrategyPerformanceDto getAnalyticsStrategyPerformance(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         List<Campaign> campaigns = campaignRepository.findByMerchantId(merchantId);
         Map<String, Long> amounts = amountsByPaymentId(merchantId);
@@ -403,14 +405,6 @@ public class AnalyticsQueryService {
         return new com.mend.dto.AnalyticsFunnelDto.FunnelStageDto(name, count, pct, Math.max(0, dropOff));
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 
     /** Original amount in minor units per payment id, strict parser only; a payment id without one is absent (unknown). */
     private Map<String, Long> amountsByPaymentId(UUID merchantId) {
@@ -447,6 +441,8 @@ public class AnalyticsQueryService {
         long lateCaptureMinor;
         long attributionUnknown;
         long attributionUnknownMinor;
+        long synthetic;
+        long syntheticMinor;
 
         void add(Campaign campaign, Long amountMinorOrNull) {
             count++;
@@ -467,6 +463,10 @@ public class AnalyticsQueryService {
                 case ORIGINAL_PAYMENT_LATE_CAPTURE -> {
                     lateCapture++;
                     lateCaptureMinor = Math.addExact(lateCaptureMinor, amount);
+                }
+                case SYNTHETIC -> {
+                    synthetic++;
+                    syntheticMinor = Math.addExact(syntheticMinor, amount);
                 }
                 case null -> {
                     attributionUnknown++;

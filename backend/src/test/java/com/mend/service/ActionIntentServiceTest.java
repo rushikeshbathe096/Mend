@@ -78,7 +78,9 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
     @org.junit.jupiter.api.AfterEach
     void tearDown() {
-        actionIntentRepository.deleteAll();
+        // Bug sweep item 6: delete this test's two merchants (their campaigns and intents cascade), not every intent.
+        com.mend.testsupport.TestRows.deleteMerchant(jdbcTemplateU9, merchantId);
+        com.mend.testsupport.TestRows.deleteMerchant(jdbcTemplateU9, tenantBId);
     }
 
     @Test

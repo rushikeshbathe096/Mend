@@ -35,6 +35,9 @@ public class AnalyticsOverviewDto {
     private BigDecimal amountRecoveredLateCapture;
     private long recoveredAttributionUnknownCount;
     private BigDecimal amountRecoveredAttributionUnknown;
+    // Bug sweep item 5: mock-mode simulated recoveries (attribution SYNTHETIC); never part of recoveredCampaigns.
+    private long recoveredSyntheticCount;
+    private BigDecimal amountRecoveredSynthetic;
 
     public AnalyticsOverviewDto() {
     }
@@ -248,5 +251,21 @@ public class AnalyticsOverviewDto {
 
     public void setAmountRecoveredAttributionUnknown(BigDecimal amountRecoveredAttributionUnknown) {
         this.amountRecoveredAttributionUnknown = amountRecoveredAttributionUnknown;
+    }
+
+    public long getRecoveredSyntheticCount() {
+        return recoveredSyntheticCount;
+    }
+
+    public void setRecoveredSyntheticCount(long recoveredSyntheticCount) {
+        this.recoveredSyntheticCount = recoveredSyntheticCount;
+    }
+
+    public BigDecimal getAmountRecoveredSynthetic() {
+        return amountRecoveredSynthetic;
+    }
+
+    public void setAmountRecoveredSynthetic(BigDecimal amountRecoveredSynthetic) {
+        this.amountRecoveredSynthetic = amountRecoveredSynthetic;
     }
 }

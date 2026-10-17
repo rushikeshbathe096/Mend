@@ -7,6 +7,7 @@ import com.mend.domain.entity.ComplianceDecisionEntity;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
@@ -267,7 +268,7 @@ public class ActionExecutionService {
         String attemptKey = ProviderAttemptKey.forIntent(intent.getId()).value();
 
         // M2 U9: a MEND-side failure where nothing reached the provider is deferred (same intent, later), up to the cap.
-        // execution_attempts counts dispatches (incremented by the dispatch fence), so it counts the deferred dispatches too.
+        // Bug sweep item 4: defer_attempts counts the earlier deferrals (each one moved its dispatch out of execution_attempts).
         OutcomeRetryPolicy retry = OutcomeRetryPolicy.classify(outcome);
         if (retry == OutcomeRetryPolicy.DEFER && outcome instanceof ProviderActionOutcome.Rejected rejected
                 && rejected.kind() == com.mend.provider.RejectionKind.RATE_LIMITED && !resendSafe(intent)) {
@@ -277,10 +278,10 @@ public class ActionExecutionService {
         // Deferral needs the campaign in EXECUTING (it goes back to ACTION_PENDING, where the scheduler claims). Anything else
         // (e.g. the manual path) would leave a READY intent nobody claims: route it to review instead.
         CampaignStatus stateAtFinalize = campaignRepository.findById(intent.getCampaignId()).map(Campaign::getCurrentState).orElse(null);
-        boolean deferNow = retry == OutcomeRetryPolicy.DEFER && intent.getExecutionAttempts() <= maxDeferrals
+        boolean deferNow = retry == OutcomeRetryPolicy.DEFER && intent.getDeferAttempts() < maxDeferrals
                 && stateAtFinalize == CampaignStatus.EXECUTING;
         // Full jitter, but never sooner than the base delay: a MEND-side cause (e.g. missing credentials) needs time to fix.
-        Instant deferUntil = deferNow ? now.plus(max(minDeferral, deferBackoff.delay(Math.max(0, intent.getExecutionAttempts() - 1)))) : null;
+        Instant deferUntil = deferNow ? now.plus(max(minDeferral, deferBackoff.delay(intent.getDeferAttempts()))) : null;
 
         // Step 0: fenced intent transition. Not applied => this worker no longer owns the intent: discard the result.
         boolean applied = deferNow ? transitions.deferFromExecuting(intentId, claimToken, deferUntil) : switch (outcome) {
@@ -366,10 +367,11 @@ public class ActionExecutionService {
         }
         switch (outcome) {
             case ProviderActionOutcome.SyntheticCaptured captured -> {
-                campaignLifecycleService.transitionState(
+                // Bug sweep item 5: simulated money is attributed SYNTHETIC (refused outside mock mode), never MEND.
+                campaignLifecycleService.recover(
                         campaign.getMerchantId(),
                         campaign.getId(),
-                        CampaignStatus.RECOVERED,
+                        RecoveryAttribution.SYNTHETIC,
                         "SYNTHETIC mock provider capture (Ref: " + captured.reference() + ")",
                         "SYSTEM",
                         null
@@ -451,9 +453,9 @@ public class ActionExecutionService {
                     "RETRY_DEFERRED: " + code + " for ActionIntent " + intent.getId(), "SYSTEM", null);
         }
         logProviderAudit(intent, "EXECUTION_DEFERRED", attemptKey, details("code", code,
-                "executionAttempts", intent.getExecutionAttempts(), "maxDeferrals", maxDeferrals, "scheduledAt", deferUntil.toString()));
-        log.warn("ActionIntent '{}' deferred ({}), attempt {}/{}; next try at {}", intent.getId(), code,
-                intent.getExecutionAttempts(), maxDeferrals, deferUntil);
+                "deferAttempts", intent.getDeferAttempts() + 1, "maxDeferrals", maxDeferrals, "scheduledAt", deferUntil.toString()));
+        log.warn("ActionIntent '{}' deferred ({}), deferral {}/{}; next try at {}", intent.getId(), code,
+                intent.getDeferAttempts() + 1, maxDeferrals, deferUntil);
     }
 
     /**
@@ -478,10 +480,11 @@ public class ActionExecutionService {
                     reviewCode + ": routed to human review", "SYSTEM", null);
         }
         humanApprovalService.createReview(intent.getMerchantId(), campaign.getId(), reviewCode + ": intent " + intent.getId()
-                + (retry == OutcomeRetryPolicy.DEFER ? " deferred " + intent.getExecutionAttempts() + " times; fix the cause, then approve"
+                + (retry == OutcomeRetryPolicy.DEFER ? " deferred " + intent.getDeferAttempts() + " times; fix the cause, then approve"
                                                      : " cannot run automatically; human decision required"));
         auditService.logEvent(intent.getMerchantId(), campaign.getId(), "EXECUTION_ROUTED_TO_REVIEW", "SYSTEM", null,
-                "intent=" + intent.getId() + " code=" + reviewCode + " execution_attempts=" + intent.getExecutionAttempts());
+                "intent=" + intent.getId() + " code=" + reviewCode + " execution_attempts=" + intent.getExecutionAttempts()
+                        + " defer_attempts=" + intent.getDeferAttempts());
         log.warn("ActionIntent '{}' FAILED ({}). Campaign '{}' routed to review (ELIGIBLE), not exhausted.", intent.getId(), reviewCode, campaign.getId());
     }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout';
@@ -9,6 +9,8 @@ import { MetricCard, formatCurrency } from '@/components/common/MetricCard';
 import { ErrorAlert, EmptyState } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
+import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
 import { CustomerProfileDto } from '@/types';
 
@@ -23,30 +25,19 @@ export default function CustomerProfilePage() {
   const { currentMerchantId } = useAuth();
 
   const [profile, setProfile] = useState<CustomerProfileDto | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'payments' | 'campaigns' | 'activity'>('payments');
 
-  const fetchProfile = useCallback(async () => {
-    if (!currentMerchantId || !customerIdHash) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  const { loading, reload: fetchProfile } = useLoad(!currentMerchantId || !customerIdHash ? null : `${currentMerchantId}|${customerIdHash}`, async (isCurrent) => {
     try {
       const data = await api.get<CustomerProfileDto>(`/customers/${encodeURIComponent(customerIdHash)}`, { merchantId: currentMerchantId });
+      if (!isCurrent()) return;
       setProfile(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load the customer recovery profile.');
-    } finally {
-      setLoading(false);
+      setError(null);
+    } catch (err: unknown) {
+      if (isCurrent()) setError(errorMessage(err, 'Failed to load the customer recovery profile.'));
     }
-  }, [currentMerchantId, customerIdHash]);
-
-  useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+  });
 
   const summary = profile?.summary;
 
@@ -162,7 +153,7 @@ export default function CustomerProfilePage() {
                 ].map((tab) => (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
+                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
                     className={`py-4 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
                       activeTab === tab.id
                         ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'

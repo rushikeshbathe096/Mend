@@ -5,12 +5,14 @@ import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.CampaignStatus;
+import com.mend.domain.enums.RecoveryAttribution;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.ClassificationResultRepository;
 import com.mend.domain.repository.MerchantRepository;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +39,8 @@ public class CampaignLifecycleService {
     private final RecoveryOrchestratorService recoveryOrchestratorService;
 
     private final InvoiceKeyResolver invoiceKeyResolver;
+    /** Bug sweep item 5: SYNTHETIC (simulated) recoveries are only possible with the mock provider. */
+    private final boolean mockProvider;
 
     public CampaignLifecycleService(
             CampaignRepository campaignRepository,
@@ -45,8 +49,10 @@ public class CampaignLifecycleService {
             CampaignStateMachine campaignStateMachine,
             AuditService auditService,
             @Lazy RecoveryOrchestratorService recoveryOrchestratorService,
-            InvoiceKeyResolver invoiceKeyResolver) {
+            InvoiceKeyResolver invoiceKeyResolver,
+            @org.springframework.beans.factory.annotation.Value("${mend.payment.provider:mock}") String paymentProvider) {
         this.invoiceKeyResolver = invoiceKeyResolver;
+        this.mockProvider = "mock".equalsIgnoreCase(paymentProvider);
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.merchantRepository = merchantRepository;
@@ -152,6 +158,54 @@ public class CampaignLifecycleService {
         return updated;
     }
 
+    /**
+     * Bug sweep item 2: the campaign goes to RECOVERED and records who recovered it, in one save. This is the only way to
+     * use the pre-action → RECOVERED edges (CREATED / CLASSIFIED / ELIGIBLE / SCHEDULED), and those edges need
+     * {@link RecoveryAttribution#ORIGINAL_PAYMENT_LATE_CAPTURE}; {@link #transitionState} still rejects them.
+     * {@link RecoveryAttribution#SYNTHETIC} is refused unless the mock provider is active (bug sweep item 5).
+     */
+    @Transactional
+    public Campaign recover(
+            UUID merchantId,
+            UUID campaignId,
+            RecoveryAttribution attribution,
+            String reason,
+            String actorType,
+            UUID actorId) {
+
+        Campaign campaign = campaignRepository.findById(campaignId)
+                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found with ID: " + campaignId));
+
+        if (!campaign.getMerchantId().equals(merchantId)) {
+            throw new TenantAccessDeniedException("Campaign " + campaignId + " does not belong to merchant " + merchantId);
+        }
+
+        if (attribution == RecoveryAttribution.SYNTHETIC && !mockProvider) {
+            throw new IllegalStateException("SYNTHETIC recovery is only possible with the mock payment provider");
+        }
+
+        CampaignStatus previousState = campaign.getCurrentState();
+        campaignStateMachine.validateRecovery(previousState, attribution);
+
+        campaign.setCurrentState(CampaignStatus.RECOVERED);
+        campaign.setRecoveryAttribution(attribution);
+        Campaign updated = campaignRepository.saveAndFlush(campaign);
+
+        auditService.logStateTransition(
+                merchantId,
+                campaignId,
+                previousState,
+                CampaignStatus.RECOVERED,
+                actorType != null ? actorType : "SYSTEM",
+                actorId,
+                reason
+        );
+
+        log.info("Recovered campaignId='{}' [{} -> RECOVERED], attribution={}, reason='{}'", campaignId, previousState, attribution, reason);
+
+        return updated;
+    }
+
     @Transactional
     public Campaign processClassificationResult(WebhookEvent event, ClassificationResult classificationResult) {
         if (event == null || classificationResult == null) {
@@ -248,20 +302,15 @@ public class CampaignLifecycleService {
 
     @Transactional(readOnly = true)
     public Campaign getCampaign(UUID merchantId, UUID campaignId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return campaignRepository.findByMerchantIdAndId(merchantId, campaignId)
                 .orElseThrow(() -> new ResourceNotFoundException("Campaign not found for merchant " + merchantId + " and campaign " + campaignId));
     }
 
     @Transactional(readOnly = true)
     public List<Campaign> getCampaignsForMerchant(UUID merchantId, AuthenticatedUser currentUser) {
-        validateTenantAccess(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         return campaignRepository.findByMerchantId(merchantId);
     }
 
-    private void validateTenantAccess(UUID merchantId, AuthenticatedUser currentUser) {
-        if (currentUser != null && !currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId)) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 }

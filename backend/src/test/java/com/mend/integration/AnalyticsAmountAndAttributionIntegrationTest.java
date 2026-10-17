@@ -1,5 +1,6 @@
 package com.mend.integration;
 
+import com.mend.testsupport.TestUsers;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.WebhookEvent;
@@ -86,7 +87,9 @@ class AnalyticsAmountAndAttributionIntegrationTest extends AbstractIntegrationTe
     @Test
     @DisplayName("Missing or invalid amounts never produce a number: excluded from sums, counted as amount unknown")
     void missingAmountNeverProducesANumber() {
-        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+        // Bug sweep behaviour change (item 1): user-facing service methods now require a user (TenantGuard);
+        // these calls pass a member of the merchant, as every production caller does. Assertions unchanged.
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
 
         assertEquals(7, overview.getTotalCampaigns());
         assertEquals(3, overview.getAmountUnknownCount(), "missing amount, fractional amount, no webhook");
@@ -94,7 +97,7 @@ class AnalyticsAmountAndAttributionIntegrationTest extends AbstractIntegrationTe
         assertMoney("1149.00", overview.getRevenueAtRisk());
         assertMoney("300.00", overview.getAmountRemainingAtRisk());
 
-        AnalyticsFailureBreakdownDto.FailureClassMetricDto noAmount = analytics.getAnalyticsFailureBreakdown(merchantId, null)
+        AnalyticsFailureBreakdownDto.FailureClassMetricDto noAmount = analytics.getAnalyticsFailureBreakdown(merchantId, TestUsers.memberOf(merchantId))
                 .getFailureClasses().stream().filter(f -> f.getFailureClass().equals("NO_AMOUNT")).findFirst().orElseThrow();
         assertEquals(3, noAmount.getCount());
         assertEquals(3, noAmount.getAmountUnknownCount());
@@ -105,7 +108,7 @@ class AnalyticsAmountAndAttributionIntegrationTest extends AbstractIntegrationTe
     @Test
     @DisplayName("Late capture of the original payment and unattributed recoveries are not counted as recovered by MEND")
     void lateCaptureIsNotCountedAsMend() {
-        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, null);
+        AnalyticsOverviewDto overview = analytics.getAnalyticsOverview(merchantId, TestUsers.memberOf(merchantId));
 
         assertEquals(1, overview.getRecoveredCampaigns());
         assertEquals(1, overview.getSuccessfulRecoveries());
@@ -116,26 +119,26 @@ class AnalyticsAmountAndAttributionIntegrationTest extends AbstractIntegrationTe
         assertEquals(1, overview.getRecoveredAttributionUnknownCount());
         assertMoney("100.00", overview.getAmountRecoveredAttributionUnknown());
 
-        AnalyticsFailureBreakdownDto.FailureClassMetricDto funds = analytics.getAnalyticsFailureBreakdown(merchantId, null)
+        AnalyticsFailureBreakdownDto.FailureClassMetricDto funds = analytics.getAnalyticsFailureBreakdown(merchantId, TestUsers.memberOf(merchantId))
                 .getFailureClasses().stream().filter(f -> f.getFailureClass().equals("FUNDS")).findFirst().orElseThrow();
         assertEquals(3, funds.getCount());
         assertEquals(1, funds.getRecoveredCount());
         assertMoney("849.00", funds.getRevenueAtRisk());
         assertMoney("499.00", funds.getRevenueRecovered());
 
-        AnalyticsStrategyPerformanceDto.StrategyMetricDto s = analytics.getAnalyticsStrategyPerformance(merchantId, null)
+        AnalyticsStrategyPerformanceDto.StrategyMetricDto s = analytics.getAnalyticsStrategyPerformance(merchantId, TestUsers.memberOf(merchantId))
                 .getStrategies().stream().filter(m -> m.getStrategyName().equals("S")).findFirst().orElseThrow();
         assertEquals(2, s.getTotalCampaigns());
         assertEquals(1, s.getRecoveredCampaigns());
         assertEquals(50.0, s.getSuccessRatePercent());
         assertMoney("499.00", s.getRevenueRecovered());
 
-        AnalyticsRecoveryDto recovery = analytics.getAnalyticsRecovery(merchantId, null);
+        AnalyticsRecoveryDto recovery = analytics.getAnalyticsRecovery(merchantId, TestUsers.memberOf(merchantId));
         assertEquals(50.0, recovery.getRecoveryRateByStrategy().get("S"));
         assertEquals(0.0, recovery.getRecoveryRateByStrategy().get("T"), "T's only recovery has no attribution");
         assertEquals(3L, recovery.getStatusBreakdown().get("RECOVERED"), "the state breakdown still shows every RECOVERED row");
 
-        AnalyticsFunnelDto funnel = analytics.getAnalyticsFunnel(merchantId, null);
+        AnalyticsFunnelDto funnel = analytics.getAnalyticsFunnel(merchantId, TestUsers.memberOf(merchantId));
         assertEquals(1, funnel.getStages().stream().filter(st -> st.getStageName().equals("RECOVERED")).findFirst().orElseThrow().getCount());
     }
 }

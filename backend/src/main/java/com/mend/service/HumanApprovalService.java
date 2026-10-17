@@ -21,6 +21,7 @@ import com.mend.exception.InvalidRequestException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
+import com.mend.security.TenantGuard;
 import com.mend.statemachine.CampaignStateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -60,6 +62,12 @@ public class HumanApprovalService {
     private static final Logger log = LoggerFactory.getLogger(HumanApprovalService.class);
 
     private static final Duration DEFAULT_REVIEW_EXPIRY = Duration.ofHours(72);
+
+    private static final java.util.regex.Pattern REASON_CODE = java.util.regex.Pattern.compile("^([A-Z][A-Z0-9_]*):");
+    /** Review codes MEND itself writes (createReview callers). */
+    private static final java.util.Set<String> KNOWN_REASON_CODES = java.util.Set.of(
+            "DUPLICATE_PAYMENT_RISK", "CAPTURED_ON_TERMINAL_CAMPAIGN", "AMBIGUOUS_PROVIDER_REFERENCE", "MANUAL_REVIEW_REQUIRED",
+            "OPERATOR_ACTION_REQUIRED", "HUMAN_DECISION_REQUIRED", "RECONCILIATION_ESCALATED", "AMBIGUOUS_DEBIT");
 
     private final ReviewQueueRepository reviewQueueRepository;
     private final CampaignRepository campaignRepository;
@@ -93,8 +101,8 @@ public class HumanApprovalService {
     }
 
     /**
-     * Creates a human-approval review for a campaign. Idempotent: an existing
-     * PENDING review for the campaign is returned instead of duplicating.
+     * Creates a human-approval review for a campaign. At most one PENDING review per campaign: when one exists, a new reason
+     * is appended to it (timestamp and code, bug sweep item 3) instead of being dropped; the same reason twice is a no-op.
      */
     @Transactional
     public ReviewQueue createReview(UUID merchantId, UUID campaignId, String reason) {
@@ -105,26 +113,50 @@ public class HumanApprovalService {
             throw new TenantAccessDeniedException("Campaign " + campaignId + " does not belong to merchant " + merchantId);
         }
 
-        return reviewQueueRepository.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaignId, ReviewQueueStatus.PENDING)
-                .orElseGet(() -> {
-                    ReviewQueue review = new ReviewQueue(UUID.randomUUID(), campaignId, merchantId);
-                    review.setReason(reason != null ? reason : "Recovery requires merchant human review before execution");
-                    review.setStatus(ReviewQueueStatus.PENDING);
-                    review.setExpiresAt(Instant.now().plus(DEFAULT_REVIEW_EXPIRY));
-                    reviewQueueRepository.saveAndFlush(review);
+        String text = reason != null ? reason : "Recovery requires merchant human review before execution";
+        Optional<ReviewQueue> pending = reviewQueueRepository.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaignId, ReviewQueueStatus.PENDING);
+        if (pending.isPresent()) {
+            ReviewQueue existing = pending.get();
+            String code = reasonCode(text);
+            String entry = "\n[" + Instant.now() + "] [" + code + "] " + text;
+            if (reviewQueueRepository.appendReasonIfPending(existing.getId(), text, entry, "\n") == 1) {
+                auditService.logEvent(merchantId, campaignId, "REVIEW_REASON_APPENDED", "SYSTEM", null,
+                        "review=" + existing.getId() + " code=" + code);
+                log.info("Appended reason code '{}' to pending review '{}' for campaign '{}'", code, existing.getId(), campaignId);
+            }
+            ReviewQueue current = reviewQueueRepository.findById(existing.getId()).orElseThrow();
+            if (current.getStatus() == ReviewQueueStatus.PENDING) {
+                return current;
+            }
+            // Resolved between the read and the append: this reason needs a review of its own.
+        }
 
-                    auditService.logEvent(
-                            merchantId, campaignId, "REVIEW_CREATED", "SYSTEM", null,
-                            "Human approval review created for campaign " + campaignId + ": " + review.getReason()
-                    );
-                    log.info("Created human approval review '{}' for campaign '{}' (merchant '{}')", review.getId(), campaignId, merchantId);
-                    return review;
-                });
+        ReviewQueue review = new ReviewQueue(UUID.randomUUID(), campaignId, merchantId);
+        review.setReason(text);
+        review.setStatus(ReviewQueueStatus.PENDING);
+        review.setExpiresAt(Instant.now().plus(DEFAULT_REVIEW_EXPIRY));
+        reviewQueueRepository.saveAndFlush(review);
+
+        auditService.logEvent(
+                merchantId, campaignId, "REVIEW_CREATED", "SYSTEM", null,
+                "Human approval review created for campaign " + campaignId + ": " + review.getReason()
+        );
+        log.info("Created human approval review '{}' for campaign '{}' (merchant '{}')", review.getId(), campaignId, merchantId);
+        return review;
+    }
+
+    /**
+     * The leading {@code CODE:} of a reason when it is one of MEND's own review codes, else {@code UNCODED}. Reasons can
+     * carry untrusted text (invariant 8), so a code is never taken from text alone.
+     */
+    static String reasonCode(String reason) {
+        java.util.regex.Matcher m = REASON_CODE.matcher(reason);
+        return m.find() && KNOWN_REASON_CODES.contains(m.group(1)) ? m.group(1) : "UNCODED";
     }
 
     @Transactional(readOnly = true)
     public Page<ReviewItemDto> listReviews(UUID merchantId, ReviewQueueStatus status, int page, int size, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         Pageable pageable = PageRequest.of(page, Math.min(Math.max(size, 1), 100));
         Page<ReviewQueue> reviews = (status != null)
@@ -140,14 +172,14 @@ public class HumanApprovalService {
 
     @Transactional(readOnly = true)
     public ReviewItemDto getReview(UUID merchantId, UUID reviewId, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
         ReviewQueue review = loadReview(merchantId, reviewId);
         return toReviewItem(merchantId, review);
     }
 
     @Transactional(readOnly = true)
     public ReviewQueueSummaryDto getReviewSummary(UUID merchantId, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
+        TenantGuard.requireUserAccess(merchantId, currentUser);
 
         Map<String, Long> byStatus = new LinkedHashMap<>();
         for (Object[] row : reviewQueueRepository.countByMerchantGroupedByStatus(merchantId)) {
@@ -362,18 +394,10 @@ public class HumanApprovalService {
         return review;
     }
 
-    private void validateMembership(UUID merchantId, AuthenticatedUser currentUser) {
-        if (merchantId == null) {
-            throw new TenantAccessDeniedException("Merchant context is required");
-        }
-        if (currentUser == null || (!currentUser.isSystemAdmin() && !currentUser.isMemberOfMerchant(merchantId))) {
-            throw new TenantAccessDeniedException("Access denied for merchant: " + merchantId);
-        }
-    }
 
     private void requireReviewer(UUID merchantId, AuthenticatedUser currentUser) {
-        validateMembership(merchantId, currentUser);
-        if (currentUser == null || !currentUser.hasMerchantRole(merchantId, "REVIEWER")) {
+        TenantGuard.requireUserAccess(merchantId, currentUser);
+        if (!currentUser.hasMerchantRole(merchantId, "REVIEWER")) {
             throw new TenantAccessDeniedException(
                     "Requires REVIEWER or MERCHANT_ADMIN privilege for merchant " + merchantId);
         }
