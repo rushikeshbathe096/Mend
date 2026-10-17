@@ -3,6 +3,9 @@ package com.mend.security;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.StandardEnvironment;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -11,17 +14,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * jwt.secret has no default outside the dev profile. These contexts load the real
  * application.properties / application-{profile}.properties, so they prove the shipped config.
+ * Bug sweep item 6b: the environment has no OS environment / system property sources (as in JwtSecretStartupTest), so a
+ * JWT_SECRET exported in the shell running the tests cannot make a "fails to start" case start.
  */
 class JwtSecretConfigurationTest {
 
-    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+    private final ApplicationContextRunner runner = new ApplicationContextRunner(() -> {
+                AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+                context.setEnvironment(new StandardEnvironment() {
+                    @Override
+                    protected void customizePropertySources(MutablePropertySources propertySources) {
+                        // no systemEnvironment / systemProperties
+                    }
+                });
+                return context;
+            })
             .withInitializer(new ConfigDataApplicationContextInitializer())
             .withBean(ObjectMapper.class)
             .withUserConfiguration(JwtService.class);
 
     @Test
     void defaultProfileWithoutJwtSecretFailsToStart() {
-        // JWT_SECRET= neutralises any JWT_SECRET exported in the environment running the tests.
+        // An empty JWT_SECRET, as an explicit property (the OS environment is not a source here, see the class comment).
         runner.withPropertyValues("JWT_SECRET=")
                 .run(context -> {
                     assertThat(context).hasFailed();
