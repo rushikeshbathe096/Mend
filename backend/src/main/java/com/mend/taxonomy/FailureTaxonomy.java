@@ -13,14 +13,16 @@ import static com.mend.taxonomy.PaymentFailureClass.*;
  * <ol>
  *   <li>{@code error_reason}: Razorpay documents it as "the exact error reason. It can be handled programmatically"
  *       ({@value #ERRORS_DOC}); every row below is a reason listed at {@value #REASONS_DOC}.</li>
- *   <li>Otherwise {@code error_source}: {@code gateway} ("usually transient") and {@code razorpay} ("retry after a short
- *       delay") are documented at {@value #REASONS_DOC} → {@link PaymentFailureClass#GATEWAY_ERROR}.</li>
+ *   <li>Only when there is no {@code error_reason}: {@code error_source} {@code gateway} ("usually transient") and
+ *       {@code razorpay} ("retry after a short delay"), documented at {@value #REASONS_DOC} →
+ *       {@link PaymentFailureClass#GATEWAY_ERROR}. A reason that is present but not in the table is never overridden
+ *       by its source.</li>
  *   <li>Otherwise {@link PaymentFailureClass#UNCLASSIFIED}. {@code error_code} values are not enumerated in the docs, so
  *       the code never decides a class.</li>
  * </ol>
  * Deliberately unmapped (documented, but the docs do not say why it failed or who must act): {@code card_declined},
  * {@code payment_declined}, {@code debit_declined}, {@code payment_failed}, and every business-side / integration reason
- * (e.g. {@code input_validation_failed}, {@code invalid_amount}). They fall through to the source rule, then UNCLASSIFIED.
+ * (e.g. {@code input_validation_failed}, {@code invalid_amount}). They are UNCLASSIFIED, whatever their source.
  */
 public final class FailureTaxonomy {
 
@@ -73,7 +75,8 @@ public final class FailureTaxonomy {
                 return new FailureClassification(byReason, FailureClassification.MatchedOn.REASON, reason, REASONS_DOC, TABLE_VERSION);
             }
         }
-        if (failure != null && failure.source() != null) {
+        // The source decides only when Razorpay sent no reason: a reason MEND has not mapped stays UNCLASSIFIED.
+        if (failure != null && failure.reason() == null && failure.source() != null) {
             String source = failure.source().toLowerCase(Locale.ROOT);
             PaymentFailureClass bySource = BY_SOURCE.get(source);
             if (bySource != null) {

@@ -102,3 +102,23 @@ DECISIONS:
   every campaign once the AI call is gone.
 - Reply retention: 90 days stated; the purge job is M5-owned.
 Next: U2.1 taxonomy (review of U2.0 runs in parallel).
+
+U2.0 review (fresh subagent; AGENTS.md + U2.0 spec + design pack; file:line spot-checked, most correct):
+- BLOCKER 1 (ALREADY_PAID could reach SAFE_RETRY) — FIXED in the design: ALREADY_PAID only brings forward the
+  AWAITING_PAYMENT evidence lookup the reconciler runs anyway (that branch never resends; NEEDS_RECONCILIATION untouched;
+  later steps keep the reconciler's own schedule); no link intent → review; U2.4 test: a reply never causes a provider
+  POST or SAFE_RETRY.
+- MAJOR 2 source fallback for present-but-unmapped reasons — FIXED in code (`FailureTaxonomy`: source decides only when
+  no reason is sent) + tests; revert proof: old rule → `Tests run: 53, Failures: 7`
+  (`unmappedReasonIsUnclassified:85 expected: <UNCLASSIFIED> but was: <GATEWAY_ERROR>`).
+- MAJOR 3 compliance would pass UNCLASSIFIED — FIXED in plan/ADR: compliance blocks UNCLASSIFIED + any non-taxonomy class,
+  replacing UNKNOWN and LOW_CONFIDENCE blocks (not a weakening); regression tests in U2.2.
+- MAJOR 4 legacy rows — DECISION: legacy classes fail closed (treated as UNCLASSIFIED) when re-evaluated; never rewritten.
+- MAJOR 5 OPT_OUT framing — FIXED: fail-closed compliance block at new-intent and pre-dispatch checks, audited, human
+  clear endpoint; Requirement 2 reworded.
+- MAJOR 6 ADR mapping table — FIXED (strategy per class; BANK_DECLINED has no equivalent, documented).
+- MAJOR 7 inventory misses — ADDED to analysis + U2.3/U2.6 scope.
+- MINOR 8 taxonomy version column — FIXED: `classification_results.taxonomy_version` (V19); `model_version` NULL.
+- MINOR 9, 10, 11, 12, NIT 13 — FIXED in docs (transaction wording, extraction of code/reason/source, distinct enum
+  name `PaymentFailureClass`, reply-task gaps, header).
+Next: commit, then U2.1 review.

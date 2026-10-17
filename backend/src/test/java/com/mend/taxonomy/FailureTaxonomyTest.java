@@ -80,8 +80,10 @@ class FailureTaxonomyTest {
     @ParameterizedTest
     @ValueSource(strings = {"card_declined", "payment_declined", "debit_declined", "payment_failed", "input_validation_failed",
             "invalid_amount", "not_a_razorpay_reason"})
-    @DisplayName("Unmapped reason with a customer/business source (or none) -> UNCLASSIFIED, never guessed")
+    @DisplayName("Unmapped reason -> UNCLASSIFIED whatever the source (never guessed, never overridden by the source)")
     void unmappedReasonIsUnclassified(String reason) {
+        assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, reason, "gateway")).failureClass());
+        assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, reason, "razorpay")).failureClass());
         assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, reason, "customer")).failureClass());
         assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, reason, "business")).failureClass());
         assertEquals(PaymentFailureClass.UNCLASSIFIED, FailureTaxonomy.classify(ProviderFailure.of(null, reason, null)).failureClass());
@@ -89,12 +91,12 @@ class FailureTaxonomyTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"gateway", "razorpay", "GATEWAY"})
-    @DisplayName("Unmapped or missing reason with a documented transient source -> GATEWAY_ERROR (matched on SOURCE)")
+    @DisplayName("No reason, documented transient source -> GATEWAY_ERROR (matched on SOURCE)")
     void transientSourceFallback(String source) {
-        FailureClassification c = FailureTaxonomy.classify(ProviderFailure.of(null, "card_declined", source));
+        FailureClassification c = FailureTaxonomy.classify(ProviderFailure.of("GATEWAY_ERROR", null, source));
         assertEquals(PaymentFailureClass.GATEWAY_ERROR, c.failureClass());
         assertEquals(FailureClassification.MatchedOn.SOURCE, c.matchedOn());
-        assertEquals(PaymentFailureClass.GATEWAY_ERROR, FailureTaxonomy.classify(ProviderFailure.of(null, null, source)).failureClass());
+        assertEquals(PaymentFailureClass.GATEWAY_ERROR, FailureTaxonomy.classify(ProviderFailure.of(null, " ", source)).failureClass());
     }
 
     @Test

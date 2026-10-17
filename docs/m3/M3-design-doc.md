@@ -4,7 +4,7 @@ Status: accepted for implementation by the orchestrator (U2.0). Inventory: `docs
 
 ## Problem
 MEND's "AI" sits on the payment hot path and makes up evidence. Every new payment failure makes two synchronous calls to
-ai-service, each with a 3 s timeout, inside the event transaction. Confidences and model versions are hardcoded constants
+ai-service, each with a 3 s timeout, inside the classification transaction. Confidences and model versions are hardcoded constants
 or LLM self-reports. A failed call is replaced with a fabricated fallback (`UNKNOWN`, 0.30, "v1.0.0-fallback"). Those
 numbers then gate eligibility (0.50), strategy (0.80) and compliance (0.80), and a "six-agent" result can stop a recovery
 or hold it for review. This breaks invariant 3 (never fabricate confidence or model versions). It also lets AI decide
@@ -24,7 +24,9 @@ decisions shown in the UI as "AI Agent Decisions".
 ## Requirements
 1. AI is never on the payment hot path: webhook → deterministic taxonomy → strategy → compliance → intent, with zero
    ai-service calls; behaviour is identical with ai-service stopped.
-2. AI never decides a financial action: no AI output can create, stop, hold, approve or schedule an action intent.
+2. AI never decides a financial action: no AI output can create, approve, schedule, resend or finalize an action intent,
+   and none can mark money recovered. The one AI-derived effect that withholds action (OPT_OUT) is a fail-closed
+   compliance block, checked at dispatch like every compliance rule (invariant 7), reversible only by a human.
 3. No fabricated confidence, model versions, scores or fallbacks anywhere. Missing data is explicitly unknown.
 4. One AI task only: parsing a customer's reply into a structured *suggestion*, asynchronously.
 5. Historical rows are kept, never rewritten; schema changes only through new migrations (V19+).
@@ -45,8 +47,12 @@ AGENTS.md 1–15 unchanged. Added for M3:
 
 ## Decision
 Option 2. Detailed in ADR-003.
-- Failure taxonomy: a pure Java table keyed by Razorpay `error_reason`, falling back to `error_source`. Every mapping
-  cites the Razorpay docs URL; anything undocumented is `UNCLASSIFIED`.
+- Failure taxonomy: a pure Java table keyed by Razorpay `error_reason`; only when no reason is sent, `error_source`
+  `gateway`/`razorpay`. Every mapping cites the Razorpay docs URL; anything unmapped is `UNCLASSIFIED`. The table
+  version goes into a new `classification_results.taxonomy_version` column; `model_version` stays NULL for
+  deterministic rows (it is a model field).
+- Compliance blocks `UNCLASSIFIED` and every non-taxonomy (legacy) class, replacing both the `UNKNOWN` block and the
+  LOW_CONFIDENCE block: an evidence-less failure is still blocked, so compliance is not weakened (invariant 7).
 - Strategy and eligibility are keyed by taxonomy class. All confidence gates are removed.
 - The customer-reply task is async (DB job). Its output is a validated suggestion; a deterministic policy maps intents
   to effects (OPT_OUT stops contact, ALREADY_PAID triggers a reconciler lookup, DISPUTE opens a review, the rest are shown
@@ -73,8 +79,10 @@ Option 2. Detailed in ADR-003.
 | ai-service down / slow | payment flow unaffected (no call); reply rows stay PENDING, retried with backoff, `attempts` capped, then `FAILED` (visible) |
 | no API key | ai-service answers `503 model_unavailable`; reply stays PENDING/FAILED with that code; no suggestion |
 | invalid LLM output (schema) | suggestion stored as `INVALID` with the validation error; never coerced; no effect |
-| LLM says ALREADY_PAID | reconciler lookup of the campaign's intents only; never marks recovered (invariant 2) |
-| LLM says OPT_OUT | campaign contact stopped (compliance block `CUSTOMER_OPTED_OUT`); reversible only by a human |
+| LLM says ALREADY_PAID | read-only check: the campaign's AWAITING_PAYMENT link intents get `reconcile_after = now` (brings forward the lookup the reconciler runs anyway: the reply changes when the check runs, never what it decides; that branch itself never resends, and any later step is the reconciler's own evidence-based decision on its own schedule); NEEDS_RECONCILIATION intents are not touched (SAFE_RETRY stays reconciler-owned); no link intent → review `CUSTOMER_SAYS_PAID`; never marks recovered (invariant 2) |
+| LLM says OPT_OUT | `campaigns.contact_opted_out_at` set + audit; compliance blocks `CUSTOMER_OPTED_OUT` for every new intent and at the pre-dispatch re-check (pending intents end through the existing fenced abandon path; EXECUTING/AWAITING intents are not touched); a merchant admin clears it via `DELETE /api/v1/campaigns/{id}/opt-out` (audited) |
+| suggestion invalid or abstained | stored, shown, no effect |
+| legacy class (pre-M3 `BANK_DECLINED` etc., AI confidence) | treated as UNCLASSIFIED (fail closed) at eligibility and compliance; rows are not rewritten |
 | unknown Razorpay reason | `UNCLASSIFIED` → ineligible (EXHAUSTED), as `UNKNOWN` today; fail closed |
 
 ## Security implications

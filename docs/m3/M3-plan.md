@@ -8,16 +8,21 @@ action; no fabricated confidence, model versions, scores or fallbacks; one AI ta
 ## Units (refined from the inventory)
 
 - **U2.1 Deterministic failure taxonomy.** `com.mend.taxonomy` (pure Java, no Spring):
-  - `FailureClass` (9 classes, ADR-003 §1), `ProviderFailure(code, reason, source)`, `FailureTaxonomy.classify(...)`
+  - `PaymentFailureClass` (9 classes, ADR-003 §1; distinct from the legacy `domain.enums.FailureClass`), `ProviderFailure(code, reason, source)`, `FailureTaxonomy.classify(...)`
     returning `FailureClassification(class, matchedOn, rule, docUrl, tableVersion)`.
   - The table maps every documented Razorpay reason that has a recovery meaning; each row carries the docs URL.
-  - Fallback by `source`: `gateway` / `razorpay` → `GATEWAY_ERROR` (documented as transient). Everything else →
-    `UNCLASSIFIED`.
+  - Fallback by `source`, only when no reason is sent: `gateway` / `razorpay` → `GATEWAY_ERROR` (documented as
+    transient). A present but unmapped reason, and everything else → `UNCLASSIFIED`.
   - Tests: one per mapped reason (parameterized from the table), unmapped → UNCLASSIFIED, the source fallback, the
     doc-derived fixture.
   - Not wired yet.
 - **U2.2 AI off the hot path.**
-  - `ClassificationService` uses `FailureTaxonomy`; `DefaultEventProcessingService` passes reason, code and source.
+  - `ClassificationService` uses `FailureTaxonomy`; `DefaultEventProcessingService.extractFailureDetails` extracts
+    `error_code`, `error_reason`, `error_source` separately (it never read the source).
+  - V19 also adds `classification_results.taxonomy_version`; deterministic rows leave `model_version` NULL.
+  - Compliance blocks `UNCLASSIFIED` and any non-taxonomy (legacy) class, in place of the `UNKNOWN` and LOW_CONFIDENCE
+    blocks. Legacy campaigns re-evaluated (approval, pre-dispatch re-check) fail closed. Regression tests for both.
+  - `CampaignLifecycleService:234` stops copying confidence to the campaign.
   - `RecoveryOrchestratorService` drops the agent step: strategy → compliance → intent.
   - V19: `classification_results.confidence` becomes nullable (rows kept).
   - Strategy and eligibility are keyed by class, and the confidence gates in eligibility, strategy and compliance are
@@ -30,7 +35,10 @@ action; no fabricated confidence, model versions, scores or fallbacks; one AI ta
   - Backend: remove `agent/*`, `AgentOrchestrationController`, `AgentDecisionQueryController`, `dto/ai/Agent*`, the
     classify/orchestrate client, AI fields on the review, payment and start-recovery DTOs, and `RecommendedAction`
     storage of AI output.
-  - Remove demo fake agent steps and dev seed fake confidences.
+  - Remove demo fake agent steps and dev seed fake confidences (`DevDataInitializer:275,304,315,333`).
+  - Also: `AgentContext:43`, `AgentDecision:49`, `AnalyticsQueryService:265-287` (AI confidence metrics), frontend
+    confidence displays (`dashboard:323`, `campaigns:263-309`, `analytics:240-252`), and the settings label that calls
+    `escalationThreshold` an AI confidence (`settings:181-192`).
   - Migration only where needed (no V1–V18 edit). `agent_decision_records` stays as a legacy table (no writer, no API).
   - Frontend: remove `AgentDecisionStack`, the agent tab, agent confidence and payment agent decisions; show the
     failure class and the Razorpay reason.
@@ -42,9 +50,17 @@ action; no fabricated confidence, model versions, scores or fallbacks; one AI ta
   - API `POST/GET /api/v1/campaigns/{id}/replies` (TenantGuard user call).
   - `ReplyParsingJob` (scheduled, `SKIP LOCKED`, backoff, attempt cap).
   - Strict validator.
-  - `ReplyPolicy`: OPT_OUT → campaign contact stopped (`campaigns.contact_opted_out_at`, compliance block
-    `CUSTOMER_OPTED_OUT`); ALREADY_PAID → reconciler lookup of the campaign's open intents (`ExecutionReconciler` path),
-    never RECOVERED; DISPUTE → review `CUSTOMER_DISPUTE`; others → shown only.
+  - `ReplyPolicy` (each effect audited; abstained/invalid → no effect):
+    - OPT_OUT → `campaigns.contact_opted_out_at`; compliance block `CUSTOMER_OPTED_OUT` for new intents and at the
+      pre-dispatch re-check. Pending intents end through the existing fenced path; EXECUTING / AWAITING are untouched.
+      `DELETE /api/v1/campaigns/{id}/opt-out` (MERCHANT_ADMIN, audited) clears it.
+    - ALREADY_PAID → AWAITING_PAYMENT link intents of the campaign get `reconcile_after = now` (brings forward the
+      reconciler's own evidence lookup; that branch never resends; later steps keep the reconciler's own schedule). NEEDS_RECONCILIATION is not touched, so SAFE_RETRY is never reply-triggered. No link
+      intent → review `CUSTOMER_SAYS_PAID`. Never RECOVERED. Test: a reply never causes a SAFE_RETRY or a provider POST.
+    - DISPUTE → review `CUSTOMER_DISPUTE` (appends to an open review, item 3 of the bug sweep).
+    - Others → shown only.
+  - The campaign must belong to the caller's merchant (not only `TenantGuard`). One suggestion per reply: re-parsing
+    happens only for FAILED replies, by a human retry.
   - Retention note: 90 days, purge job M5-owned.
 - **U2.5 Evaluation.**
   - `docs/m3/eval/replies-v1.jsonl` (SYNTHETIC-labelled) and `docs/m3/eval/LABEL-GUIDE.md`.
@@ -57,7 +73,7 @@ action; no fabricated confidence, model versions, scores or fallbacks; one AI ta
     parse_reply tests).
   - Drop unused deps (langgraph*, psycopg*, langchain-google-genai if not the chosen provider, python-dotenv, PyYAML);
     keep exactly what is imported.
-  - pytest green; ci script green.
+  - pytest green; `scripts/ci/ai-service.sh` and the CI ai-service job still green (requirements reduced).
 - **U2.7 Close-out.** Full suites, `M3-summary.md` (≤ 15 lines), ADR-003 Accepted with evidence, checklist ticked,
   AGENTS.md milestone line.
 

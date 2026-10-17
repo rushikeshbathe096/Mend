@@ -1,4 +1,4 @@
-# M3 analysis — inventory of the AI path (branch `m3/honest-intelligence` @ `1c7fb7d`)
+# M3 analysis — inventory of the AI path (branch `m3/honest-intelligence`; code as of `1c7fb7d`, docs-only changes since)
 
 Paths are relative to the repository root; `J/` = `backend/src/main/java/com/mend/`. Line numbers are as of `1c7fb7d`.
 
@@ -28,8 +28,9 @@ WebhookController → WebhookService (outbox) → Redis stream → RedisWebhookE
             → ActionIntentService.createActionIntentFromCompliance (intent)
 ```
 
-**On the hot path:** two synchronous ai-service HTTP calls per new failure (classify, orchestrate), both inside the event
-transaction; a 3 s read timeout each; AI confidence gates eligibility, strategy and compliance; the agent can stop a
+**On the hot path:** two synchronous ai-service HTTP calls per new failure (classify, orchestrate), both inside the
+`ClassificationService.classifyAndPersist` transaction (`ClassificationService.java:44`; `processEvent` itself is not
+transactional); a 3 s read timeout each; AI confidence gates eligibility, strategy and compliance; the agent can stop a
 recovery or hold it for review. All of this violates the M3 rules (AI never on the payment hot path; AI never decides a
 financial action).
 
@@ -55,8 +56,11 @@ financial action).
 | `RecommendedAction` | `J/domain/enums/RecommendedAction.java` | AI "recommendation" stored per classification |
 | `FailureClass` | `J/domain/enums/FailureClass.java` (`INSUFFICIENT_FUNDS, BANK_DECLINED, CARD_EXPIRED, AUTHENTICATION_FAILED, NETWORK_FAILURE, LIMIT_EXCEEDED, UNKNOWN`) | AI output vocabulary, no provider mapping |
 | review/payment DTO agent fields | `J/dto/ReviewItemDto.java:24,39-41,67,73-80` (`confidence`, `agentDecision`, `agentConfidence`, `agentModelVersion` …); `J/dto/PaymentDetailDto.java:10`; `J/dto/StartRecoveryResponseDto.java:11`; `J/controller/PaymentController.java:31,112-128`; `J/service/HumanApprovalService.java:74,85` | surfaces theatre to the UI |
+| agent defaults | `J/agent/AgentContext.java:43` default confidence **0.50**; `J/agent/AgentDecision.java:49` model **"v2.0-agent"** | more fabricated defaults |
+| confidence copied to campaign | `J/service/CampaignLifecycleService.java:234` (`campaign.setConfidence`) | spreads AI confidence |
+| analytics "AI Confidence Metrics" | `J/service/AnalyticsQueryService.java:265-287` (average confidence, in `double`) | reports fabricated confidence |
 | demo | `J/controller/DemoController.java:221-227` (classification "0.95", recorded agent decision, "six-agent consensus … confidence 95%"), `:200` AGENT_FAILURE scenario | labelled SIMULATED, dev profile only |
-| dev seed | `J/config/DevDataInitializer.java:275` random confidence 0.70–0.98, `:304,315` model "v1.2", `:356-359…` fabricated agent decision records | dev profile only |
+| dev seed | `J/config/DevDataInitializer.java:275` random confidence 0.70–0.98, `:304,315,333` model "v1.2", `:356-359…` fabricated agent decision records | dev profile only |
 
 Schema: `classification_results.confidence NUMERIC(3,2) NOT NULL` (V1:142), `model_version VARCHAR(50)` (V1:146);
 `campaigns.confidence` (V1:75); `recovery_decisions.confidence` (V6:11); `agent_decision_records` (V9).
@@ -88,6 +92,10 @@ Schema: `classification_results.confidence NUMERIC(3,2) NOT NULL` (V1:142), `mod
 | agent confidence on reviews | `frontend/src/app/actions/page.tsx:292-293,462-463` |
 | types | `frontend/src/types/index.ts` (`AgentDecisionRecordDto`, `confidence`, `modelVersion`) |
 | landing page "Six Agents" copy | `frontend/src/app/page.tsx` (agents table), `README.md` "## Six Agents" |
+| confidence displays | `frontend/src/app/dashboard/page.tsx:323` ("% Conf"), `frontend/src/app/campaigns/page.tsx:263-309` ("AI Confidence" column), `frontend/src/app/analytics/page.tsx:240-252` ("AI Orchestrator Confidence") |
+| mislabelled setting | `frontend/src/app/settings/page.tsx:181-192` labels `MerchantConfig.escalationThreshold` as "Minimum AI confidence … before auto-executing" |
+
+CI: `.github/workflows/ci.yml` (ai-service job) and `scripts/ci/ai-service.sh` install `requirements.txt` and run pytest; U2.6 keeps them working after the reduction.
 
 ## 5. Backend tests on the AI path (test methods, `@Test`/`@ParameterizedTest` count)
 
@@ -106,5 +114,6 @@ The payment entity carries `error_code`, `error_description`, `error_source`, `e
 can be handled programmatically" (https://razorpay.com/docs/errors/) and lists every payment reason with a description at
 https://razorpay.com/docs/errors/payments/list/ (fetched 2026-10-18), plus the `source` values `customer`, `business`,
 `gateway` ("usually transient"), `razorpay` ("retry after a short delay"). `error_code` values are not enumerated on either
-page, so the classifier does not key on them. Today the backend reads `error_reason` (else `error_code`) into a single
-`failureCode` string (`J/service/DefaultEventProcessingService.java:115-134`) and sends it to the AI.
+page, so the classifier does not key on them. Today `extractFailureDetails` (`J/service/DefaultEventProcessingService.java:115-134`)
+puts `error_reason` (else `error_code`) into one `failureCode` string, uses `error_description` as `failureReason`, and
+never reads `error_source`; U2.2 must extract `error_code`, `error_reason` and `error_source` separately.

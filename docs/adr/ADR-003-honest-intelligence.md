@@ -9,8 +9,7 @@ confidences and model versions are constants or LLM self-reports. They gate elig
 they can stop or hold a recovery. Inventory: `docs/m3/M3-analysis.md`.
 
 ## Decision
-1. **Deterministic failure taxonomy.** A pure Java table maps the Razorpay payment `error_reason`, then `error_source`,
-   to a class:
+1. **Deterministic failure taxonomy.** A pure Java table maps the Razorpay payment `error_reason` to a class:
 
    | class | gets |
    |---|---|
@@ -22,10 +21,12 @@ they can stop or hold a recovery. Inventory: `docs/m3/M3-analysis.md`.
    | `CUSTOMER_DECLINED` | — |
    | `INSTRUMENT_INVALID` | added with evidence: card expired / instrument blocked or inactive |
    | `MANDATE_INVALID` | — |
-   | `UNCLASSIFIED` | everything undocumented |
+   | `UNCLASSIFIED` | everything unmapped |
 
-   Every row cites https://razorpay.com/docs/errors/payments/list/. No confidence is produced or stored for it. The
-   recorded version is the table version (`razorpay-error-taxonomy-v1`), not a model.
+   Only when Razorpay sends no reason does `error_source` `gateway` / `razorpay` decide `GATEWAY_ERROR`. A reason that is
+   present but unmapped stays `UNCLASSIFIED`. Every row cites https://razorpay.com/docs/errors/payments/list/.
+   No confidence is produced. The table version `razorpay-error-taxonomy-v1` is stored in its own
+   `classification_results.taxonomy_version` column; it is never written into `model_version`.
 2. **AI off the payment hot path.** webhook → taxonomy → strategy → compliance → intent makes no ai-service call. The
    3 s timeouts no longer apply to payments.
 3. **No theatre.** Delete all of these:
@@ -36,29 +37,38 @@ they can stop or hold a recovery. Inventory: `docs/m3/M3-analysis.md`.
 
    Historical `agent_decision_records` and `confidence` values are kept as legacy columns and rows, never rewritten.
    Columns that were NOT NULL become nullable through new migrations.
-4. **Strategy and eligibility by class.** Each class maps to the strategy its pre-M3 equivalent had:
+4. **Strategy and eligibility by class.** Each class takes the strategy rule of its pre-M3 equivalent
+   (`RecoveryStrategyEngine`):
 
-   | class | pre-M3 equivalent |
-   |---|---|
-   | `INSUFFICIENT_FUNDS` | `INSUFFICIENT_FUNDS` |
-   | `LIMIT_EXCEEDED` | `LIMIT_EXCEEDED` |
-   | `BANK_TECHNICAL`, `GATEWAY_ERROR` | `NETWORK_FAILURE` |
-   | `AUTHENTICATION_FAILURE` | `AUTHENTICATION_FAILED` |
-   | `INSTRUMENT_INVALID` | `CARD_EXPIRED` |
-   | `CUSTOMER_DECLINED`, `MANDATE_INVALID` | `CUSTOMER_ACTION_REQUIRED` |
-   | `UNCLASSIFIED` | ineligible, like `UNKNOWN` |
+   | class | rule | strategy |
+   |---|---|---|
+   | `INSUFFICIENT_FUNDS` | pre-M3 `INSUFFICIENT_FUNDS` | RETRY_LATER, RETRY_LATER, then CUSTOMER_ACTION_REQUIRED |
+   | `BANK_TECHNICAL`, `GATEWAY_ERROR` | pre-M3 `NETWORK_FAILURE` | RETRY_IMMEDIATELY, then RETRY_LATER |
+   | `LIMIT_EXCEEDED` | pre-M3 `LIMIT_EXCEEDED` | CUSTOMER_ACTION_REQUIRED |
+   | `AUTHENTICATION_FAILURE` | pre-M3 `AUTHENTICATION_FAILED` | CUSTOMER_ACTION_REQUIRED |
+   | `INSTRUMENT_INVALID` | pre-M3 `CARD_EXPIRED` | CUSTOMER_ACTION_REQUIRED |
+   | `CUSTOMER_DECLINED`, `MANDATE_INVALID` | new rows | CUSTOMER_ACTION_REQUIRED (a payment link) |
+   | `UNCLASSIFIED` | pre-M3 `UNKNOWN` | ineligible → EXHAUSTED; compliance block |
 
-   Low-confidence MANUAL_REVIEW gating disappears. MANUAL_REVIEW now comes only from the strategy table (merchant's
-   enabled actions) and from explicit review codes.
+   Pre-M3 `BANK_DECLINED` has no taxonomy equivalent: the documented declines (`card_declined`, `payment_declined`,
+   `debit_declined`) are deliberately unmapped.
+
+   Legacy rows (pre-M3 classes, AI confidence) are treated as UNCLASSIFIED (fail closed) wherever they are re-evaluated.
+   They are never rewritten.
+
+   All confidence gates go: eligibility 0.50, strategy and compliance 0.80, and the agent's 0.70. Compliance's
+   `UNKNOWN` and `LOW_CONFIDENCE` blocks are replaced by a block on `UNCLASSIFIED` or any non-taxonomy class, so a failure
+   without evidence is still blocked. MANUAL_REVIEW now comes only from the strategy table (merchant's enabled actions)
+   and from explicit review codes.
 5. **One AI task: customer-reply parsing, asynchronous.** The output is a schema-validated *suggestion* (intent enum,
    optional promised date, abstain flag). A deterministic policy owns every effect:
 
    | intent | effect |
    |---|---|
-   | OPT_OUT | stop contact (compliance) |
-   | ALREADY_PAID | reconciler lookup only, never "recovered" |
-   | DISPUTE | review item |
-   | anything else | shown only |
+   | OPT_OUT | fail-closed compliance block `CUSTOMER_OPTED_OUT`, checked for new intents and at the pre-dispatch re-check; audited; a merchant admin can clear it |
+   | ALREADY_PAID | the campaign's AWAITING_PAYMENT link intents get an immediate evidence lookup (the reply only brings forward the lookup the reconciler would run anyway; that branch never resends; any later step is the reconciler's own evidence-based decision on its own schedule); NEEDS_RECONCILIATION intents are not touched, so SAFE_RETRY is never AI-triggered; no link intent → review; never "recovered" |
+   | DISPUTE | review item, no duplicate of an open review |
+   | anything else, an abstained suggestion, or an invalid one | stored and shown only |
 
    LLM output never triggers a financial action. The model id comes from the provider response. With no key, the reply
    is `model_unavailable` and there is no output.
