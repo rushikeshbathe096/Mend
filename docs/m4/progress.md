@@ -289,3 +289,38 @@ Commits: `319f6ca` (ai-service few-shot prompt), `2b1a096` (store, flag, job, ha
 Tests: backend ReplyRetrievalIntegrationTest 3, ReplyRetrievalEnabledIntegrationTest 1; ai-service test_fewshot 8,
 test_retrieval_eval 7 (ai-service 90 → 105 passed).
 Verify: backend `[INFO] Tests run: 1082, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; ai-service `105 passed`.
+
+#### U4.7 review (fresh subagent): 3 MAJOR. Dispositions (`bdc6072`)
+- FIXED MAJOR 1 (blind = file exists): blind only for dataset `replies-v2`; dataset sha256 recorded. Revert proof
+  (`blind = True`) → `test_a_dataset_that_is_not_the_blind_one_never_adopts` FAILED.
+- FIXED MAJOR 2 (different scored rows): KEEP_DISABLED when either system has provider errors or the scored rows differ.
+- FIXED MAJOR 3 (contamination): `similar()` searches only `mend.reply.retrieval.dataset-version` (default replies-v1-dev),
+  DISTINCT text; import refuses `*-test` / `replies-v2`; the harness refuses examples that equal an evaluation text, rows
+  without examples, and duplicate texts. Revert proof (no dataset filter) → `queryConstructionIsSafe:103`.
+- FIXED MINOR 4 (fail closed per row), 5 (retrieval failure → `reply_retrieval_failed`, parse without examples, no attempt
+  used; test), 6 (v2 prompt: `input:` JSON string + `output:` in the required shape; reply as JSON string after its own marker;
+  `ensure_ascii=False`), 7 (OR query from quoted lexemes; ties by text), 8 (store SYNTHETIC-only until consent capture),
+  9 (tests: special characters, determinism, harness ADOPT path with a stubbed model; export tool noted TBD), NIT 10
+  (real calendar date, only with PROMISE_TO_PAY), 11 (sha256 + SYNTHETIC label in the harness report).
+ai-service 105 → 110 passed; backend retrieval tests 4 + 2.
+
+### U4.8 M3 backlog
+Commits: `0e14d4d` (a, b), `044b176` (c), tenant-guard registration commit.
+- (a) `LegacyReclassificationService` + `POST /api/v1/internal/merchants/{id}/reclassify-legacy` (SYSTEM_ADMIN): a NEW
+  deterministic `classification_results` row from the stored webhook (event_id NULL, evidence links the legacy row);
+  legacy rows untouched; no state change, no intent; NO_WEBHOOK campaigns keep failing closed. A later human-triggered
+  re-evaluation sees the deterministic class (test: UNKNOWN_CLASSIFICATION before, ALLOWED + one intent after).
+- (b) DECISION U4.8-b: "resolve without collecting" is a distinct action (`POST /api/v1/reviews/{id}/resolve-no-collect`),
+  allowed only for CUSTOMER_DISPUTE / CUSTOMER_SAYS_PAID reviews (DTO `kind = RESOLVE_NO_COLLECT`): pending intents
+  cancelled, campaign CANCELLED, review CLOSED, audited; refused while an intent is in flight (an issued link cannot be
+  withdrawn). Approve keeps its meaning (resume collection), so money semantics are unchanged; reply review texts now
+  point to the new action.
+- (c) Analytics: "Recovered on a MEND Action (observed)" (was "Total Revenue Recovered"); late capture, attribution
+  unknown, SYNTHETIC and amount unknown shown apart; Holdout Experiment panel (`GET /api/v1/analytics/experiment`:
+  operational arm counts + causal figures computed by MetricsReport from the latest VALID snapshot restricted to the
+  merchant's pseudonym, else TBD). Customer page: SYNTHETIC card. Actions page: resolve-without-collecting button.
+Tests: backend M3BacklogIntegrationTest 5, ExperimentReportIntegrationTest 2, tenant-guard table +2 methods (116 dynamic);
+frontend analytics page 3 (new), actions +1, customer +1 (62 → 67).
+Revert proofs: frontend old label + no resolve button → `2 failed, 65 passed`; (a)/(b) covered by the assertions above.
+Verify: backend `[INFO] Tests run: 1098, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend `Tests: 67 passed`,
+`✓ Compiled successfully`, lint `✖ 1 problem (0 errors, 1 warning)`; ai-service `110 passed`; migrations.sh BUILD SUCCESS.
