@@ -1,0 +1,17 @@
+{
+  "experiment": "retrieval-augmented reply parsing (gated)",
+  "adoption_rule": "ADR-004 \u00a78",
+  "prompt_versions": {
+    "model": "reply-parse-v1",
+    "model_retrieval": "reply-parse-v2-fewshot"
+  },
+  "dataset": "TBD",
+  "baseline": "TBD",
+  "model": "TBD",
+  "model_retrieval": "TBD",
+  "reason": "blind dataset replies-v2.jsonl does not exist yet",
+  "adoption": {
+    "decision": "KEEP_DISABLED",
+    "reason": "no blind dataset (replies-v2): not measured (TBD)"
+  }
+}

@@ -36,6 +36,27 @@ public class HttpReplyParserClient implements ReplyParserClient {
 
     @Override
     public ReplyParseOutcome parse(String text) {
+        return send(Map.of("text", text));
+    }
+
+    /** M4 U4.7: with examples, ai-service uses prompt version reply-parse-v2-fewshot. */
+    @Override
+    public ReplyParseOutcome parse(String text, java.util.List<ReplyExample> examples) {
+        if (examples == null || examples.isEmpty()) {
+            return parse(text);
+        }
+        java.util.List<Map<String, Object>> list = new java.util.ArrayList<>();
+        for (ReplyExample e : examples) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("text", e.text());
+            m.put("intent", e.intent());
+            m.put("promised_date", e.promisedDate());
+            list.add(m);
+        }
+        return send(Map.of("text", text, "examples", list));
+    }
+
+    private ReplyParseOutcome send(Map<String, Object> requestBody) {
         try {
             return restClient.post()
                     .uri("/api/v1/parse_reply")
@@ -45,7 +66,7 @@ public class HttpReplyParserClient implements ReplyParserClient {
                             h.set("X-Mend-Internal-Token", internalToken);
                         }
                     })
-                    .body(Map.of("text", text))
+                    .body(requestBody)
                     .exchange((request, response) -> {
                         int status = response.getStatusCode().value();
                         // bounded: ai-service output is untrusted; a parse_reply answer is a few hundred bytes

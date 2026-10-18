@@ -44,6 +44,9 @@ public class ReplyParsingJob {
     private final Duration backoffBase;
     private final Duration backoffCap;
     private final Duration lease;
+    private final ReplyExampleStore exampleStore;
+    private final boolean retrievalEnabled;
+    private final int retrievalK;
 
     public ReplyParsingJob(CustomerReplyRepository replies, ReplySuggestionRepository suggestions, ReplyParserClient client,
                            ReplyPolicy policy, AuditService auditService, PlatformTransactionManager transactionManager,
@@ -52,7 +55,13 @@ public class ReplyParsingJob {
                            @Value("${mend.replies.max-attempts:5}") int maxAttempts,
                            @Value("${mend.replies.backoff-base-seconds:30}") long backoffBaseSeconds,
                            @Value("${mend.replies.backoff-cap-seconds:3600}") long backoffCapSeconds,
-                           @Value("${mend.replies.lease-seconds:120}") long leaseSeconds) {
+                           @Value("${mend.replies.lease-seconds:120}") long leaseSeconds,
+                           ReplyExampleStore exampleStore,
+                           @Value("${mend.reply.retrieval.enabled:false}") boolean retrievalEnabled,
+                           @Value("${mend.reply.retrieval.k:3}") int retrievalK) {
+        this.exampleStore = exampleStore;
+        this.retrievalEnabled = retrievalEnabled;
+        this.retrievalK = retrievalK;
         this.replies = replies;
         this.suggestions = suggestions;
         this.client = client;
@@ -89,7 +98,8 @@ public class ReplyParsingJob {
             attempted++;
             ReplyParseOutcome outcome;
             try {
-                outcome = client.parse(c.text());
+                // M4 U4.7: the retrieval experiment is gated (default off); off, the call is exactly the M3 one
+                outcome = retrievalEnabled ? client.parse(c.text(), exampleStore.similar(c.text(), retrievalK)) : client.parse(c.text());
             } catch (RuntimeException e) {
                 outcome = new ReplyParseOutcome.Failed("AI_CLIENT_ERROR");
             }
