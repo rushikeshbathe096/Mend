@@ -32,6 +32,20 @@ public final class Bootstrap {
         return percentile(mean(treatment).subtract(mean(control)), stats);
     }
 
+    /** Interval of the mean of one sample (e.g. paired per-event differences). */
+    public static BigInterval meanInterval(long[] values, int resamples, long seed) {
+        check(resamples);
+        if (values.length == 0) {
+            throw new IllegalArgumentException("need at least one value");
+        }
+        SplittableRandom random = new SplittableRandom(seed);
+        BigDecimal[] stats = new BigDecimal[resamples];
+        for (int b = 0; b < resamples; b++) {
+            stats[b] = mean(resample(values, random));
+        }
+        return percentile(mean(values), stats);
+    }
+
     /** Interval of the median of one sample. */
     public static BigInterval median(long[] values, int resamples, long seed) {
         check(resamples);
