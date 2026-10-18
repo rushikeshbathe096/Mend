@@ -49,8 +49,8 @@ public class ActionIntentTransitions {
      * change; fenced by status so nothing else (in particular NEEDS_RECONCILIATION / SAFE_RETRY) is ever affected.
      */
     @Transactional
-    public boolean bringForwardPaymentLookup(UUID id, Instant now) {
-        return repository.bringForwardPaymentLookup(id, now) == 1;
+    public boolean bringForwardPaymentLookup(UUID id, Instant now, Instant notBefore) {
+        return repository.bringForwardPaymentLookup(id, now, notBefore) == 1;
     }
 
     /** SCHEDULED → READY. */

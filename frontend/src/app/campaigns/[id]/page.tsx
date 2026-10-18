@@ -24,7 +24,8 @@ export default function CampaignDetailPage() {
   const params = useParams();
   const campaignId = params?.id as string;
   const { currentMerchantId, user } = useAuth();
-  const canClearOptOut = Boolean(user?.memberships?.some((m) => m.merchantId === currentMerchantId && m.roleName === 'MERCHANT_ADMIN'));
+  // same rule as the backend (hasMerchantRole): a merchant admin of this merchant, or a system admin
+  const canClearOptOut = Boolean(user?.memberships?.some((m) => m.roleName === 'SYSTEM_ADMIN' || (m.merchantId === currentMerchantId && m.roleName === 'MERCHANT_ADMIN')));
 
   const [campaign, setCampaign] = useState<CampaignDto | null>(null);
   const [timeline, setTimeline] = useState<CampaignTimelineDto | null>(null);
@@ -396,7 +397,7 @@ export default function CampaignDetailPage() {
                     merchantId={currentMerchantId}
                     optedOutAt={campaign.contactOptedOutAt}
                     canClearOptOut={canClearOptOut}
-                    onOptOutCleared={fetchCampaignDetails}
+                    onChanged={fetchCampaignDetails}
                   />
                 )}
 

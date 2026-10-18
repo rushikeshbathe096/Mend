@@ -337,8 +337,9 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
 
     /**
      * M3 U2.4 (ALREADY_PAID reply): brings an AWAITING_PAYMENT intent's next evidence lookup forward to {@code now}. Only
-     * the schedule changes (no status, no version bump: an in-flight reconcile keeps its version fence, and the
-     * AWAITING_PAYMENT branch is a read-only lookup that never resends). NEEDS_RECONCILIATION is never touched.
+     * the schedule changes (no status, no version bump). NEEDS_RECONCILIATION is never touched. Only a lookup due after
+     * {@code notBefore} moves: a row inside a reconciler lease ({@code reconcile_after = now + lease}) or one just brought
+     * forward keeps its schedule, so a reply never undoes a lease and repeated replies cannot keep lookups hot.
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -346,7 +347,7 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
                SET a.reconcileAfter = :now
              WHERE a.id = :id
                AND a.status = com.mend.domain.enums.ActionIntentStatus.AWAITING_PAYMENT
-               AND (a.reconcileAfter IS NULL OR a.reconcileAfter > :now)
+               AND a.reconcileAfter > :notBefore
             """)
-    int bringForwardPaymentLookup(@Param("id") UUID id, @Param("now") Instant now);
+    int bringForwardPaymentLookup(@Param("id") UUID id, @Param("now") Instant now, @Param("notBefore") Instant notBefore);
 }

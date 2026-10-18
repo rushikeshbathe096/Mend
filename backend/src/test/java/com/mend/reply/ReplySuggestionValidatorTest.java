@@ -26,12 +26,13 @@ class ReplySuggestionValidatorTest {
         assertEquals(new ReplySuggestionValidator.Valid(ReplyIntent.PROMISE_TO_PAY, LocalDate.of(2026, 11, 2), false),
                 validate("{\"intent\":\"PROMISE_TO_PAY\",\"promised_date\":\"2026-11-02\",\"abstain\":false}"));
         assertEquals(new ReplySuggestionValidator.Valid(ReplyIntent.OTHER, null, true),
-                validate("{\"intent\":\"OTHER\",\"abstain\":true}"));
+                validate("{\"intent\":\"OTHER\",\"promised_date\":null,\"abstain\":true}"));
     }
 
     @ParameterizedTest
     @CsvSource(delimiter = '|', value = {
             "[\"OPT_OUT\"]                                                                  | NOT_AN_OBJECT",
+            "{\"intent\":\"OTHER\",\"abstain\":true}                                   | PROMISED_DATE_MISSING",
             "{\"intent\":\"OPT_OUT\",\"abstain\":false,\"confidence\":0.99}                 | UNEXPECTED_FIELD",
             "{\"abstain\":false}                                                            | INTENT_MISSING",
             "{\"intent\":1,\"abstain\":false}                                               | INTENT_MISSING",

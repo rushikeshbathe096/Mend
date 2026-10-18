@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 
 /**
  * Strict schema check of a model suggestion (invariant 8: LLM output is untrusted). Exactly the fields {@code intent},
- * {@code promised_date}, {@code abstain}; intent from the closed enum; abstain a JSON boolean; promised_date null or a
+ * {@code promised_date}, {@code abstain}, all present; intent from the closed enum; abstain a JSON boolean; promised_date null or a
  * real ISO date {@code YYYY-MM-DD}, and only with PROMISE_TO_PAY. Nothing is coerced: anything else is invalid.
  */
 public final class ReplySuggestionValidator {
@@ -52,6 +52,9 @@ public final class ReplySuggestionValidator {
         JsonNode abstainNode = suggestion.get("abstain");
         if (abstainNode == null || !abstainNode.isBoolean()) {
             return new Invalid("ABSTAIN_NOT_BOOLEAN");
+        }
+        if (!suggestion.has("promised_date")) {
+            return new Invalid("PROMISED_DATE_MISSING");
         }
         JsonNode dateNode = suggestion.get("promised_date");
         LocalDate promisedDate = null;

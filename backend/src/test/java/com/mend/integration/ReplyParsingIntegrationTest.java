@@ -69,8 +69,10 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
     @Autowired private com.mend.service.RecoveryStrategyService strategyService;
     @Autowired private ClassificationResultRepository classifications;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.mend.service.ExecutionReconciler reconciler;
     @MockitoBean private ReplyParserClient parser;
     @MockitoSpyBean private PaymentProvider provider;
+    @MockitoSpyBean private ReplyPolicy policySpy;
 
     private final ObjectMapper json = new ObjectMapper();
     private UUID merchantId;
@@ -151,6 +153,8 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
         assertThrows(ComplianceBlockedException.class,
                 () -> executionService.executeActionIntent(claimed.getId(), "reply-test-worker", claimed.getClaimToken()));
         assertEquals(ActionIntentStatus.FAILED, intents.findById(ready.getId()).orElseThrow().getStatus());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE campaign_id = ? AND event_type = 'ACTION_COMPLIANCE_BLOCKED' "
+                + "AND reason LIKE '%CUSTOMER_OPTED_OUT%'", Long.class, campaign.getId()), "the abandoned claim is audited");
         verify(provider, never()).createPaymentLink(any(), any());
 
         // a new compliance evaluation is blocked as CUSTOMER_OPTED_OUT
@@ -187,7 +191,18 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
         assertTrue(after.getReconcileAfter().isBefore(Instant.now().plusSeconds(5)), "lookup brought forward");
         assertEquals(CampaignStatus.EXECUTING, campaigns.findById(campaign.getId()).orElseThrow().getCurrentState());
         assertEquals(0, reviews(campaign));
+
+        // a reconciler lease (reconcile_after = now + 60 s) is never undone, and a second reply right away moves nothing
+        jdbc.update("UPDATE action_intents SET reconcile_after = reconcile_after + interval '60 seconds' WHERE id = ?", awaiting.getId());
+        Instant leased = intents.findById(awaiting.getId()).orElseThrow().getReconcileAfter();
+        replyAndParse(campaign, parsed("{\"intent\":\"ALREADY_PAID\",\"promised_date\":null,\"abstain\":false}"));
+        assertEquals(leased, intents.findById(awaiting.getId()).orElseThrow().getReconcileAfter());
+
+        // the reconciler then runs its own read-only lookup; the replies caused no POST and no recovery
+        jdbc.update("UPDATE action_intents SET reconcile_after = reconcile_after - interval '60 seconds' WHERE id = ?", awaiting.getId());
+        reconciler.runCycle();
         verify(provider, never()).createPaymentLink(any(), any());
+        assertNotEquals(CampaignStatus.RECOVERED, campaigns.findById(campaign.getId()).orElseThrow().getCurrentState());
     }
 
     @Test
@@ -206,6 +221,12 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
         assertEquals(versionBefore, untouched.getVersion().longValue());
         assertTrue(untouched.getReconcileAfter().isAfter(Instant.now().plusSeconds(3000)), "schedule unchanged");
         assertEquals(1, reviews(campaign));
+
+        // the reconciler runs: the intent is not due, so no SAFE_RETRY resend and no POST were caused by the reply
+        reconciler.runCycle();
+        ActionIntent afterCycle = intents.findById(needsReconciliation.getId()).orElseThrow();
+        assertEquals(ActionIntentStatus.NEEDS_RECONCILIATION, afterCycle.getStatus());
+        assertEquals(versionBefore, afterCycle.getVersion().longValue());
         verify(provider, never()).createPaymentLink(any(), any());
     }
 
@@ -308,6 +329,30 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("Untrusted ids are bounded: an over-long model id is unknown (NULL); a reply that cannot be recorded is capped")
+    void untrustedValuesCannotPoisonTheJob() {
+        Campaign campaign = campaign(CampaignStatus.EXECUTING);
+        CustomerReplyDto longId = replyAndParse(campaign, new ReplyParseOutcome.Parsed(
+                json.readTree("{\"intent\":\"OTHER\",\"promised_date\":null,\"abstain\":false}"), "x".repeat(500), "m".repeat(101), "p".repeat(51)));
+        assertEquals("PARSED", longId.status());
+        assertNull(longId.suggestion().modelId(), "never truncated into a fabricated id");
+        assertNull(longId.suggestion().promptVersion());
+
+        // recording keeps failing (here: the policy throws): attempts still count, backoff applies, FAILED at the cap
+        CustomerReplyDto reply = replyService.submit(merchantId, campaign.getId(), "dispute", admin);
+        when(parser.parse(anyString())).thenReturn(parsed("{\"intent\":\"DISPUTE\",\"promised_date\":null,\"abstain\":false}"));
+        doThrow(new IllegalStateException("simulated")).when(policySpy).apply(any(), any());
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            job.runOnce();
+            jdbc.update("UPDATE customer_replies SET next_attempt_at = created_at - interval '1 second' WHERE id = ? AND status = 'PENDING'", reply.id());
+        }
+        CustomerReplyDto failed = replyService.list(merchantId, campaign.getId(), admin).stream().filter(r -> r.id().equals(reply.id())).findFirst().orElseThrow();
+        assertEquals("FAILED", failed.status());
+        assertEquals("RECORD_FAILED", failed.lastError());
+        verify(parser, times(5 + 1)).parse(anyString());   // 1 for the first reply above, then exactly the 5 capped attempts
+    }
+
+    @Test
     @DisplayName("A stale result (the row was re-claimed meanwhile) writes no suggestion")
     void staleResultIsDropped() {
         Campaign campaign = campaign(CampaignStatus.EXECUTING);
@@ -386,13 +431,30 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
         // the parser is reachable only from ReplyParsingJob (checked by type: no payment-path service depends on it)
         for (Class<?> type : List.of(com.mend.service.DefaultEventProcessingService.class, com.mend.service.ClassificationService.class,
                 com.mend.service.RecoveryOrchestratorService.class, ActionExecutionService.class, com.mend.service.ExecutionReconciler.class,
-                com.mend.compliance.ComplianceEngine.class, com.mend.service.ComplianceService.class)) {
+                com.mend.compliance.ComplianceEngine.class, com.mend.service.ComplianceService.class,
+                com.mend.service.HumanApprovalService.class, com.mend.scheduler.ActionScheduler.class,
+                com.mend.controller.CampaignController.class, com.mend.service.ActionIntentService.class,
+                com.mend.service.RecoveryStrategyService.class, com.mend.service.CampaignLifecycleService.class)) {
             for (var constructor : type.getDeclaredConstructors()) {
                 for (Class<?> parameter : constructor.getParameterTypes()) {
                     assertFalse(parameter.getPackageName().equals("com.mend.reply"), type.getSimpleName() + " takes " + parameter.getName());
                 }
             }
         }
+        // and behaviourally: a full recovery execution (claim, dispatch, mock provider) never calls the parser
+        Campaign campaign = campaign(CampaignStatus.ACTION_PENDING);
+        ComplianceDecisionEntity allowed = complianceDecisions.saveAndFlush(new ComplianceDecisionEntity(null, campaign.getId(),
+                merchantId, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED,
+                ComplianceReason.ALLOWED, "allowed", "v2.1"));
+        ActionIntent ready = intents.saveAndFlush(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
+                "REQUEST_CUSTOMER_ACTION", "CUSTOMER_ACTION_REQUIRED", allowed.getId(), ActionIntentStatus.READY,
+                "intent:" + UUID.randomUUID(), Instant.now().minusSeconds(1)));
+        ActionIntent claimed = claimService.claimSpecificIntent(ready.getId(), "reply-path-worker").orElseThrow();
+        executionService.executeActionIntent(claimed.getId(), "reply-path-worker", claimed.getClaimToken());
+        reconciler.runCycle();
+        // (without a webhook amount the executor defers the intent back to READY: M2 deferral; the dispatch still ran)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE campaign_id = ? AND event_type = 'ACTION_EXECUTING'",
+                Long.class, campaign.getId()), "the execution ran");
         verifyNoInteractions(parser);
     }
 }

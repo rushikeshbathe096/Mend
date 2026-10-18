@@ -37,9 +37,13 @@ public class ReplyPolicy {
     private final ActionIntentTransitions transitions;
     private final HumanApprovalService humanApprovalService;
     private final AuditService auditService;
+    /** A lookup due sooner than this (a reconcile lease, or a lookup already brought forward) is left alone. */
+    private final java.time.Duration minLookupGap;
 
     public ReplyPolicy(CampaignRepository campaignRepository, ActionIntentRepository actionIntentRepository,
-                       ActionIntentTransitions transitions, HumanApprovalService humanApprovalService, AuditService auditService) {
+                       ActionIntentTransitions transitions, HumanApprovalService humanApprovalService, AuditService auditService,
+                       @org.springframework.beans.factory.annotation.Value("${mend.reconciler.lease-seconds:60}") long reconcileLeaseSeconds) {
+        this.minLookupGap = java.time.Duration.ofSeconds(Math.max(reconcileLeaseSeconds, 300));
         this.campaignRepository = campaignRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.transitions = transitions;
@@ -57,7 +61,7 @@ public class ReplyPolicy {
             case OPT_OUT -> optOut(reply, suggestion);
             case ALREADY_PAID -> alreadyPaid(reply, suggestion);
             case DISPUTE -> review(reply, suggestion, "CUSTOMER_DISPUTE: the customer's reply disputes the charge (reply suggestion "
-                    + suggestion.getId() + ")", REVIEW_CUSTOMER_DISPUTE);
+                    + suggestion.getId() + "). Approving resumes collection; reject if the dispute stands.", REVIEW_CUSTOMER_DISPUTE);
             case PROMISE_TO_PAY, OTHER -> SHOWN_ONLY;
         };
     }
@@ -82,7 +86,7 @@ public class ReplyPolicy {
                 .toList();
         Instant now = Instant.now();
         for (ActionIntent intent : awaiting) {
-            if (transitions.bringForwardPaymentLookup(intent.getId(), now)) {
+            if (transitions.bringForwardPaymentLookup(intent.getId(), now, now.plus(minLookupGap))) {
                 audit(reply, "PAYMENT_LOOKUP_BROUGHT_FORWARD", suggestion, "intent=" + intent.getId());
             }
         }
@@ -90,7 +94,8 @@ public class ReplyPolicy {
             return PAYMENT_LOOKUP_BROUGHT_FORWARD;
         }
         return review(reply, suggestion, "CUSTOMER_SAYS_PAID: the customer's reply says the payment was made; no payment link "
-                + "awaits evidence, so a human checks (reply suggestion " + suggestion.getId() + ")", REVIEW_CUSTOMER_SAYS_PAID);
+                + "awaits evidence, so a human checks (reply suggestion " + suggestion.getId() + "). Approving resumes collection; "
+                + "reject if the payment is confirmed.", REVIEW_CUSTOMER_SAYS_PAID);
     }
 
     private String review(CustomerReply reply, ReplySuggestion suggestion, String reason, String effect) {

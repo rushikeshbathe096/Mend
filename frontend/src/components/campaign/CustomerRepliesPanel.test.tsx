@@ -73,7 +73,7 @@ describe('CustomerRepliesPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Record reply' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/campaigns/cmp-1/replies', { text: 'I paid yesterday' }, { merchantId: 'm-1' }));
 
-    rerender(<CustomerRepliesPanel campaignId="cmp-1" merchantId="m-1" optedOutAt="2026-10-18T10:00:00Z" canClearOptOut onOptOutCleared={onCleared} />);
+    rerender(<CustomerRepliesPanel campaignId="cmp-1" merchantId="m-1" optedOutAt="2026-10-18T10:00:00Z" canClearOptOut onChanged={onCleared} />);
     fireEvent.click(screen.getByRole('button', { name: 'Clear opt-out' }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/campaigns/cmp-1/opt-out', { merchantId: 'm-1' }));
     await waitFor(() => expect(onCleared).toHaveBeenCalled());

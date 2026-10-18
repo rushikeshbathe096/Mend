@@ -112,8 +112,13 @@ public class ActionExecutionService {
         } catch (ComplianceBlockedException e) {
             log.warn("ActionIntent '{}' execution blocked by compliance: {}", intentId, e.getMessage());
             // Fenced by the caller's token: a stale worker cannot fail someone else's live claim.
-            executionTransactionTemplate.executeWithoutResult(status ->
-                    transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now()));
+            executionTransactionTemplate.executeWithoutResult(status -> {
+                if (transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now())) {
+                    // U2.4 review (invariant 9): the CLAIMED -> FAILED transition is audited (ids and the block code only)
+                    actionIntentRepository.findById(intentId).ifPresent(i -> auditService.logEvent(i.getMerchantId(), i.getCampaignId(),
+                            "ACTION_COMPLIANCE_BLOCKED", "SYSTEM", null, "ActionIntent " + intentId + " blocked before dispatch: " + e.getMessage()));
+                }
+            });
             throw e;
         } catch (ClaimLostBeforeDispatch lost) {
             // The prepare transaction (incl. any campaign transition) rolled back; no provider call is made.

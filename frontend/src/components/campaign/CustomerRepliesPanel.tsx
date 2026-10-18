@@ -11,7 +11,8 @@ interface CustomerRepliesPanelProps {
   merchantId: string | null;
   optedOutAt?: string | null;
   canClearOptOut: boolean;
-  onOptOutCleared?: () => void;
+  /** Called after any change, so the parent can refetch the campaign (e.g. a new opt-out from a parsed reply). */
+  onChanged?: () => void;
 }
 
 const EFFECT_LABELS: Record<string, string> = {
@@ -28,7 +29,7 @@ const EFFECT_LABELS: Record<string, string> = {
  * M3 (ADR-003 §5): customer replies and the model's *suggestions*. A suggestion never moves money; the effect shown is
  * the deterministic policy's. Replies are customer PII and are shown only to the merchant's own users.
  */
-export const CustomerRepliesPanel: React.FC<CustomerRepliesPanelProps> = ({ campaignId, merchantId, optedOutAt, canClearOptOut, onOptOutCleared }) => {
+export const CustomerRepliesPanel: React.FC<CustomerRepliesPanelProps> = ({ campaignId, merchantId, optedOutAt, canClearOptOut, onChanged }) => {
   const [replies, setReplies] = useState<CustomerReplyDto[]>([]);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export const CustomerRepliesPanel: React.FC<CustomerRepliesPanelProps> = ({ camp
       await action();
       setError(null);
       reload();
+      onChanged?.();
     } catch (err: unknown) {
       setError(errorMessage(err, fallback));
     } finally {
@@ -70,7 +72,7 @@ export const CustomerRepliesPanel: React.FC<CustomerRepliesPanelProps> = ({ camp
       {optedOutAt && (
         <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 text-xs">
           <span className="font-semibold text-rose-800 dark:text-rose-300">
-            Customer opted out of contact ({new Date(optedOutAt).toLocaleString()}). Compliance blocks every recovery action.
+            Customer opted out of contact ({new Date(optedOutAt).toLocaleString()}). Compliance blocks new recovery actions and pending ones at dispatch; a payment link already sent can still be paid.
           </span>
           {canClearOptOut && (
             <button
@@ -78,7 +80,6 @@ export const CustomerRepliesPanel: React.FC<CustomerRepliesPanelProps> = ({ camp
               disabled={busy}
               onClick={() => run(async () => {
                 await api.delete(`/campaigns/${campaignId}/opt-out`, { merchantId });
-                onOptOutCleared?.();
               }, 'Failed to clear the opt-out.')}
               className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-800 dark:text-rose-200 font-bold disabled:opacity-50"
             >
@@ -114,6 +115,12 @@ export const CustomerRepliesPanel: React.FC<CustomerRepliesPanelProps> = ({ camp
       </div>
 
       {error && <p className="text-xs text-rose-600" role="alert">{error}</p>}
+
+      <div className="flex justify-end">
+        <button type="button" onClick={() => { reload(); onChanged?.(); }} className="text-[11px] font-bold text-blue-600 hover:underline">
+          Refresh
+        </button>
+      </div>
 
       {replies.length === 0 ? (
         <p className="text-sm text-gray-500 italic py-4 text-center">No customer replies recorded for this campaign.</p>

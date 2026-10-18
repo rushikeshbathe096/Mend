@@ -74,13 +74,19 @@ public class ReplyParsingJob {
         }
     }
 
-    /** One batch; returns how many replies were attempted. */
+    /**
+     * Up to one batch; returns how many replies were attempted. Rows are claimed one at a time (U2.4 review), so a lease
+     * only has to cover one model call, never a whole batch.
+     */
     public int runOnce() {
-        List<Claimed> claimed = tx.execute(status -> claimDue(Instant.now()));
-        if (claimed == null) {
-            return 0;
-        }
-        for (Claimed c : claimed) {
+        int attempted = 0;
+        while (attempted < batchSize) {
+            List<Claimed> claimed = tx.execute(status -> claimDue(Instant.now()));
+            if (claimed == null || claimed.isEmpty()) {
+                break;
+            }
+            Claimed c = claimed.get(0);
+            attempted++;
             ReplyParseOutcome outcome;
             try {
                 outcome = client.parse(c.text());
@@ -91,16 +97,18 @@ public class ReplyParsingJob {
             try {
                 tx.executeWithoutResult(status -> record(c, result));
             } catch (RuntimeException e) {
-                // The lease runs out and the reply is picked up again; nothing was half-written (rolled back).
+                // Nothing was half-written (rolled back). The attempt still counts: retry with backoff, FAILED at the cap,
+                // so a reply that cannot be recorded is not re-sent to the model forever (U2.4 review).
                 log.error("event=reply_record_failed reply={} error={}", c.id(), e.getClass().getSimpleName());
+                tx.executeWithoutResult(status -> retryOrFail(c, "RECORD_FAILED", Instant.now()));
             }
         }
-        return claimed.size();
+        return attempted;
     }
 
     private List<Claimed> claimDue(Instant now) {
         List<Claimed> claimed = new ArrayList<>();
-        for (UUID id : replies.lockDue(now, batchSize)) {
+        for (UUID id : replies.lockDue(now, 1)) {
             if (replies.claim(id, now.plus(lease), now) == 1) {
                 CustomerReply reply = replies.findById(id).orElseThrow();
                 claimed.add(new Claimed(id, reply.getAttempts(), reply.getText()));
@@ -124,13 +132,16 @@ public class ReplyParsingJob {
             return;
         }
         CustomerReply reply = replies.findById(c.id()).orElseThrow();
+        // ai-service values are untrusted (invariant 8): an over-long id is unknown (NULL), never truncated into a value
+        String modelId = bounded(parsed.modelId(), 100);
+        String promptVersion = bounded(parsed.promptVersion(), 50);
         ReplySuggestion suggestion = switch (parsed.suggestion() == null
-                ? new ReplySuggestionValidator.Invalid("MODEL_OUTPUT_" + (parsed.outputError() != null ? parsed.outputError().toUpperCase() : "MISSING"))
+                ? new ReplySuggestionValidator.Invalid(outputErrorCode(parsed.outputError()))
                 : ReplySuggestionValidator.validate(parsed.suggestion())) {
             case ReplySuggestionValidator.Valid v -> ReplySuggestion.valid(reply.getId(), reply.getMerchantId(), v.intent(),
-                    v.promisedDate(), v.abstain(), parsed.modelId(), parsed.promptVersion());
+                    v.promisedDate(), v.abstain(), modelId, promptVersion);
             case ReplySuggestionValidator.Invalid i -> ReplySuggestion.invalid(reply.getId(), reply.getMerchantId(), i.error(),
-                    parsed.modelId(), parsed.promptVersion());
+                    modelId, promptVersion);
         };
         suggestions.saveAndFlush(suggestion);
         auditService.logEvent(reply.getMerchantId(), reply.getCampaignId(), "REPLY_PARSED", "SYSTEM", null,
@@ -153,6 +164,20 @@ public class ReplyParsingJob {
             return;
         }
         replies.scheduleRetry(c.id(), c.attempts(), now.plus(backoff(c.attempts())), code, now);
+    }
+
+    static String bounded(String value, int maxLength) {
+        return value != null && !value.isBlank() && value.length() <= maxLength ? value : null;
+    }
+
+    /** ai-service's reason for "no suggestion", mapped to a closed set (never copied). */
+    static String outputErrorCode(String outputError) {
+        return switch (outputError == null ? "" : outputError) {
+            case "not_json" -> "MODEL_OUTPUT_NOT_JSON";
+            case "not_object" -> "MODEL_OUTPUT_NOT_OBJECT";
+            case "no_text" -> "MODEL_OUTPUT_NO_TEXT";
+            default -> "MODEL_OUTPUT_MISSING";
+        };
     }
 
     /** base·2^(attempt-1), capped. */

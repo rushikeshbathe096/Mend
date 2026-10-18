@@ -101,6 +101,8 @@ confidence is not. Async parsing keeps AI useful without putting it between a fa
   never routed to a review it could not pass.
 - Intents created before M3 are not re-classified: the pre-dispatch check re-reads the stored compliance decision
   (invariant 7) and does not re-run the class rule. Such READY/SCHEDULED intents can still dispatch as authorized then.
+- Reply-raised reviews (`CUSTOMER_DISPUTE`, `CUSTOMER_SAYS_PAID`) use the existing approval queue. Approving one resumes
+  collection, and the review text says so. A separate review kind for "resolve, do not collect" is M4-owned.
 - The UI loses the "AI Agent Decisions" tab; review items lose agent fields (historical rows remain in the database).
 
 ## Revisit conditions

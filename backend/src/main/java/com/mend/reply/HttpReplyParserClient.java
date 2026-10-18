@@ -15,6 +15,8 @@ import java.util.Map;
 @Component
 public class HttpReplyParserClient implements ReplyParserClient {
 
+    static final int MAX_RESPONSE_BYTES = 64 * 1024;
+
     private final RestClient restClient;
     private final String internalToken;
     private final ObjectMapper objectMapper;
@@ -46,7 +48,8 @@ public class HttpReplyParserClient implements ReplyParserClient {
                     .body(Map.of("text", text))
                     .exchange((request, response) -> {
                         int status = response.getStatusCode().value();
-                        String body = new String(response.getBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                        // bounded: ai-service output is untrusted; a parse_reply answer is a few hundred bytes
+                        String body = new String(response.getBody().readNBytes(MAX_RESPONSE_BYTES), java.nio.charset.StandardCharsets.UTF_8);
                         return toOutcome(status, body);
                     });
         } catch (RestClientException e) {
