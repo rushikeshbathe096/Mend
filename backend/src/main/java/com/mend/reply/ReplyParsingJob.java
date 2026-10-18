@@ -99,7 +99,7 @@ public class ReplyParsingJob {
             ReplyParseOutcome outcome;
             try {
                 // M4 U4.7: the retrieval experiment is gated (default off); off, the call is exactly the M3 one
-                outcome = retrievalEnabled ? client.parse(c.text(), exampleStore.similar(c.text(), retrievalK)) : client.parse(c.text());
+                outcome = retrievalEnabled ? client.parse(c.text(), examplesFor(c.text())) : client.parse(c.text());
             } catch (RuntimeException e) {
                 outcome = new ReplyParseOutcome.Failed("AI_CLIENT_ERROR");
             }
@@ -114,6 +114,16 @@ public class ReplyParsingJob {
             }
         }
         return attempted;
+    }
+
+    /** U4.7 review: a retrieval failure never costs a parse attempt; the reply is parsed without examples (text never logged). */
+    private List<ReplyExample> examplesFor(String text) {
+        try {
+            return exampleStore.similar(text, retrievalK);
+        } catch (RuntimeException e) {
+            log.warn("event=reply_retrieval_failed error={}", e.getClass().getSimpleName());
+            return List.of();
+        }
     }
 
     private List<Claimed> claimDue(Instant now) {

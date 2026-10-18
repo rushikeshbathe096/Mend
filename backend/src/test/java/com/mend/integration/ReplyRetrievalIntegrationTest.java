@@ -52,7 +52,8 @@ class ReplyRetrievalIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @MockitoBean private ReplyParserClient parser;
 
-    private static final String DATASET = "replies-v1-dev-" + UUID.randomUUID().toString().substring(0, 8);
+    /** The configured dataset version (mend.reply.retrieval.dataset-version); re-imports are idempotent. */
+    private static final String DATASET = "replies-v1-dev";
     private UUID merchantId;
 
     @BeforeEach
@@ -93,9 +94,25 @@ class ReplyRetrievalIntegrationTest {
     }
 
     @Test
+    @DisplayName("Special characters and URLs are lexemes, never query syntax; other dataset versions are not searched; ranking is deterministic")
+    void queryConstructionIsSafe() {
+        for (String hostile : List.of("it's paid' OR '1'='1", "a\\b & c | !d", "stop:* &&", "see https://x.com/a?b=1&c=2", "(", "'")) {
+            assertDoesNotThrow(() -> store.similar(hostile, 3), hostile);
+        }
+        store.importExamples("replies-v1-dev-other", "SYNTHETIC", List.of(new ReplyExample("stop stop stop messaging", "OPT_OUT", null)));
+        assertTrue(store.similar("stop messaging", 5).stream().noneMatch(e -> e.text().equals("stop stop stop messaging")),
+                "only the configured dataset version is searched");
+        assertEquals(store.similar("please stop messaging me now", 5), store.similar("please stop messaging me now", 5));
+    }
+
+    @Test
     @DisplayName("Only SYNTHETIC or CONSENTED examples are accepted; the store is append-only; re-import is idempotent")
     void storeRules() throws Exception {
         assertThrows(IllegalArgumentException.class, () -> store.importExamples(DATASET, "CUSTOMER", List.of(new ReplyExample("x", "OTHER", null))));
+        // U4.7 review: CONSENTED needs consent capture first; evaluation datasets never become examples
+        assertThrows(IllegalArgumentException.class, () -> store.importExamples(DATASET, "CONSENTED", List.of(new ReplyExample("x", "OTHER", null))));
+        assertThrows(IllegalArgumentException.class, () -> store.importExamples("replies-v1-test", "SYNTHETIC", List.of(new ReplyExample("x", "OTHER", null))));
+        assertThrows(IllegalArgumentException.class, () -> store.importExamples("replies-v2", "SYNTHETIC", List.of(new ReplyExample("x", "OTHER", null))));
         assertThrows(DataAccessException.class, () -> jdbc.update(
                 "INSERT INTO reply_label_examples (id, dataset_version, source, text, intent) VALUES (?, 'x', 'CUSTOMER_REPLY', 'y', 'OTHER')", UUID.randomUUID()));
         assertEquals(0, store.importExamples(DATASET, "SYNTHETIC", devExamples()));

@@ -36,7 +36,7 @@ import static org.mockito.Mockito.*;
 @ActiveProfiles("test")
 class ReplyRetrievalEnabledIntegrationTest {
 
-    @Autowired private ReplyExampleStore store;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private ReplyExampleStore store;
     @Autowired private ReplyParsingJob job;
     @Autowired private CustomerReplyService replyService;
     @Autowired private MerchantRepository merchants;
@@ -51,7 +51,7 @@ class ReplyRetrievalEnabledIntegrationTest {
         jdbc.update("UPDATE customer_replies SET next_attempt_at = next_attempt_at + interval '30 days' WHERE status = 'PENDING'");
         merchantId = UUID.randomUUID();
         merchants.save(new Merchant(merchantId, "Retrieval-on merchant"));
-        store.importExamples("replies-v1-dev-on-" + UUID.randomUUID().toString().substring(0, 8), "SYNTHETIC", ReplyRetrievalIntegrationTest.devExamples());
+        store.importExamples("replies-v1-dev", "SYNTHETIC", ReplyRetrievalIntegrationTest.devExamples());
     }
 
     @AfterEach
@@ -75,5 +75,19 @@ class ReplyRetrievalEnabledIntegrationTest {
         assertEquals(2, examples.getValue().size());
         assertEquals("OPT_OUT", examples.getValue().get(0).intent());
         verify(parser, never()).parse(anyString());
+    }
+
+    @Test
+    @DisplayName("A retrieval failure costs no parse attempt: the reply is parsed without examples")
+    void retrievalFailureFallsBack() {
+        when(parser.parse(anyString(), anyList())).thenReturn(new ReplyParseOutcome.ModelUnavailable());
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("db down")).when(store).similar(anyString(), anyInt());
+        Campaign campaign = new Campaign(UUID.randomUUID(), merchantId);
+        campaign.setPaymentId("pay_rfb" + UUID.randomUUID().toString().replace("-", "").substring(0, 10));
+        campaign.setCurrentState(CampaignStatus.ELIGIBLE);
+        campaigns.saveAndFlush(campaign);
+        replyService.submit(merchantId, campaign.getId(), "please stop", TestUsers.memberOf(merchantId));
+        job.runOnce();
+        verify(parser).parse("please stop", List.of());
     }
 }

@@ -15,6 +15,7 @@ model's AND its invalid-output rate is not higher. Anything not measured is TBD 
 improvement without the measurement.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,16 +25,20 @@ from eval import run_eval
 import reply_parser
 
 ROOT = Path(__file__).resolve().parents[2]
+# U4.7 review: blindness is a property of the dataset (written without sight of the rules), not of a file existing
+BLIND_DATASETS = {"replies-v2"}
 DEFAULT_DATASET = ROOT / "docs/m3/eval/replies-v2.jsonl"
 DEFAULT_OUT = ROOT / "docs/m4/eval/retrieval-results.json"
 
 
 def adoption_decision(model: Optional[dict], model_retrieval: Optional[dict], blind: bool) -> dict:
-    """ADOPT only with a measured improvement on a blind dataset; otherwise KEEP_DISABLED with the reason."""
+    """ADOPT only with a measured improvement on a blind dataset, both systems scored on the same rows; otherwise KEEP_DISABLED."""
     if not blind:
         return {"decision": "KEEP_DISABLED", "reason": "no blind dataset (replies-v2): not measured (TBD)"}
     if not model or not model_retrieval or "macro_f1" not in model or "macro_f1" not in model_retrieval:
         return {"decision": "KEEP_DISABLED", "reason": "model metrics not measured (TBD)"}
+    if model.get("provider_errors") or model_retrieval.get("provider_errors") or model.get("scored_rows") != model_retrieval.get("scored_rows"):
+        return {"decision": "KEEP_DISABLED", "reason": "the systems were not scored on the same rows (provider errors): not comparable"}
     if model_retrieval["macro_f1"] <= model["macro_f1"]:
         return {"decision": "KEEP_DISABLED", "reason": "macro F1 did not improve"}
     if model_retrieval["invalid_output_rate"] > model["invalid_output_rate"]:
@@ -61,23 +66,33 @@ def run(dataset: Path = DEFAULT_DATASET, examples_path: Optional[Path] = None) -
         return report
     rows = run_eval.load(dataset)
     report["dataset"] = rows[0]["dataset"]
+    report["dataset_sha256"] = hashlib.sha256(dataset.read_bytes()).hexdigest()
+    report["label_source"] = "SYNTHETIC"
+    report["rows"] = len(rows)
+    blind = report["dataset"] in BLIND_DATASETS
     report["baseline"] = {"system": run_eval.BASELINE_VERSION, **run_eval.evaluate(rows, run_eval.keyword_baseline)}
     examples = load_examples(examples_path)
     if not reply_parser.model_configured():
         report["model"] = report["model_retrieval"] = "TBD"
         report["reason"] = "no GEMINI_API_KEY in the environment; no model was run"
-        report["adoption"] = adoption_decision(None, None, blind=True)
+        report["adoption"] = adoption_decision(None, None, blind=blind)
         return report
     report["model"] = run_eval.evaluate(rows, run_eval.model_predict)
     if examples is None:
         report["model_retrieval"] = "TBD"
         report["reason"] = "no examples file exported from the backend store"
     else:
-        by_text = {r["text"]: examples.get(r["id"], []) for r in rows}
+        problem = examples_problem(rows, examples)
+        if problem:
+            report["model_retrieval"] = "TBD"
+            report["reason"] = problem
+            report["adoption"] = {"decision": "KEEP_DISABLED", "reason": problem}
+            return report
+        by_text = {r["text"]: examples[r["id"]] for r in rows}
 
         def predict(text: str) -> dict:
             try:
-                result = reply_parser.parse_reply(text, examples=by_text.get(text) or None)
+                result = reply_parser.parse_reply(text, examples=by_text[text])
             except reply_parser.ModelError as e:
                 return {"provider_error": str(e)}
             return {"suggestion": result.suggestion, "model_id": result.model_id}
@@ -85,8 +100,22 @@ def run(dataset: Path = DEFAULT_DATASET, examples_path: Optional[Path] = None) -
         report["model_retrieval"] = run_eval.evaluate(rows, predict)
     model = report["model"] if isinstance(report["model"], dict) else None
     model_retrieval = report["model_retrieval"] if isinstance(report["model_retrieval"], dict) else None
-    report["adoption"] = adoption_decision(model, model_retrieval, blind=True)
+    report["adoption"] = adoption_decision(model, model_retrieval, blind=blind)
     return report
+
+
+def examples_problem(rows: list[dict], examples: dict) -> Optional[str]:
+    """U4.7 review: fail closed on anything that would make the comparison invalid."""
+    texts = [r["text"] for r in rows]
+    if len(set(texts)) != len(texts):
+        return "duplicate texts in the dataset: examples cannot be matched to rows unambiguously"
+    missing = [r["id"] for r in rows if not examples.get(r["id"])]
+    if missing:
+        return f"{len(missing)} rows have no retrieved examples (they would silently use the v1 prompt)"
+    leaked = [r["id"] for r in rows if any(e["text"] in set(texts) for e in examples[r["id"]])]
+    if leaked:
+        return f"{len(leaked)} rows retrieved an evaluation text as an example (contamination)"
+    return None
 
 
 def main() -> None:

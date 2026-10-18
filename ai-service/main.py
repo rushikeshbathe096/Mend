@@ -3,6 +3,7 @@
 Endpoints: GET /health and POST /api/v1/parse_reply. Nothing here can move money or change a campaign: the backend
 validates every suggestion and a deterministic policy owns all effects.
 """
+import datetime
 import hmac
 import logging
 import os
@@ -10,7 +11,7 @@ from typing import Literal, Optional
 
 from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 import reply_parser
 
@@ -56,6 +57,14 @@ class LabelledExample(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     intent: Literal["OPT_OUT", "ALREADY_PAID", "DISPUTE", "PROMISE_TO_PAY", "OTHER"]
     promised_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    @model_validator(mode="after")
+    def date_only_with_a_real_promise(self):
+        if self.promised_date is not None:
+            datetime.date.fromisoformat(self.promised_date)  # a real calendar date (ValueError -> 422)
+            if self.intent != "PROMISE_TO_PAY":
+                raise ValueError("promised_date only with PROMISE_TO_PAY")
+        return self
 
 
 class ParseReplyRequest(BaseModel):

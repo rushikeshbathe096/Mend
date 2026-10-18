@@ -20,20 +20,31 @@ import java.util.UUID;
 @Component
 public class ReplyExampleStore {
 
-    public static final Set<String> SOURCES = Set.of("SYNTHETIC", "CONSENTED");
+    /**
+     * U4.7 review: only SYNTHETIC until consent capture exists (the table's CHECK also allows CONSENTED, but nothing could prove a
+     * CONSENTED row is not a customer reply without a stored consent reference).
+     */
+    public static final Set<String> SOURCES = Set.of("SYNTHETIC");
     public static final int MAX_K = 5;
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final String datasetVersion;
 
-    public ReplyExampleStore(NamedParameterJdbcTemplate jdbc) {
+    public ReplyExampleStore(NamedParameterJdbcTemplate jdbc,
+                             @org.springframework.beans.factory.annotation.Value("${mend.reply.retrieval.dataset-version:replies-v1-dev}") String datasetVersion) {
         this.jdbc = jdbc;
+        this.datasetVersion = datasetVersion;
     }
 
     /** Adds a dataset's examples (idempotent per dataset version and text). Returns how many were new. */
     @Transactional
     public int importExamples(String datasetVersion, String source, List<ReplyExample> examples) {
         if (!SOURCES.contains(source)) {
-            throw new IllegalArgumentException("only SYNTHETIC or CONSENTED examples may be stored, never customer replies");
+            throw new IllegalArgumentException("only SYNTHETIC examples may be stored (never customer replies; CONSENTED needs consent capture)");
+        }
+        // U4.7 review: evaluation data never enters the store (a held-out or blind row as its own example inflates F1)
+        if (datasetVersion.endsWith("-test") || datasetVersion.startsWith("replies-v2")) {
+            throw new IllegalArgumentException("evaluation datasets (held-out *-test, blind replies-v2) must not be used as examples");
         }
         int added = 0;
         for (ReplyExample e : examples) {
@@ -48,19 +59,28 @@ public class ReplyExampleStore {
         return added;
     }
 
-    /** The {@code k} (at most {@value #MAX_K}) most similar examples; empty when nothing shares a word with the reply. */
+    /**
+     * The {@code k} (at most {@value #MAX_K}) most similar examples of the configured dataset version; empty when nothing shares a
+     * word with the reply. The OR query is built from the reply's own lexemes, each quoted (U4.7 review: never by rewriting the
+     * query text); ties break on the text, so a ranking is the same on every database.
+     */
     @Transactional(readOnly = true)
     public List<ReplyExample> similar(String reply, int k) {
         if (reply == null || reply.isBlank() || k <= 0) {
             return List.of();
         }
         return jdbc.query("""
-                SELECT e.text, e.intent, e.promised_date
-                FROM reply_label_examples e,
-                     (SELECT NULLIF(replace(plainto_tsquery('simple', :reply)::text, '&', '|'), '')::tsquery AS q) query
-                WHERE query.q IS NOT NULL AND e.tsv @@ query.q
-                ORDER BY ts_rank(e.tsv, query.q) DESC, e.id
-                LIMIT :k""", new MapSqlParameterSource().addValue("reply", reply).addValue("k", Math.min(k, MAX_K)),
+                WITH query AS (
+                    SELECT to_tsquery('simple', string_agg(quote_literal(lexeme), ' | ')) AS q
+                    FROM unnest(tsvector_to_array(to_tsvector('simple', :reply))) AS lexeme)
+                SELECT text, intent, promised_date FROM (
+                    SELECT DISTINCT ON (e.text) e.text, e.intent, e.promised_date, ts_rank(e.tsv, query.q) AS rank
+                    FROM reply_label_examples e, query
+                    WHERE query.q IS NOT NULL AND e.dataset_version = :dataset AND e.tsv @@ query.q
+                    ORDER BY e.text) ranked
+                ORDER BY rank DESC, text
+                LIMIT :k""", new MapSqlParameterSource().addValue("reply", reply).addValue("dataset", datasetVersion)
+                        .addValue("k", Math.min(k, MAX_K)),
                 (rs, i) -> new ReplyExample(rs.getString(1), rs.getString(2),
                         rs.getDate(3) == null ? null : rs.getDate(3).toLocalDate().toString()));
     }
