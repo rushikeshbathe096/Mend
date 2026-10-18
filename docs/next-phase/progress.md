@@ -339,3 +339,12 @@ Verify: backend `[INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0`, `BU
   surface (auth, deleted routes gone, PII/key never logged, key only in a header, prompt injection is data, malformed
   provider answers).
 Verify: `scripts/ci/ai-service.sh` (fresh venv from requirements) → `79 passed` at U2.6; local `84 passed` after U2.5 fixes.
+
+#### U2.6 review (fresh subagent): no blocker. Dispositions
+- FIXED MAJOR 1 (non-object provider JSON → 500): revert proof: old reply_parser →
+  `test_provider_body_that_is_json_but_not_an_object_is_a_model_error[...]` 4 failures.
+- FIXED MAJOR 2 (README still described LangGraph/MCP/six agents), MINOR 3 (health-check doc), MINOR 4
+  (`hmac.compare_digest` + startup warning; auth stays optional for localhost as documented), MINOR 5 (blank text),
+  NIT 6 (.gitignore), NIT 7 (.dockerignore).
+- Out-of-scope note answered: backend full run after U2.6 = `[INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0`.
+Verify: ai-service `90 passed`.
