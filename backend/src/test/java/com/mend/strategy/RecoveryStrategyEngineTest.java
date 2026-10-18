@@ -116,13 +116,15 @@ public class RecoveryStrategyEngineTest {
     }
 
     @Test
-    @DisplayName("5. UNCLASSIFIED and legacy UNKNOWN -> MANUAL_REVIEW")
+    @DisplayName("5. UNCLASSIFIED -> payment link (decision B); legacy UNKNOWN -> MANUAL_REVIEW (fail closed)")
     void testUnknownRule() {
-        for (String c : new String[]{"UNCLASSIFIED", "UNKNOWN"}) {
-            Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, c, new BigDecimal("0.85"));
-            RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, createClassification(c, new BigDecimal("0.85")), null));
-            assertEquals(RecoveryStrategy.MANUAL_REVIEW, decision.getStrategy(), c);
-        }
+        // M3 behaviour change (owner decision B, ADR-003 §4): UNCLASSIFIED was MANUAL_REVIEW; it now gets a payment link
+        Campaign unclassified = createCampaign(CampaignStatus.ELIGIBLE, 0, "UNCLASSIFIED", new BigDecimal("0.85"));
+        assertEquals(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, engine.evaluate(new RecoveryContext(unclassified,
+                createClassification("UNCLASSIFIED", new BigDecimal("0.85")), null)).getStrategy());
+        Campaign legacy = createCampaign(CampaignStatus.ELIGIBLE, 0, "UNKNOWN", new BigDecimal("0.85"));
+        assertEquals(RecoveryStrategy.MANUAL_REVIEW, engine.evaluate(new RecoveryContext(legacy,
+                createClassification("UNKNOWN", new BigDecimal("0.85")), null)).getStrategy());
     }
 
     @Test
@@ -150,7 +152,9 @@ public class RecoveryStrategyEngineTest {
             "CUSTOMER_DECLINED, 0, CUSTOMER_ACTION_REQUIRED",
             "INSTRUMENT_INVALID, 0, CUSTOMER_ACTION_REQUIRED",
             "MANDATE_INVALID, 0, CUSTOMER_ACTION_REQUIRED",
-            "UNCLASSIFIED, 0, MANUAL_REVIEW",
+            // M3 behaviour change (owner decision B): UNCLASSIFIED was MANUAL_REVIEW; payment link only, at any attempt
+            "UNCLASSIFIED, 0, CUSTOMER_ACTION_REQUIRED",
+            "UNCLASSIFIED, 2, CUSTOMER_ACTION_REQUIRED",
     })
     @DisplayName("ADR-003 §4 strategy table, one row per taxonomy class")
     void strategyTablePerTaxonomyClass(String failureClass, int attempts, RecoveryStrategy expected) {

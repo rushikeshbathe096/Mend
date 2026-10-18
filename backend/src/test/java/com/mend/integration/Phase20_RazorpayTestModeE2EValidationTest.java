@@ -255,6 +255,9 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         String paymentId = "pay_rzp_e2e_200";
         long amountInCents = 75000L; // ₹750.00
 
+        // M3 behaviour change (owner decision B, ADR-003 §4): the reason was in error_code, so the taxonomy saw no
+        // documented reason (UNCLASSIFIED), which now gets a payment-link intent at once; the documented Razorpay shape
+        // (error_code BAD_REQUEST_ERROR + error_reason) makes this the insufficient-funds failure the test means.
         String payload = String.format("""
                 {
                   "event": "payment.failed",
@@ -267,7 +270,9 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
                         "amount": %d,
                         "currency": "INR",
                         "status": "failed",
-                        "error_code": "insufficient_funds",
+                        "error_code": "BAD_REQUEST_ERROR",
+                        "error_reason": "insufficient_funds",
+                        "error_source": "customer",
                         "error_description": "Card balance temporarily insufficient",
                         "notes": {
                           "merchant_id": "%s"
@@ -470,7 +475,8 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         Campaign campaign = createTestCampaign(tenant, uniquePaymentId, CampaignStatus.ACTION_PENDING, 0, amountMinor);
         ComplianceDecisionEntity compliance = complianceDecisionRepository.saveAndFlush(new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), tenant, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
-                ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "Compliant action", "v1.0.0"));
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
+                ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         ActionIntent intent = new ActionIntent(UUID.randomUUID(), tenant, campaign.getId(), 1,
                 ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(),
                 ActionIntentStatus.CLAIMED, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION", Instant.now());

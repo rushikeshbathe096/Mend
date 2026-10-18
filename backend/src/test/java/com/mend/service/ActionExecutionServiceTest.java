@@ -90,7 +90,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
                 ComplianceStatus.COMPLIANCE_ALLOWED,
                 ComplianceReason.ALLOWED,
                 "Compliant action",
-                "v1.0.0"
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
+                com.mend.testsupport.TestCompliance.CURRENT_POLICY
         );
         complianceDecision = complianceDecisionRepository.save(complianceDecision);
     }
@@ -224,7 +225,8 @@ public class ActionExecutionServiceTest extends AbstractIntegrationTest {
         ComplianceDecisionEntity blockedCompliance = new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), merchantId, null,
                 RecoveryStrategy.RETRY_IMMEDIATELY, ComplianceStatus.COMPLIANCE_BLOCKED,
-                ComplianceReason.MAX_ATTEMPTS_EXCEEDED, "Max retry attempts reached", "v1.0.0"
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
+                ComplianceReason.MAX_ATTEMPTS_EXCEEDED, "Max retry attempts reached", com.mend.testsupport.TestCompliance.CURRENT_POLICY
         );
         blockedCompliance = complianceDecisionRepository.save(blockedCompliance);
 

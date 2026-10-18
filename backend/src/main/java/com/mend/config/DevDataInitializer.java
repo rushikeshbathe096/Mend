@@ -2,7 +2,6 @@ package com.mend.config;
 
 import com.mend.taxonomy.FailureClassification;
 import com.mend.taxonomy.FailureTaxonomy;
-import com.mend.taxonomy.PaymentFailureClass;
 import com.mend.taxonomy.ProviderFailure;
 
 import com.mend.domain.entity.*;
@@ -269,10 +268,10 @@ public class DevDataInitializer implements ApplicationRunner {
                 break;
             case CHURN_RISK:
                 errorReason = rand.nextBoolean() ? "card_declined" : "payment_failed"; errorSource = "customer";   // undocumented actor: UNCLASSIFIED
-                // M3: UNCLASSIFIED is ineligible, so no attempts were made (was 3 retries of a legacy UNKNOWN class)
-                strategy = RecoveryStrategy.MANUAL_REVIEW;
+                // M3 decision B: an UNCLASSIFIED failure gets a payment link only; seeded as one unpaid link
+                strategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
                 finalState = CampaignStatus.EXHAUSTED;
-                attempts = 0;
+                attempts = 1;
                 break;
             case RECENTLY_RECOVERED:
             default:
@@ -286,7 +285,6 @@ public class DevDataInitializer implements ApplicationRunner {
         ProviderFailure failure = new ProviderFailure("BAD_REQUEST_ERROR", errorReason, errorSource);
         FailureClassification taxonomy = FailureTaxonomy.classify(failure);
         String failureClass = taxonomy.failureClass().name();
-        boolean unclassified = taxonomy.failureClass() == PaymentFailureClass.UNCLASSIFIED;
 
         // 1. Save Failed Webhook Event
         String failedPayload = buildWebhookPayload("payment.failed", paymentId, amount, "failed", errorReason, errorSource);
@@ -334,19 +332,17 @@ public class DevDataInitializer implements ApplicationRunner {
         recoveryDecisionRepository.save(recoveryDecision);
 
         // 5. Compliance Decision Entity
-        ComplianceStatus compStatus = (unclassified || segment == CustomerSegment.HIGH_RISK || (segment == CustomerSegment.HIGH_VALUE && amount.compareTo(new BigDecimal("50000")) > 0))
+        ComplianceStatus compStatus = (segment == CustomerSegment.HIGH_RISK || (segment == CustomerSegment.HIGH_VALUE && amount.compareTo(new BigDecimal("50000")) > 0))
                 ? ComplianceStatus.COMPLIANCE_BLOCKED
                 : ComplianceStatus.COMPLIANCE_ALLOWED;
 
-        ComplianceReason compReason = unclassified ? ComplianceReason.UNKNOWN_CLASSIFICATION
-                : compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? ComplianceReason.MERCHANT_POLICY_BLOCKED
+        ComplianceReason compReason = compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? ComplianceReason.MERCHANT_POLICY_BLOCKED
                 : ComplianceReason.ALLOWED;
 
         ComplianceDecisionEntity complianceDecision = new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), merchant.getId(), recoveryDecision.getId(),
                 strategy, compStatus, compReason,
-                unclassified ? "Failure class UNCLASSIFIED has no documented recovery mapping"
-                        : compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? "Transaction amount ₹" + amount.toPlainString() + " requires merchant human approval" : "Compliance policy allowed execution",
+                compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? "Transaction amount ₹" + amount.toPlainString() + " requires merchant human approval" : "Compliance policy allowed execution",
                 SEED_POLICY_VERSION
         );
         complianceDecision.setEvaluatedAt(createdAt.plusSeconds(15));
@@ -368,7 +364,7 @@ public class DevDataInitializer implements ApplicationRunner {
             actionIntentRepository.save(intent);
         }
 
-        boolean reviewRequired = !unclassified && (compStatus == ComplianceStatus.COMPLIANCE_BLOCKED || segment == CustomerSegment.HIGH_RISK);
+        boolean reviewRequired = compStatus == ComplianceStatus.COMPLIANCE_BLOCKED || segment == CustomerSegment.HIGH_RISK;
 
         // 8. Human Review Queue (If Review Required)
         if (reviewRequired) {

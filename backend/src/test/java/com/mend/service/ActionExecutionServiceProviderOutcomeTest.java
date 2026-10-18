@@ -51,7 +51,8 @@ class ActionExecutionServiceProviderOutcomeTest extends AbstractIntegrationTest 
 
         compliance = complianceDecisionRepository.save(new ComplianceDecisionEntity(UUID.randomUUID(), campaign.getId(), merchantId,
                 null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED,
-                "Compliant action", "v1.0.0"));
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
+                "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
     }
 
     @AfterEach

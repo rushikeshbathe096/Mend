@@ -21,7 +21,7 @@ flowchart LR
 
 Static retry logic applies one fixed rule to every failure. Mend does more:
 - it maps each documented Razorpay `error_reason` to a failure class, citing the docs; an undocumented reason is
-  `UNCLASSIFIED` and never guessed;
+  `UNCLASSIFIED`, never guessed, and gets a payment link only, never a retry;
 - it picks the strategy per class;
 - it adds human review, compliance, idempotent intents, provider reconciliation and merchant-visible evidence.
 
@@ -78,7 +78,7 @@ Next.js, TypeScript, Java 21, Spring Boot, PostgreSQL, Flyway, Redis Streams, Py
 
 ## Demo
 
-The demo covers low-risk retry, high-risk human approval, customer action, provider timeout/reconciliation, duplicate webhook, and an unclassified failure that is never guessed. Every scenario is SIMULATED and labelled as such. `/api/v1/demo` exists only with the `dev` profile (see Profiles below); otherwise the console's demo page shows "Demo disabled". Details: [docs/hygiene/pre-m3-hygiene.md](docs/hygiene/pre-m3-hygiene.md).
+The demo covers low-risk retry, high-risk human approval, customer action, provider timeout/reconciliation, duplicate webhook, and an unclassified failure that is never guessed and gets a payment link only. Every scenario is SIMULATED and labelled as such. `/api/v1/demo` exists only with the `dev` profile (see Profiles below); otherwise the console's demo page shows "Demo disabled". Details: [docs/hygiene/pre-m3-hygiene.md](docs/hygiene/pre-m3-hygiene.md).
 
 ## Setup
 

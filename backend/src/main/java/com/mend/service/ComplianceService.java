@@ -100,8 +100,11 @@ public class ComplianceService {
             ComplianceDecisionEntity existingEntity = existingComplianceOpt.get();
             // The shortcut reuses only a decision for the strategy being evaluated now: an OD-1 approval decision
             // (override strategy) is never handed to a path without an approval (invariant 7).
+            // M3 follow-up: only a decision made under the current policy is reused; an older one (e.g. a pre-M3 v1.0
+            // decision behind a LEGACY_DECISION review) is re-evaluated, never handed back.
             if (recoveryDecisionId != null && java.util.Objects.equals(existingEntity.getRecoveryDecisionId(), recoveryDecisionId)
-                    && strategy != null && existingEntity.getStrategy() == strategy) {
+                    && strategy != null && existingEntity.getStrategy() == strategy
+                    && com.mend.compliance.ComplianceEngine.POLICY_VERSION.equals(existingEntity.getPolicyVersion())) {
                 log.info("Idempotent compliance evaluation: Returning existing ComplianceDecision for campaign '{}'", campaignId);
                 return mapToDecision(existingEntity);
             }

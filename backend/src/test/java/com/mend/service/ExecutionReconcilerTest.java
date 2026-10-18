@@ -115,7 +115,8 @@ class ExecutionReconcilerTest extends AbstractIntegrationTest {
         webhooks.save(event);
         ComplianceDecisionEntity compliance = complianceDecisions.save(new ComplianceDecisionEntity(UUID.randomUUID(), campaign.getId(),
                 merchantId, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED,
-                "Compliant action", "v1.0.0"));
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
+                "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         return intents.save(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, type.name(),
                 RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(), ActionIntentStatus.READY,
                 "intent:" + campaign.getId() + ":attempt_1:" + type.name(), Instant.now().minusSeconds(5)));

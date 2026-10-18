@@ -169,11 +169,11 @@ public class ClassificationResult {
     }
 
     /**
-     * M3 (ADR-003 §4): true only for a deterministic row (it has a taxonomy version) whose class is recoverable. A pre-M3,
-     * AI-classified row fails closed even when its class name matches a taxonomy class (e.g. INSUFFICIENT_FUNDS).
-     * Not a getter name, so JPA and Jackson ignore it.
+     * M3 (ADR-003 §4): true only for a deterministic row (it has a taxonomy version) with a taxonomy class, UNCLASSIFIED
+     * included (decision B: link only). A pre-M3, AI-classified row fails closed even when its class name matches a
+     * taxonomy class (e.g. INSUFFICIENT_FUNDS). Not a getter name, so JPA and Jackson ignore it.
      */
-    public boolean deterministicAndRecoverable() {
-        return taxonomyVersion != null && com.mend.taxonomy.PaymentFailureClass.isRecoverable(failureClass);
+    public boolean deterministicClass() {
+        return taxonomyVersion != null && com.mend.taxonomy.PaymentFailureClass.isTaxonomyClass(failureClass);
     }
 }

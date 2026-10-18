@@ -4,7 +4,8 @@ MEND is a financial workflow system (revenue recovery on Razorpay). Correctness 
 
 ## Current milestone: M3 complete — next: M4 (needs design pack)
 M3 (honest intelligence) is complete: ADR-003 Accepted, final run backend 941 / 0 / 0 / 0, frontend 62, ai-service 90
-(`docs/m3/m3-final-test-run-summary.txt`), summary `docs/m3/M3-summary.md`.
+(`docs/m3/m3-final-test-run-summary.txt`), summary `docs/m3/M3-summary.md`. M3 follow-ups (tag `m3-followups`): UTC sessions,
+UNCLASSIFIED → payment link only (owner decision B), LEGACY_DECISION at dispatch; backend 971 / 0 / 0 / 0.
 M1 (provider correctness) is complete: tag `m1-complete`, ADR-001 Accepted.
 M2 (execution safety) is complete: ADR-002 Accepted, final run 647 / 0 / 0 / 0 (`docs/m2/m2-final-test-run-summary.txt`), summary `docs/m2/M2-summary.md`.
 Only work on the unit you were given (M2 prompts: `docs/m2/agent-prompts/U*.md`; M3 units: `docs/m3/M3-plan.md`). Do not start M4+ work without its design pack. Write anything else you notice under "Out-of-scope findings" in your final message.

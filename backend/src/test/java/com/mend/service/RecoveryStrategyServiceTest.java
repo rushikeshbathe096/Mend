@@ -108,14 +108,15 @@ public class RecoveryStrategyServiceTest extends AbstractIntegrationTest {
         assertNotNull(decision);
         assertEquals(RecoveryStrategy.RETRY_LATER, decision.getStrategy());
         // M3 behaviour change (ADR-003 §4): strategy policy v2.0 (taxonomy classes, no confidence rule); was v1.0
-        assertEquals("v2.0", decision.getPolicyVersion());
+        // M3 behaviour change (owner decision B): strategy policy v2.1 maps UNCLASSIFIED to a payment link
+        assertEquals("v2.1", decision.getPolicyVersion());
         assertNotNull(decision.getReason());
 
         // Verify entity persistence in DB
         List<RecoveryDecisionEntity> persistedDecisions = recoveryDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId());
         assertFalse(persistedDecisions.isEmpty());
         assertEquals(RecoveryStrategy.RETRY_LATER, persistedDecisions.get(0).getStrategy());
-        assertEquals("v2.0", persistedDecisions.get(0).getPolicyVersion());   // M3 behaviour change: policy v2.0 (was v1.0)
+        assertEquals("v2.1", persistedDecisions.get(0).getPolicyVersion());   // M3 behaviour change: policy v2.0 (was v1.0)
 
         // Verify Campaign entity updated
         Campaign updatedCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();

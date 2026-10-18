@@ -117,6 +117,9 @@ public class ActionExecutionService {
                     // U2.4 review (invariant 9): the CLAIMED -> FAILED transition is audited (ids and the block code only)
                     actionIntentRepository.findById(intentId).ifPresent(i -> auditService.logEvent(i.getMerchantId(), i.getCampaignId(),
                             "ACTION_COMPLIANCE_BLOCKED", "SYSTEM", null, "ActionIntent " + intentId + " blocked before dispatch: " + e.getMessage()));
+                    if (e instanceof LegacyDecisionException legacy) {
+                        routeLegacyDecisionToReview(legacy, intentId);
+                    }
                 }
             });
             throw e;
@@ -196,18 +199,27 @@ public class ActionExecutionService {
         }
 
         // 6. Compliance Decision Gate
+        ComplianceDecisionEntity storedDecision;
         if (intent.getComplianceDecisionId() != null) {
             ComplianceDecisionEntity compliance = complianceDecisionRepository.findById(intent.getComplianceDecisionId())
                     .orElseThrow(() -> new ComplianceBlockedException("Compliance decision not found: " + intent.getComplianceDecisionId()));
             if (compliance.getStatus() != ComplianceStatus.COMPLIANCE_ALLOWED) {
                 throw new ComplianceBlockedException("Compliance decision is not ALLOWED: " + compliance.getReason());
             }
+            storedDecision = compliance;
         } else {
             Optional<ComplianceDecisionEntity> latestCompliance = complianceDecisionRepository.findFirstByCampaignIdOrderByEvaluatedAtDesc(campaign.getId());
             if (latestCompliance.isEmpty() || latestCompliance.get().getStatus() != ComplianceStatus.COMPLIANCE_ALLOWED) {
                 String reason = latestCompliance.map(c -> c.getReason().name()).orElse("MISSING_COMPLIANCE_DECISION");
                 throw new ComplianceBlockedException("Compliance decision missing or not ALLOWED: " + reason);
             }
+            storedDecision = latestCompliance.get();
+        }
+        // 6a. M3 follow-up (ADR-003 Consequences): an ALLOWED decision made before M3 (AI-gated, policy v1.x or unknown)
+        // does not authorize a dispatch. Fail closed; the caller routes the campaign to review. No row is rewritten.
+        if (!isTaxonomyEraPolicy(storedDecision.getPolicyVersion())) {
+            throw new LegacyDecisionException(intent.getMerchantId(), campaign.getId(), storedDecision.getId(),
+                    storedDecision.getPolicyVersion());
         }
 
         // 6b. M3 U2.4 (ADR-003 §5): contact opt-out, re-read under a share lock in this dispatch transaction. A stored
@@ -247,6 +259,52 @@ public class ActionExecutionService {
 
         // Note: the intent/campaign objects were loaded before the dispatch update; only their ids are used afterwards.
         return ExecutionPreparation.proceed(intent, campaign, callerClaimToken);
+    }
+
+    private static final java.util.regex.Pattern POLICY_VERSION_FORMAT = java.util.regex.Pattern.compile("^v(\\d+)\\.(\\d+)$");
+
+    /** Policy versions of the deterministic (taxonomy) compliance engine: v2.0 and later (ComplianceEngine.POLICY_VERSION). */
+    static boolean isTaxonomyEraPolicy(String policyVersion) {
+        if (policyVersion == null) {
+            return false;
+        }
+        java.util.regex.Matcher m = POLICY_VERSION_FORMAT.matcher(policyVersion);
+        return m.matches() && Integer.parseInt(m.group(1)) >= 2;
+    }
+
+    /**
+     * A pre-M3 decision blocked the dispatch: the campaign goes back to ELIGIBLE (from ACTION_PENDING) and a review asks a
+     * human to re-run recovery, which re-evaluates compliance under the current policy. Same transaction as the abandon.
+     */
+    private void routeLegacyDecisionToReview(LegacyDecisionException legacy, UUID intentId) {
+        Campaign campaign = campaignRepository.findById(legacy.campaignId).orElse(null);
+        if (campaign == null) {
+            return;
+        }
+        if (campaign.getCurrentState() == CampaignStatus.ACTION_PENDING) {
+            campaignLifecycleService.transitionState(legacy.merchantId, legacy.campaignId, CampaignStatus.ELIGIBLE,
+                    "LEGACY_DECISION: pre-M3 compliance decision " + legacy.decisionId + " cannot authorize a dispatch", "SYSTEM", null);
+        }
+        humanApprovalService.createReview(legacy.merchantId, legacy.campaignId,
+                "LEGACY_DECISION: ActionIntent " + intentId + " was authorized by a pre-M3 compliance decision (" + legacy.decisionId
+                        + ", policy " + legacy.policyVersion + "); approving re-evaluates compliance under the current policy.");
+    }
+
+    /** M3 follow-up: the stored ALLOWED decision predates the deterministic policy (fail closed, LEGACY_DECISION). */
+    static final class LegacyDecisionException extends ComplianceBlockedException {
+        private final UUID merchantId;
+        private final UUID campaignId;
+        private final UUID decisionId;
+        private final String policyVersion;
+
+        LegacyDecisionException(UUID merchantId, UUID campaignId, UUID decisionId, String policyVersion) {
+            super("Compliance decision " + decisionId + " predates the deterministic policy (" + policyVersion + "): "
+                    + ComplianceReason.LEGACY_DECISION);
+            this.merchantId = merchantId;
+            this.campaignId = campaignId;
+            this.decisionId = decisionId;
+            this.policyVersion = policyVersion;
+        }
     }
 
     /** Thrown inside the prepare transaction to roll it back when the dispatch fence does not apply. */

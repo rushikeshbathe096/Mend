@@ -313,7 +313,8 @@ class ActionSchedulerTransactionIntegrationTest extends AbstractIntegrationTest 
         ComplianceDecisionEntity compliance = new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), merchantId, null,
                 RecoveryStrategy.RETRY_IMMEDIATELY, ComplianceStatus.COMPLIANCE_ALLOWED,
-                ComplianceReason.ALLOWED, "Scheduler transaction test", "scheduler-tx-v1");
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
+                ComplianceReason.ALLOWED, "Scheduler transaction test", com.mend.testsupport.TestCompliance.CURRENT_POLICY);
         compliance = complianceDecisionRepository.saveAndFlush(compliance);
 
         UUID intentMerchantId = intentMerchantOverride != null ? intentMerchantOverride : merchantId;

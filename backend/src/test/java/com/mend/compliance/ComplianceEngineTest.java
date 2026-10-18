@@ -127,8 +127,10 @@ public class ComplianceEngineTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"UNCLASSIFIED", "BANK_DECLINED", "NETWORK_FAILURE", "CARD_EXPIRED", "AUTHENTICATION_FAILED"})
-    @DisplayName("5b. UNCLASSIFIED and every pre-M3 class -> COMPLIANCE_BLOCKED (UNKNOWN_CLASSIFICATION), whatever the confidence")
+    // M3 behaviour change (owner decision B, ADR-003 §4): UNCLASSIFIED is no longer blocked as UNKNOWN_CLASSIFICATION; it
+    // may get a payment link and is blocked only for a retry (testUnclassifiedLinkOnly). Pre-M3 classes stay blocked.
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"BANK_DECLINED", "NETWORK_FAILURE", "CARD_EXPIRED", "AUTHENTICATION_FAILED"})
+    @DisplayName("5b. Every pre-M3 class -> COMPLIANCE_BLOCKED (UNKNOWN_CLASSIFICATION), whatever the confidence")
     void testUndocumentedClassBlocked(String failureClass) {
         Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, new BigDecimal("0.99"));
         ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_LATER,
@@ -265,4 +267,29 @@ public class ComplianceEngineTest {
                 legacyClassification("BANK_DECLINED", new BigDecimal("0.95")), null, UUID.randomUUID(), false));
         assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decision.getReason());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = RecoveryStrategy.class, names = {"RETRY_IMMEDIATELY", "RETRY_LATER"})
+    @DisplayName("Decision B: a retry for UNCLASSIFIED is blocked by compliance, whatever the strategy table says")
+    void testUnclassifiedRetryBlocked(RecoveryStrategy retry) {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "UNCLASSIFIED", null);
+        ComplianceDecision decision = engine.evaluate(new ComplianceContext(merchantId, campaign, retry,
+                createClassification("UNCLASSIFIED", null), null, UUID.randomUUID(), false));
+        assertTrue(decision.isBlocked());
+        assertEquals(ComplianceReason.RETRY_NOT_ALLOWED_UNCLASSIFIED, decision.getReason());
+    }
+
+    @Test
+    @DisplayName("Decision B: UNCLASSIFIED with a payment link is allowed; a legacy UNCLASSIFIED row stays blocked")
+    void testUnclassifiedLinkOnly() {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "UNCLASSIFIED", null);
+        ComplianceDecision link = engine.evaluate(new ComplianceContext(merchantId, campaign, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                createClassification("UNCLASSIFIED", null), null, UUID.randomUUID(), false));
+        assertFalse(link.isBlocked(), String.valueOf(link.getReason()));
+
+        ComplianceDecision legacy = engine.evaluate(new ComplianceContext(merchantId, campaign, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                legacyClassification("UNCLASSIFIED", new BigDecimal("0.99")), null, UUID.randomUUID(), false));
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, legacy.getReason(), "a row without a taxonomy version fails closed");
+    }
 }
+

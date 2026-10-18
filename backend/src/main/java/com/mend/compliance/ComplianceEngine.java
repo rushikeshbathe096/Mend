@@ -22,8 +22,10 @@ public class ComplianceEngine {
     /**
      * v2.0 (M3 U2.2): classification rule by taxonomy class; no confidence rule (ADR-003 §4).
      * v2.1 (M3 U2.4): adds the CUSTOMER_OPTED_OUT block (ADR-003 §5).
+     * v2.2 (M3 follow-up, owner decision B): UNCLASSIFIED is authorized for a payment link only; a retry is blocked
+     * (RETRY_NOT_ALLOWED_UNCLASSIFIED).
      */
-    public static final String POLICY_VERSION = "v2.1";
+    public static final String POLICY_VERSION = "v2.2";
 
     public ComplianceDecision evaluate(ComplianceContext context) {
         // Rule 1: Fail Closed & Missing Context (Task 3.7 & Task 11)
@@ -96,13 +98,25 @@ public class ComplianceEngine {
         // It runs before the strategy checks, so a legacy campaign is blocked as UNKNOWN_CLASSIFICATION and never routed to a
         // review that could not be approved. A pre-M3 row (no taxonomy version) fails closed even if its name matches.
         String failureClassStr = classification != null ? classification.getFailureClass() : campaign.getFailureClass();
-        if (classification == null || !classification.deterministicAndRecoverable()) {
+        if (classification == null || !classification.deterministicClass()) {
             log.info("Compliance evaluation blocked for campaign '{}': failure class '{}' has no documented mapping",
                     campaignId, failureClassStr);
             return createBlockedDecision(
                     campaignId, merchantId, recoveryDecisionId, strategy,
                     ComplianceReason.UNKNOWN_CLASSIFICATION,
                     "Failure class '" + failureClassStr + "' has no documented mapping and cannot be authorized for recovery"
+            );
+        }
+
+        // Rule 3c (M3 follow-up, owner decision B, 2026-10-18): an UNCLASSIFIED failure may get a payment link, never a
+        // retry. Independent of the strategy table, so neither path alone can authorize a RETRY_PAYMENT for it.
+        if (com.mend.taxonomy.PaymentFailureClass.UNCLASSIFIED.name().equals(failureClassStr)
+                && (strategy == RecoveryStrategy.RETRY_IMMEDIATELY || strategy == RecoveryStrategy.RETRY_LATER)) {
+            log.info("Compliance evaluation blocked for campaign '{}': retry strategy '{}' for UNCLASSIFIED", campaignId, strategy);
+            return createBlockedDecision(
+                    campaignId, merchantId, recoveryDecisionId, strategy,
+                    ComplianceReason.RETRY_NOT_ALLOWED_UNCLASSIFIED,
+                    "UNCLASSIFIED failures are recovered only by a payment link (CUSTOMER_ACTION_REQUIRED), never by a retry"
             );
         }
 

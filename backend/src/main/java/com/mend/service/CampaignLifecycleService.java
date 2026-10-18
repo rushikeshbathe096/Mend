@@ -276,14 +276,15 @@ public class CampaignLifecycleService {
     }
 
     /**
-     * M3 U2.2 (ADR-003 §4): eligible iff the row is deterministic (taxonomy version) and its class is not UNCLASSIFIED.
-     * Legacy (pre-M3, AI-era) rows fail closed, also when their class name matches a taxonomy class. No confidence.
+     * ADR-003 §4: eligible iff the row is deterministic (taxonomy version). UNCLASSIFIED is eligible for a payment link only
+     * (owner decision B, 2026-10-18; the strategy table and compliance both forbid a retry). Legacy (pre-M3, AI-era) rows
+     * fail closed, also when their class name matches a taxonomy class. No confidence.
      */
     public boolean evaluateEligibility(ClassificationResult classificationResult) {
         if (classificationResult == null) {
             return false;
         }
-        return classificationResult.deterministicAndRecoverable();
+        return classificationResult.deterministicClass();
     }
 
     @Transactional(readOnly = true)
