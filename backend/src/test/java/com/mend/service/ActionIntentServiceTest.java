@@ -101,11 +101,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
 
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
@@ -164,11 +164,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
         com.mend.domain.entity.MerchantConfig config = new com.mend.domain.entity.MerchantConfig(UUID.randomUUID(), merchantId);
         config.setEnabledRecoveryActions("CUSTOMER_ACTION_REQUIRED");
         merchantConfigRepositoryM3.save(config);
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", null,
                 null, "Razorpay error_reason 'insufficient_funds'", null
-        );
+        ));
         classificationResultRepository.save(classification);
 
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
@@ -196,11 +196,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
 
@@ -246,11 +246,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
 

@@ -90,7 +90,7 @@ public class RecoveryStrategyServiceTest extends AbstractIntegrationTest {
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
 
         // Save classification result
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(),
                 event.getId(),
                 campaign.getId(),
@@ -99,7 +99,7 @@ public class RecoveryStrategyServiceTest extends AbstractIntegrationTest {
                 "SCHEDULE_RETRY",
                 "Soft failure",
                 "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
 
         // Evaluate Strategy

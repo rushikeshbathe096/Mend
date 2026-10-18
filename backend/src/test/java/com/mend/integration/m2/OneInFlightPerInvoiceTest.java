@@ -29,6 +29,9 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("M2 U6: one in-flight intent per invoice")
 class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private com.mend.domain.repository.ClassificationResultRepository classificationResultRepository;
+
     @Autowired private CampaignLifecycleService campaignLifecycleService;
     @Autowired private ActionIntentService actionIntentService;
     @Autowired private ActionIntentClaimService claimService;
@@ -111,8 +114,8 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
         merchantConfigs.saveAndFlush(config);
         // Same compliance context as Phase20's flow: classification -> CLASSIFIED -> ELIGIBLE -> persisted strategy.
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, null, null);
-        classifications.saveAndFlush(new ClassificationResult(null, event.getId(), campaign.getId(), "INSUFFICIENT_FUNDS",
-                java.math.BigDecimal.valueOf(0.95), "RETRY_PAYMENT", "Balance issue", "v1.0.0"));
+        classifications.saveAndFlush(com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(null, event.getId(), campaign.getId(), "INSUFFICIENT_FUNDS",
+                java.math.BigDecimal.valueOf(0.95), "RETRY_PAYMENT", "Balance issue", "v1.0.0")));
         campaign.setCurrentState(CampaignStatus.CLASSIFIED);
         campaign.setConfidence(java.math.BigDecimal.valueOf(0.95));
         campaign.setFailureClass("INSUFFICIENT_FUNDS");

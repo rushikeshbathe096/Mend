@@ -2,6 +2,7 @@ package com.mend.service;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import com.mend.taxonomy.ProviderFailure;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.WebhookEventRepository;
@@ -93,7 +94,7 @@ public class DefaultEventProcessingService implements EventProcessingService {
                 return true;
             }
 
-            com.mend.taxonomy.ProviderFailure failure = extractProviderFailure(event);
+            ProviderFailure failure = extractProviderFailure(event);
             log.info("Classifying webhook event [eventId={}] (error_code='{}', error_reason='{}', error_source='{}')",
                     event.getId(), failure.code(), failure.reason(), failure.source());
             classificationService.classifyAndPersist(event, failure);
@@ -115,19 +116,19 @@ public class DefaultEventProcessingService implements EventProcessingService {
      * M3 U2.2: the documented error fields of the Razorpay payment entity ({@code payload.payment.entity}). Untrusted input
      * (invariant 8): only read, never trusted beyond the taxonomy lookup. Anything missing stays null (unknown).
      */
-    private com.mend.taxonomy.ProviderFailure extractProviderFailure(WebhookEvent event) {
+    private ProviderFailure extractProviderFailure(WebhookEvent event) {
         if (event.getRawPayload() != null && !event.getRawPayload().isBlank()) {
             try {
                 JsonNode entity = objectMapper.readTree(event.getRawPayload()).path("payload").path("payment").path("entity");
                 if (entity.isObject()) {
-                    return com.mend.taxonomy.ProviderFailure.of(text(entity, "error_code"), text(entity, "error_reason"),
+                    return ProviderFailure.of(text(entity, "error_code"), text(entity, "error_reason"),
                             text(entity, "error_source"));
                 }
             } catch (Exception e) {
                 log.debug("Could not parse rawPayload for failure details: {}", e.getMessage());
             }
         }
-        return com.mend.taxonomy.ProviderFailure.of(null, null, null);
+        return ProviderFailure.of(null, null, null);
     }
 
     private static String text(JsonNode node, String field) {

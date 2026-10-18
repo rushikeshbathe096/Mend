@@ -2,6 +2,10 @@ package com.mend.controller;
 
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.entity.AgentDecisionRecord;
+import com.mend.domain.entity.ClassificationResult;
+import com.mend.taxonomy.FailureClassification;
+import com.mend.taxonomy.FailureTaxonomy;
+import com.mend.taxonomy.ProviderFailure;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.ReviewQueue;
 import com.mend.domain.entity.WebhookEvent;
@@ -72,6 +76,7 @@ public class DemoController {
     private final PaymentReconciliationService paymentReconciliationService;
     private final CampaignRepository campaignRepository;
     private final AgentDecisionRecordRepository agentDecisionRecordRepository;
+    private final com.mend.domain.repository.ClassificationResultRepository classificationResultRepository;
     private final ActionIntentRepository actionIntentRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final AuditService auditService;
@@ -88,6 +93,7 @@ public class DemoController {
             PaymentReconciliationService paymentReconciliationService,
             CampaignRepository campaignRepository,
             AgentDecisionRecordRepository agentDecisionRecordRepository,
+            com.mend.domain.repository.ClassificationResultRepository classificationResultRepository,
             ActionIntentRepository actionIntentRepository,
             WebhookEventRepository webhookEventRepository,
             AuditService auditService,
@@ -101,6 +107,7 @@ public class DemoController {
         this.paymentReconciliationService = paymentReconciliationService;
         this.campaignRepository = campaignRepository;
         this.agentDecisionRecordRepository = agentDecisionRecordRepository;
+        this.classificationResultRepository = classificationResultRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.auditService = auditService;
@@ -218,7 +225,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runLowRiskRetry(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("4999.00");
-        Setup setup = prepareCampaign(merchantId, "low_risk_retry", "INSUFFICIENT_FUNDS", "0.95",
+        Setup setup = prepareCampaign(merchantId, "low_risk_retry", "insufficient_funds", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
@@ -244,7 +251,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runHighRiskHumanReview(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("72000.00");
-        Setup setup = prepareCampaign(merchantId, "high_risk_review", "AUTHENTICATION_FAILURE", "0.90",
+        Setup setup = prepareCampaign(merchantId, "high_risk_review", "authentication_failed", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
@@ -276,7 +283,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runCustomerAction(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("12999.00");
-        Setup setup = prepareCampaign(merchantId, "customer_action", "INSTRUMENT_INVALID", "0.98",
+        Setup setup = prepareCampaign(merchantId, "customer_action", "card_expired", "customer",
                 "CUSTOMER_ACTION_REQUIRED", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "REQUEST_CUSTOMER_ACTION", "CUSTOMER_ACTION_REQUIRED",
@@ -312,7 +319,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runProviderAmbiguity(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("2999.00");
-        Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "GATEWAY_ERROR", "0.92",
+        Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "gateway_technical_error", "gateway",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
@@ -359,7 +366,7 @@ public class DemoController {
         String paymentId = demoRef("pay_demo_duplicate_event");
         String externalEventId = "evt_demo_duplicate_" + UUID.randomUUID();
         WebhookEvent original = buildWebhookEvent(merchantId, externalEventId, "payment.failed", paymentId,
-                new BigDecimal("8999.00"), "failed", "bank timeout");
+                new BigDecimal("8999.00"), "failed", "bank_technical_error", "gateway", null);
 
         webhookEventRepository.saveAndFlush(original);
         steps.add(simulated("webhook delivery: a fabricated event was persisted (external_event_id=" + externalEventId + ")."));
@@ -388,7 +395,7 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runAgentFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("3499.00");
-        Setup setup = prepareCampaign(merchantId, "agent_failure", "UNCLASSIFIED", "0.40", null, amount, response, steps, false);
+        Setup setup = prepareCampaign(merchantId, "agent_failure", "payment_failed", "customer", null, amount, response, steps, false);
 
         recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "MANUAL_REVIEW", "FALLBACK_STRATEGY",
                 false, "AI/MCP execution unavailable; deterministic heuristic fallback applied. Low confidence (40%) and unknown failure class mean no automated action is safe.", "SAFE_FALLBACK");
@@ -413,9 +420,9 @@ public class DemoController {
 
     private record Setup(UUID campaignId, String paymentId) { }
 
-    private Setup prepareCampaign(UUID merchantId, String slug, String failureClass, String confidence,
+    private Setup prepareCampaign(UUID merchantId, String slug, String errorReason, String errorSource,
                                   String strategy, BigDecimal amount, DemoTriggerResponse response, List<String> steps) {
-        return prepareCampaign(merchantId, slug, failureClass, confidence, strategy, amount, response, steps, true);
+        return prepareCampaign(merchantId, slug, errorReason, errorSource, strategy, amount, response, steps, true);
     }
 
     /**
@@ -423,7 +430,7 @@ public class DemoController {
      *                       agent-failure scenario, mirroring production, where ineligible
      *                       classifications never become ELIGIBLE).
      */
-    private Setup prepareCampaign(UUID merchantId, String slug, String failureClass, String confidence,
+    private Setup prepareCampaign(UUID merchantId, String slug, String errorReason, String errorSource,
                                   String strategy, BigDecimal amount, DemoTriggerResponse response,
                                   List<String> steps, boolean moveToEligible) {
         String paymentId = demoRef("pay_demo_" + slug);
@@ -433,22 +440,30 @@ public class DemoController {
         // Consistent with the ingestion pipeline, the campaign payment identity equals the
         // webhook's external event id.
         WebhookEvent event = buildWebhookEvent(merchantId, paymentId, "payment.failed", paymentId,
-                amount, "failed", failureClass.toLowerCase());
+                amount, "failed", errorReason, errorSource, null);
         webhookEventRepository.saveAndFlush(event);
         steps.add(simulated("failed-payment webhook (fabricated, not from Razorpay) persisted for " + paymentId + " (₹"
                 + amount.toPlainString() + ")."));
 
+        // M3 (ADR-003): the simulated failure is classified by the real deterministic taxonomy from its error fields;
+        // no confidence, no model.
+        FailureClassification classification = FailureTaxonomy.classify(ProviderFailure.of("BAD_REQUEST_ERROR", errorReason, errorSource));
+        String failureClass = classification.failureClass().name();
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, customerIdHash, null);
         campaign.setFailureClass(failureClass);
-        campaign.setConfidence(new BigDecimal(confidence));
         if (strategy != null) {
             campaign.setStrategy(strategy);
         }
         campaignRepository.saveAndFlush(campaign);
+        ClassificationResult row = new ClassificationResult(UUID.randomUUID(), event.getId(), campaign.getId(), failureClass,
+                null, null, simulated("Razorpay error_reason '" + errorReason + "' on a fabricated webhook"), null);
+        row.setTaxonomyVersion(classification.tableVersion());
+        classificationResultRepository.saveAndFlush(row);
 
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED,
-                simulated("classification attached: " + failureClass + " (confidence " + confidence + ")"), "SYSTEM", null);
-        steps.add(simulated("classification " + failureClass + " (confidence " + confidence + ", fixed demo values, no AI call)."));
+                simulated("classification attached: " + failureClass + " (error_reason " + errorReason + ")"), "SYSTEM", null);
+        steps.add(simulated("deterministic classification " + failureClass + " from error_reason '" + errorReason
+                + "' (taxonomy " + classification.tableVersion() + ", no AI call)."));
 
         if (moveToEligible) {
             campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE,
@@ -507,7 +522,7 @@ public class DemoController {
                                           DemoTriggerResponse response, List<String> steps) {
         String recoveryPaymentId = demoRef("pay_demo_recovery");
         WebhookEvent captured = buildWebhookEvent(merchantId, eventId, "payment.captured", recoveryPaymentId,
-                amount, "captured", null, intentId);
+                amount, "captured", null, null, intentId);
         webhookEventRepository.saveAndFlush(captured);
 
         var result = paymentReconciliationService.reconcileWebhookEvent(captured);
@@ -520,18 +535,15 @@ public class DemoController {
     }
 
     private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
-                                           String paymentId, BigDecimal amount, String status, String failureCode) {
-        return buildWebhookEvent(merchantId, externalEventId, eventType, paymentId, amount, status, failureCode, null);
-    }
-
-    private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
-                                           String paymentId, BigDecimal amount, String status, String failureCode, UUID mendIntentId) {
+                                           String paymentId, BigDecimal amount, String status, String errorReason,
+                                           String errorSource, UUID mendIntentId) {
         String payload = """
                 {"entity":"event","event":"%s","payload":{"payment":{"entity":{"id":"%s","amount":%d,"currency":"INR","status":"%s","method":"card"%s%s}}}}
                 """.formatted(
                 eventType, paymentId,
                 amount.movePointRight(2).longValueExact(), status,
-                failureCode != null ? ",\"error_code\":\"" + failureCode + "\",\"error_description\":\"demo failure: " + failureCode + "\"" : "",
+                errorReason != null ? ",\"error_code\":\"BAD_REQUEST_ERROR\",\"error_reason\":\"" + errorReason
+                        + "\",\"error_source\":\"" + errorSource + "\",\"error_description\":\"demo failure: " + errorReason + "\"" : "",
                 mendIntentId != null ? ",\"notes\":{\"mend_intent_id\":\"" + mendIntentId + "\"}" : ""
         );
 

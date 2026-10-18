@@ -34,11 +34,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * M3 U2.2 proof (ADR-003 §2): the payment path (webhook → taxonomy → strategy → compliance → intent) makes no
- * ai-service call. The real {@link AiClassificationClient} is pointed at an address that refuses connections. Before M3
- * this made classification fall back to a fabricated UNKNOWN / 0.30 and the campaign EXHAUSTED; now the flow is the same
- * as with a healthy ai-service, and finishes without waiting for the 2 s / 3 s AI timeouts.
+ * ai-service call. The real {@link AiClassificationClient} (wrapped in a spy) points at a non-answering address, so a call
+ * would block for the 2 s connect timeout. Before M3 this made classification fall back to a fabricated UNKNOWN / 0.30 and
+ * the campaign EXHAUSTED; now the flow runs to RECOVERED like with a healthy ai-service, quickly, and the spy records zero
+ * interactions.
  */
-@SpringBootTest(properties = {"mend.ai.base-url=http://127.0.0.1:9", "mend.ai.connect-timeout-ms=2000", "mend.ai.read-timeout-ms=3000"})
+@SpringBootTest(properties = {"mend.ai.base-url=http://10.255.255.1:8000", "mend.ai.connect-timeout-ms=2000", "mend.ai.read-timeout-ms=3000"})
 class AiOffHotPathTest extends AbstractIntegrationTest {
 
     @Autowired private DefaultEventProcessingService eventProcessing;
@@ -48,11 +49,14 @@ class AiOffHotPathTest extends AbstractIntegrationTest {
     @Autowired private ClassificationResultRepository classifications;
     @Autowired private MerchantRepository merchants;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.mend.scheduler.ActionScheduler actionScheduler;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private AiClassificationClient aiClient;
 
     private UUID merchantId;
 
     @BeforeEach
     void setUp() {
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' WHERE status IN ('READY','SCHEDULED','PENDING')");
         merchantId = UUID.randomUUID();
         merchants.save(new Merchant(merchantId, "AI-off merchant"));
     }
@@ -93,13 +97,25 @@ class AiOffHotPathTest extends AbstractIntegrationTest {
         assertEquals(1, created.size());
         assertEquals("RETRY_PAYMENT", created.get(0).getActionType());
         assertTrue(elapsed.compareTo(Duration.ofMillis(1500)) < 0, "no AI connect/read timeout on the path: " + elapsed);
+
+        // ...and execution runs to RECOVERED (mock provider) without the AI service either.
+        jdbc.update("UPDATE action_intents SET status = 'READY', scheduled_at = now() - interval '1 second' WHERE id = ?", created.get(0).getId());
+        actionScheduler.pollAndExecuteDueActions();
+        assertEquals(CampaignStatus.RECOVERED, campaigns.findById(campaign.getId()).orElseThrow().getCurrentState());
+        org.mockito.Mockito.verifyNoInteractions(aiClient);
     }
 
     @Test
     @DisplayName("No payment-path service can reach the AI client or an agent engine (constructor and field types)")
     void paymentPathHasNoAiDependency() {
         for (Class<?> type : List.of(DefaultEventProcessingService.class, ClassificationService.class,
-                CampaignLifecycleService.class, RecoveryOrchestratorService.class)) {
+                CampaignLifecycleService.class, RecoveryOrchestratorService.class, com.mend.service.RecoveryStrategyService.class,
+                com.mend.service.ComplianceService.class, com.mend.service.ActionIntentService.class,
+                com.mend.service.HumanApprovalService.class, com.mend.service.ActionExecutionService.class,
+                com.mend.service.ActionIntentClaimService.class, com.mend.service.ProviderActionDispatcher.class,
+                com.mend.service.ExecutionReconciler.class, com.mend.service.DefaultPaymentReconciliationService.class,
+                com.mend.scheduler.ActionScheduler.class, com.mend.compliance.ComplianceEngine.class,
+                com.mend.strategy.RecoveryStrategyEngine.class)) {
             for (Constructor<?> constructor : type.getDeclaredConstructors()) {
                 for (Class<?> parameter : constructor.getParameterTypes()) {
                     assertFalse(isAiType(parameter), type.getSimpleName() + " constructor takes " + parameter.getName());

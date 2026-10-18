@@ -37,17 +37,29 @@ public class RecoveryStrategyEngineTest {
         return campaign;
     }
 
+    /**
+     * A deterministic (taxonomy) classification row. The {@code confidence} argument is kept for the pre-M3 call sites; a
+     * deterministic row ignores it (M3 behaviour change, ADR-003 §4).
+     */
     private ClassificationResult createClassification(String failureClass, BigDecimal confidence) {
-        return new ClassificationResult(
+        ClassificationResult result = new ClassificationResult(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 campaignId,
                 failureClass,
                 confidence,
-                "RECOMMENDATION",
+                null,
                 "Reasoning",
-                "v1.0.0"
+                null
         );
+        result.setTaxonomyVersion(com.mend.taxonomy.FailureTaxonomy.TABLE_VERSION);
+        return result;
+    }
+
+    /** A pre-M3, AI-classified row: no taxonomy version, an AI confidence and model version. */
+    private ClassificationResult legacyClassification(String failureClass, BigDecimal confidence) {
+        return new ClassificationResult(UUID.randomUUID(), UUID.randomUUID(), campaignId, failureClass, confidence,
+                "RECOMMENDATION", "Reasoning", "v1.0.0");
     }
 
     @Test
@@ -191,5 +203,16 @@ public class RecoveryStrategyEngineTest {
         // Since RETRY_LATER is disabled by merchant config, it falls back safely to MANUAL_REVIEW
         assertEquals(RecoveryStrategy.MANUAL_REVIEW, decision.getStrategy());
         assertTrue(decision.getReason().contains("disabled by merchant configuration"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"INSUFFICIENT_FUNDS", "LIMIT_EXCEEDED"})
+    @DisplayName("U2.2 review fix: a pre-M3 AI row whose class name matches a taxonomy class -> MANUAL_REVIEW (fail closed)")
+    void legacyRowWithTaxonomyNameIsUnclassified(String failureClass) {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, new BigDecimal("0.95"));
+        RecoveryDecision decision = engine.evaluate(new RecoveryContext(campaign, legacyClassification(failureClass, new BigDecimal("0.95")), null));
+        assertEquals(RecoveryStrategy.MANUAL_REVIEW, decision.getStrategy());
+        assertEquals(RecoveryStrategy.MANUAL_REVIEW, engine.evaluate(new RecoveryContext(campaign, null, null)).getStrategy(),
+                "no classification row: the campaign's own class never decides");
     }
 }

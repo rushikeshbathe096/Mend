@@ -187,9 +187,10 @@ public class DeterministicRecoveryPathIntegrationTest {
         List<ComplianceDecisionEntity> decisions = complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId());
         assertFalse(decisions.isEmpty());
         assertEquals(ComplianceStatus.COMPLIANCE_BLOCKED, decisions.get(0).getStatus());
-        // a legacy class gets MANUAL_REVIEW from the strategy table, which compliance blocks as non-executable; were it
-        // approved, the re-check would block it as UNKNOWN_CLASSIFICATION (ComplianceEngineTest 5b)
-        assertEquals(ComplianceReason.STRATEGY_NOT_SUPPORTED, decisions.get(0).getReason());
+        // U2.2 review fix: the class rule runs before the strategy rules, so a legacy campaign is blocked as
+        // UNKNOWN_CLASSIFICATION and never routed to a review that could not be approved
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decisions.get(0).getReason());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM review_queue WHERE campaign_id = ?", Long.class, campaign.getId()));
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.mend.compliance;
 
 import com.mend.domain.entity.Campaign;
-import com.mend.taxonomy.PaymentFailureClass;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.MerchantConfig;
 import com.mend.domain.enums.CampaignStatus;
@@ -78,6 +77,22 @@ public class ComplianceEngine {
             );
         }
 
+        // Rule 3b (M3 U2.2, ADR-003 §4): only a documented taxonomy class can be authorized. UNCLASSIFIED, a missing class
+        // and any pre-M3 (AI-era) class are blocked. This replaces both the UNKNOWN block and the confidence block: a failure
+        // without provider evidence is still never authorized (invariant 7), and no confidence is consulted.
+        // It runs before the strategy checks, so a legacy campaign is blocked as UNKNOWN_CLASSIFICATION and never routed to a
+        // review that could not be approved. A pre-M3 row (no taxonomy version) fails closed even if its name matches.
+        String failureClassStr = classification != null ? classification.getFailureClass() : campaign.getFailureClass();
+        if (classification == null || !classification.deterministicAndRecoverable()) {
+            log.info("Compliance evaluation blocked for campaign '{}': failure class '{}' has no documented mapping",
+                    campaignId, failureClassStr);
+            return createBlockedDecision(
+                    campaignId, merchantId, recoveryDecisionId, strategy,
+                    ComplianceReason.UNKNOWN_CLASSIFICATION,
+                    "Failure class '" + failureClassStr + "' has no documented mapping and cannot be authorized for recovery"
+            );
+        }
+
         // Rule 4: Strategy Support Check (Task 3.3 & Task 4)
         if (strategy == null) {
             log.warn("Compliance evaluation blocked for campaign '{}': null strategy", campaignId);
@@ -114,20 +129,6 @@ public class ComplianceEngine {
                     campaignId, merchantId, recoveryDecisionId, strategy,
                     ComplianceReason.STRATEGY_NOT_SUPPORTED,
                     "Strategy '" + strategy + "' is not supported for automated compliance authorization"
-            );
-        }
-
-        // Rule 5 (M3 U2.2, ADR-003 §4): only a documented taxonomy class can be authorized. UNCLASSIFIED, a missing class
-        // and any pre-M3 (AI-era) class are blocked. This replaces both the UNKNOWN block and the confidence block: a failure
-        // without provider evidence is still never authorized (invariant 7), and no confidence is consulted.
-        String failureClassStr = classification != null ? classification.getFailureClass() : campaign.getFailureClass();
-        if (!PaymentFailureClass.isRecoverable(failureClassStr)) {
-            log.info("Compliance evaluation blocked for campaign '{}': failure class '{}' has no documented mapping",
-                    campaignId, failureClassStr);
-            return createBlockedDecision(
-                    campaignId, merchantId, recoveryDecisionId, strategy,
-                    ComplianceReason.UNKNOWN_CLASSIFICATION,
-                    "Failure class '" + failureClassStr + "' has no documented mapping and cannot be authorized for recovery"
             );
         }
 

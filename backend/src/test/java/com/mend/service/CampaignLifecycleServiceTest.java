@@ -101,7 +101,7 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
         event.setMerchantId(merchantId);
         event = webhookEventRepository.save(event);
 
-        ClassificationResult result = new ClassificationResult(
+        ClassificationResult result = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(),
                 event.getId(),
                 null,
@@ -110,7 +110,7 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
                 "SCHEDULE_RETRY",
                 "Standard insufficient funds failure",
                 "v1.0.0"
-        );
+        ));
 
         Campaign campaign = campaignLifecycleService.processClassificationResult(event, result);
 

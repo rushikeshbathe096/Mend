@@ -92,7 +92,7 @@ public class RestApiIntegrationTest extends AbstractIntegrationTest {
         campaignRepository.saveAndFlush(campaignA);
 
         // Classification result for campaign A
-        ClassificationResult cr = new ClassificationResult(UUID.randomUUID(), campaignA.getId(), "INSUFFICIENT_FUNDS", new BigDecimal("0.95"));
+        ClassificationResult cr = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(UUID.randomUUID(), campaignA.getId(), "INSUFFICIENT_FUNDS", new BigDecimal("0.95")));
         classificationResultRepository.saveAndFlush(cr);
 
         // Action intent for campaign A

@@ -39,17 +39,29 @@ public class ComplianceEngineTest {
         return campaign;
     }
 
+    /**
+     * A deterministic (taxonomy) classification row. The {@code confidence} argument is kept for the pre-M3 call sites; a
+     * deterministic row ignores it (M3 behaviour change, ADR-003 §4).
+     */
     private ClassificationResult createClassification(String failureClass, BigDecimal confidence) {
-        return new ClassificationResult(
+        ClassificationResult result = new ClassificationResult(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 campaignId,
                 failureClass,
                 confidence,
-                "RECOMMENDATION",
+                null,
                 "Reasoning",
-                "v1.0.0"
+                null
         );
+        result.setTaxonomyVersion(com.mend.taxonomy.FailureTaxonomy.TABLE_VERSION);
+        return result;
+    }
+
+    /** A pre-M3, AI-classified row: no taxonomy version, an AI confidence and model version. */
+    private ClassificationResult legacyClassification(String failureClass, BigDecimal confidence) {
+        return new ClassificationResult(UUID.randomUUID(), UUID.randomUUID(), campaignId, failureClass, confidence,
+                "RECOMMENDATION", "Reasoning", "v1.0.0");
     }
 
     @Test
@@ -223,5 +235,34 @@ public class ComplianceEngineTest {
         ComplianceDecision decisionManual = engine.evaluate(new ComplianceContext(merchantId, campaign, RecoveryStrategy.MANUAL_REVIEW, classification, null, UUID.randomUUID(), false));
         assertTrue(decisionManual.isBlocked());
         assertEquals(ComplianceReason.STRATEGY_NOT_SUPPORTED, decisionManual.getReason());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"INSUFFICIENT_FUNDS", "LIMIT_EXCEEDED"})
+    @DisplayName("U2.2 review fix: a pre-M3 AI row whose class name matches a taxonomy class is still blocked (fail closed)")
+    void testLegacyRowWithTaxonomyNameBlocked(String failureClass) {
+        for (BigDecimal confidence : new BigDecimal[]{new BigDecimal("0.55"), new BigDecimal("0.95")}) {
+            Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, confidence);
+            ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_LATER,
+                    legacyClassification(failureClass, confidence), null, UUID.randomUUID(), false);
+
+            ComplianceDecision decision = engine.evaluate(context);
+
+            assertTrue(decision.isBlocked(), failureClass + " @ " + confidence);
+            assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decision.getReason());
+        }
+        // and with no classification row at all, the campaign's own class never authorizes
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, null);
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, engine.evaluate(new ComplianceContext(merchantId, campaign,
+                RecoveryStrategy.RETRY_LATER, null, null, UUID.randomUUID(), false)).getReason());
+    }
+
+    @Test
+    @DisplayName("U2.2 review fix: a legacy class is blocked before the strategy checks (no unapprovable MANUAL_REVIEW review)")
+    void testLegacyClassBlockedBeforeStrategyRules() {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "BANK_DECLINED", new BigDecimal("0.95"));
+        ComplianceDecision decision = engine.evaluate(new ComplianceContext(merchantId, campaign, RecoveryStrategy.MANUAL_REVIEW,
+                legacyClassification("BANK_DECLINED", new BigDecimal("0.95")), null, UUID.randomUUID(), false));
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decision.getReason());
     }
 }

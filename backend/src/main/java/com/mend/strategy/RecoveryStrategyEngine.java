@@ -86,72 +86,34 @@ public class RecoveryStrategyEngine {
 
         // Rule 3 (M3 U2.2, ADR-003 §4): strategy by deterministic taxonomy class. Each class keeps its pre-M3 equivalent's
         // rule; a legacy (pre-M3) or UNCLASSIFIED class gets MANUAL_REVIEW (and is blocked by compliance anyway).
+        // Only a deterministic row (taxonomy version) decides; a pre-M3 row or a missing classification is UNCLASSIFIED.
         String failureClassStr = classification != null ? classification.getFailureClass() : campaign.getFailureClass();
-        PaymentFailureClass failureClass = PaymentFailureClass.fromStored(failureClassStr);
+        PaymentFailureClass failureClass = classification != null && classification.getTaxonomyVersion() != null
+                ? PaymentFailureClass.fromStored(failureClassStr) : null;
 
-        RecoveryStrategy computedStrategy;
-        String reason;
-        String priority;
-
-        switch (failureClass == null ? PaymentFailureClass.UNCLASSIFIED : failureClass) {
-            case INSUFFICIENT_FUNDS -> {
-                if (currentAttemptCount == 0) {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Soft failure due to insufficient funds; schedule initial retry";
-                    priority = "NORMAL";
-                } else if (currentAttemptCount == 1) {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Second attempt for insufficient funds; schedule retry";
-                    priority = "NORMAL";
-                } else {
-                    computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                    reason = "Multiple insufficient funds failures; customer intervention required";
-                    priority = "HIGH";
-                }
-            }
-            case BANK_TECHNICAL, GATEWAY_ERROR -> {
-                if (currentAttemptCount == 0) {
-                    computedStrategy = RecoveryStrategy.RETRY_IMMEDIATELY;
-                    reason = "Transient bank/gateway failure; retry immediately";
-                    priority = "HIGH";
-                } else {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Repeated bank/gateway failure; schedule retry later";
-                    priority = "NORMAL";
-                }
-            }
-            case LIMIT_EXCEEDED -> {
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Payment limit exceeded; customer action required";
-                priority = "HIGH";
-            }
-            case AUTHENTICATION_FAILURE -> {
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Authentication or 3DS failure; customer action required";
-                priority = "HIGH";
-            }
-            case INSTRUMENT_INVALID -> {
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Payment instrument expired, blocked or inactive; customer update required";
-                priority = "HIGH";
-            }
-            case CUSTOMER_DECLINED -> {
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Customer cancelled or did not complete the payment; send a payment link";
-                priority = "NORMAL";
-            }
-            case MANDATE_INVALID -> {
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Mandate could not be set up; customer action required";
-                priority = "HIGH";
-            }
-            case UNCLASSIFIED -> {
-                computedStrategy = RecoveryStrategy.MANUAL_REVIEW;
-                reason = "No documented failure classification ('" + failureClassStr + "')";
-                priority = "LOW";
-            }
-            default -> throw new IllegalStateException("unhandled taxonomy class " + failureClass);
-        }
+        // A switch expression, so the compiler checks that every taxonomy class has a rule.
+        StrategyRule rule = switch (failureClass == null ? PaymentFailureClass.UNCLASSIFIED : failureClass) {
+            case INSUFFICIENT_FUNDS -> currentAttemptCount == 0
+                    ? new StrategyRule(RecoveryStrategy.RETRY_LATER, "Soft failure due to insufficient funds; schedule initial retry", "NORMAL")
+                    : currentAttemptCount == 1
+                    ? new StrategyRule(RecoveryStrategy.RETRY_LATER, "Second attempt for insufficient funds; schedule retry", "NORMAL")
+                    : new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Multiple insufficient funds failures; customer intervention required", "HIGH");
+            case BANK_TECHNICAL, GATEWAY_ERROR -> currentAttemptCount == 0
+                    ? new StrategyRule(RecoveryStrategy.RETRY_IMMEDIATELY, "Transient bank/gateway failure; retry immediately", "HIGH")
+                    : new StrategyRule(RecoveryStrategy.RETRY_LATER, "Repeated bank/gateway failure; schedule retry later", "NORMAL");
+            case LIMIT_EXCEEDED -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Payment limit exceeded; customer action required", "HIGH");
+            case AUTHENTICATION_FAILURE -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Authentication or 3DS failure; customer action required", "HIGH");
+            case INSTRUMENT_INVALID -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                    "Payment instrument expired, blocked or inactive; customer update required", "HIGH");
+            case CUSTOMER_DECLINED -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                    "Customer cancelled or did not complete the payment; send a payment link", "NORMAL");
+            case MANDATE_INVALID -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Mandate could not be set up; customer action required", "HIGH");
+            case UNCLASSIFIED -> new StrategyRule(RecoveryStrategy.MANUAL_REVIEW,
+                    "No documented failure classification ('" + failureClassStr + "')", "LOW");
+        };
+        RecoveryStrategy computedStrategy = rule.strategy();
+        String reason = rule.reason();
+        String priority = rule.priority();
 
         // Rule 5: Respect Merchant Configuration Restrictions (Task 7)
         if (merchantConfig != null && merchantConfig.getEnabledRecoveryActions() != null && !merchantConfig.getEnabledRecoveryActions().isBlank()) {
@@ -181,5 +143,8 @@ public class RecoveryStrategyEngine {
                 POLICY_VERSION,
                 Instant.now()
         );
+    }
+
+    private record StrategyRule(RecoveryStrategy strategy, String reason, String priority) {
     }
 }

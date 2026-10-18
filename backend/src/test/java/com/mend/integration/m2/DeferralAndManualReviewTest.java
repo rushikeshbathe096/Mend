@@ -240,8 +240,8 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
         MerchantConfig config = new MerchantConfig(UUID.randomUUID(), merchantId);
         config.setEnabledRecoveryActions("CUSTOMER_ACTION_REQUIRED");
         merchantConfigs.save(config);
-        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSUFFICIENT_FUNDS",
-                null, null, "Razorpay error_reason 'insufficient_funds'", null));
+        classifications.save(com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSUFFICIENT_FUNDS",
+                null, null, "Razorpay error_reason 'insufficient_funds'", null)));
         assertEquals(RecoveryStrategy.MANUAL_REVIEW, recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId()).getStrategy());
 
         assertNull(actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId()));
@@ -293,8 +293,8 @@ class DeferralAndManualReviewTest extends AbstractIntegrationTest {
             webhooks.save(event);
         });
         // M3 behaviour change: the pre-M3 class CARD_EXPIRED fails closed; its taxonomy equivalent is INSTRUMENT_INVALID.
-        classifications.save(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSTRUMENT_INVALID",
-                null, null, "Razorpay error_reason 'card_expired'", null));
+        classifications.save(com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSTRUMENT_INVALID",
+                null, null, "Razorpay error_reason 'card_expired'", null)));
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
         ReviewQueue review = reviews.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaign.getId(), ReviewQueueStatus.PENDING).orElseThrow();
 

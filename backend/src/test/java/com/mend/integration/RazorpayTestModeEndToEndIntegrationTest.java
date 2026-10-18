@@ -297,7 +297,7 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         assertThat(complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId()))
                 .first().satisfies(d -> {
                     assertThat(d.getStatus()).isEqualTo(ComplianceStatus.COMPLIANCE_BLOCKED);
-                    assertThat(d.getReason()).isEqualTo(ComplianceReason.STRATEGY_NOT_SUPPORTED);   // legacy class -> MANUAL_REVIEW
+                    assertThat(d.getReason()).isEqualTo(ComplianceReason.UNKNOWN_CLASSIFICATION);   // legacy class fails closed
                 });
         assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
 

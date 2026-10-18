@@ -313,12 +313,12 @@ public class DatabaseIntegrationTest extends AbstractIntegrationTest {
         Campaign campaign = new Campaign(campaignId, merchantId);
         campaignRepository.save(campaign);
 
-        ClassificationResult result = new ClassificationResult(
+        ClassificationResult result = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
             UUID.randomUUID(),
             campaignId,
             "INSUFFICIENT_FUNDS",
             new BigDecimal("0.95")
-        );
+        ));
 
         ClassificationResult saved = classificationResultRepository.save(result);
         assertNotNull(saved.getId());
@@ -339,8 +339,8 @@ public class DatabaseIntegrationTest extends AbstractIntegrationTest {
         Campaign campaign = new Campaign(campaignId, merchantId);
         campaignRepository.save(campaign);
 
-        ClassificationResult result1 = new ClassificationResult(UUID.randomUUID(), campaignId, "INSUFFICIENT_FUNDS", new BigDecimal("0.90"));
-        ClassificationResult result2 = new ClassificationResult(UUID.randomUUID(), campaignId, "BANK_TECHNICAL", new BigDecimal("0.85"));
+        ClassificationResult result1 = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(UUID.randomUUID(), campaignId, "INSUFFICIENT_FUNDS", new BigDecimal("0.90")));
+        ClassificationResult result2 = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(UUID.randomUUID(), campaignId, "BANK_TECHNICAL", new BigDecimal("0.85")));
 
         classificationResultRepository.save(result1);
         classificationResultRepository.save(result2);

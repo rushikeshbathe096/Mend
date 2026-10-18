@@ -85,6 +85,12 @@ confidence is not. Async parsing keeps AI useful without putting it between a fa
 ## Consequences
 - ai-service outages no longer change payment outcomes.
 - An undocumented Razorpay reason is not auto-recovered until it is mapped with evidence.
+- A classification row decides only if it carries a taxonomy version. A pre-M3 row fails closed even when its class name
+  matches a taxonomy class (`INSUFFICIENT_FUNDS`, `LIMIT_EXCEEDED`), and so does a campaign with no classification row.
+- Compliance checks the class before the strategy rules, so a legacy campaign is blocked (`UNKNOWN_CLASSIFICATION`) and is
+  never routed to a review it could not pass.
+- Intents created before M3 are not re-classified: the pre-dispatch check re-reads the stored compliance decision
+  (invariant 7) and does not re-run the class rule. Such READY/SCHEDULED intents can still dispatch as authorized then.
 - The UI loses the "AI Agent Decisions" tab; review items lose agent fields (historical rows remain in the database).
 
 ## Revisit conditions

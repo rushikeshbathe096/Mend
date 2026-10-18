@@ -223,9 +223,10 @@ public class Phase19_5_FullMockE2EValidationTest {
             res.setFailureClass("INSUFFICIENT_FUNDS");
             res.setConfidence(BigDecimal.valueOf(0.95));
             res.setStrategyRecommendation("RETRY_PAYMENT");
+            com.mend.testsupport.TestClassifications.deterministic(res);
             classificationResultRepository.saveAndFlush(res);
         } else {
-            ClassificationResult classificationResult = new ClassificationResult(
+            ClassificationResult classificationResult = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                     null,
                     savedEvent.get().getId(),
                     campaign.getId(),
@@ -234,7 +235,7 @@ public class Phase19_5_FullMockE2EValidationTest {
                     "RETRY_PAYMENT",
                     "Temporary balance issue detected",
                     "v1.0.0"
-            );
+            ));
             classificationResultRepository.saveAndFlush(classificationResult);
         }
 
@@ -519,6 +520,7 @@ public class Phase19_5_FullMockE2EValidationTest {
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
         campaign = campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);   // M3: deterministic row (ADR-003 §4)
 
         // Save WebhookEvent
         WebhookEvent event = new WebhookEvent();
@@ -531,7 +533,7 @@ public class Phase19_5_FullMockE2EValidationTest {
         event = webhookEventRepository.saveAndFlush(event);
 
         // Save ClassificationResult
-        ClassificationResult classificationResult = new ClassificationResult(
+        ClassificationResult classificationResult = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 null,
                 event.getId(),
                 campaign.getId(),
@@ -540,7 +542,7 @@ public class Phase19_5_FullMockE2EValidationTest {
                 "RETRY_PAYMENT",
                 "Temporary balance issue detected",
                 "v1.0.0"
-        );
+        ));
         classificationResultRepository.saveAndFlush(classificationResult);
 
         // Evaluate and persist recovery strategy
