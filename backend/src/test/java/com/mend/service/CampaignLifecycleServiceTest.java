@@ -175,7 +175,9 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
         assertEquals(CampaignStatus.SCHEDULED, campaign.getCurrentState());
 
         List<AuditLog> auditLogs = auditService.getCampaignAuditLogs(campaign.getId());
-        assertEquals(4, auditLogs.size()); // CREATED, CLASSIFIED, ELIGIBLE, SCHEDULED
+        // M4 behaviour change: first eligibility also writes the holdout assignment's audit row (HOLDOUT_ASSIGNED), see ADR-004
+        assertEquals(5, auditLogs.size()); // CREATED, CLASSIFIED, ELIGIBLE, HOLDOUT_ASSIGNED, SCHEDULED
+        assertEquals(1, auditLogs.stream().filter(l -> "HOLDOUT_ASSIGNED".equals(l.getEventType())).count());
     }
 
     @Test

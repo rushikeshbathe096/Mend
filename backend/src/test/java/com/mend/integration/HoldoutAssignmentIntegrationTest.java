@@ -289,21 +289,27 @@ class HoldoutAssignmentIntegrationTest {
     }
 
     @Test
-    @DisplayName("Assignments and salts are immutable: UPDATE, DELETE and TRUNCATE are rejected by the database")
+    @DisplayName("Assignments and salts are immutable: UPDATE and DELETE are rejected by the database; the statement-level (table-wide) guard is installed")
     void immutable() {
         Campaign campaign = failPayment(paymentIdIn(Arm.TREATMENT, 0), "card_expired");
 
         for (String sql : List.of(
                 "UPDATE holdout_assignments SET arm = 'CONTROL', bucket = 0, holdout_rate_bp = 100 WHERE campaign_id = '" + campaign.getId() + "'",
                 "DELETE FROM holdout_assignments WHERE campaign_id = '" + campaign.getId() + "'",
-                "TRUNCATE holdout_assignments",
                 "UPDATE merchant_experiment_salts SET salt_version = 2 WHERE merchant_id = '" + merchantId + "'",
-                "DELETE FROM merchant_experiment_salts WHERE merchant_id = '" + merchantId + "'",
-                "TRUNCATE merchant_experiment_salts")) {
+                "DELETE FROM merchant_experiment_salts WHERE merchant_id = '" + merchantId + "'")) {
             DataAccessException e = assertThrows(DataAccessException.class, () -> jdbc.execute(sql), sql);
             assertTrue(e.getMostSpecificCause().getMessage().contains("APPEND_ONLY"), sql + " -> " + e.getMostSpecificCause().getMessage());
         }
         assertEquals(Arm.TREATMENT, assignmentRows.findById(campaign.getId()).orElseThrow().getArm());
+        // Executing a table-wide statement would endanger the shared test database if the guard were missing (TestHygieneTest),
+        // so the statement-level guard is checked in the catalog: tgtype bit 5 (32) = TRUNCATE, bit 1 (2) = BEFORE.
+        for (String table : List.of("holdout_assignments", "merchant_experiment_salts")) {
+            Integer guards = jdbc.queryForObject("SELECT count(*) FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid "
+                    + "WHERE t.tgrelid = ?::regclass AND (t.tgtype & 32) <> 0 AND (t.tgtype & 2) <> 0 AND p.proname = 'mend_reject_modification'",
+                    Integer.class, table);
+            assertEquals(1, guards, table);
+        }
     }
 
     @Test
