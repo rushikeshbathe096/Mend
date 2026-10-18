@@ -33,6 +33,8 @@ public class ReviewItemDto {
     private Instant createdAt;
     private Instant reviewedAt;
     private Instant expiresAt;
+    /** M4 U4.8(b): RESOLVE_NO_COLLECT for reply reviews (dispute / customer says paid), else COLLECT. */
+    private String kind = "COLLECT";
 
     public ReviewItemDto() {
     }
@@ -97,4 +99,12 @@ public class ReviewItemDto {
     public void setReviewedAt(Instant reviewedAt) { this.reviewedAt = reviewedAt; }
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
+
+    public String getKind() {
+        return kind;
+    }
+
+    public void setKind(String kind) {
+        this.kind = kind;
+    }
 }

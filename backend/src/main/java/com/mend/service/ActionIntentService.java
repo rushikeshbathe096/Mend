@@ -247,4 +247,10 @@ public class ActionIntentService {
         return now.plus(com.mend.strategy.ActionPolicy.scheduleDelay(strategy, config, defaultRetryDelayMinutes));
     }
 
+
+    /** M4 U4.8(b): an intent of the campaign is in flight (claimed, dispatched, awaiting payment or reconciliation). */
+    @Transactional(readOnly = true)
+    public boolean hasInFlightIntent(UUID campaignId) {
+        return actionIntentRepository.findByCampaignId(campaignId).stream().anyMatch(i -> i.getStatus() != null && i.getStatus().isInFlight());
+    }
 }

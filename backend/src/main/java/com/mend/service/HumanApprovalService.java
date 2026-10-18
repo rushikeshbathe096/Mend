@@ -373,7 +373,67 @@ public class HumanApprovalService {
                 ? webhookAmountResolver.resolveAmount(merchantId, campaign.getPaymentId()).orElse(null)
                 : null;
 
-        return ReviewItemDto.from(review, campaign, amount);
+        ReviewItemDto dto = ReviewItemDto.from(review, campaign, amount);
+        dto.setKind(kindOf(review));
+        return dto;
+    }
+
+    /** M4 U4.8(b): reviews a customer's reply raised can be resolved without collecting. */
+    public static final String KIND_RESOLVE_NO_COLLECT = "RESOLVE_NO_COLLECT";
+    private static final java.util.Set<String> RESOLVE_NO_COLLECT_CODES = java.util.Set.of("CUSTOMER_DISPUTE", "CUSTOMER_SAYS_PAID");
+
+    static String kindOf(ReviewQueue review) {
+        return review.getReason() != null && RESOLVE_NO_COLLECT_CODES.contains(reasonCode(review.getReason()))
+                ? KIND_RESOLVE_NO_COLLECT : "COLLECT";
+    }
+
+    /**
+     * M4 U4.8(b) (ADR-003 Consequences, M4-owned): close a CUSTOMER_DISPUTE / CUSTOMER_SAYS_PAID review WITHOUT collecting:
+     * pending intents are cancelled, the campaign ends CANCELLED and the review is CLOSED. Nothing moves money. Refused while
+     * a payment link or a dispatched action is in flight (an issued link cannot be withdrawn: the cancel call is not
+     * recorded, ADR-002), so the reconciler resolves it first. Works for holdout CONTROL campaigns too (no recovery contact).
+     */
+    @Transactional
+    public ReviewDecisionResponse resolveWithoutCollecting(UUID merchantId, UUID reviewId, String comment, AuthenticatedUser currentUser) {
+        requireReviewer(merchantId, currentUser);
+        ReviewQueue review = loadReviewForUpdate(merchantId, reviewId);
+        Campaign campaign = campaignRepository.findById(review.getCampaignId())
+                .orElseThrow(() -> new ResourceNotFoundException("Campaign not found for review: " + reviewId));
+        ensureDecisionPossible(review, campaign, merchantId, currentUser);
+        if (!KIND_RESOLVE_NO_COLLECT.equals(kindOf(review))) {
+            throw new InvalidRequestException("Only CUSTOMER_DISPUTE / CUSTOMER_SAYS_PAID reviews can be resolved without collecting");
+        }
+        if (actionIntentService.hasInFlightIntent(campaign.getId())) {
+            throw new InvalidRequestException("A payment link or dispatched action is in flight for this campaign; it cannot be withdrawn. "
+                    + "Wait for reconciliation, then resolve.");
+        }
+
+        actionIntentService.cancelPendingIntentsForCampaign(merchantId, campaign.getId(), "Resolved without collecting (review " + reviewId + ")");
+        Campaign fresh = campaignRepository.findById(campaign.getId()).orElse(campaign);
+        if (!campaignStateMachine.isTerminal(fresh.getCurrentState())) {
+            campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CANCELLED,
+                    "Resolved without collecting by merchant human review (review " + reviewId + ")", "USER", currentUser.getUserId());
+        }
+        Instant now = Instant.now();
+        review.setStatus(ReviewQueueStatus.CLOSED);
+        review.setAssignedUserId(currentUser.getUserId());
+        review.setReviewerComment(comment != null ? comment : "Resolved without collecting");
+        review.setReviewedAt(now);
+        reviewQueueRepository.saveAndFlush(review);
+        auditService.logEvent(merchantId, campaign.getId(), "REVIEW_RESOLVED_NO_COLLECT", "USER", currentUser.getUserId(),
+                "Review " + reviewId + " (" + reasonCode(review.getReason()) + ") resolved without collecting; campaign closed");
+
+        ReviewDecisionResponse response = new ReviewDecisionResponse();
+        response.setReviewId(reviewId);
+        response.setCampaignId(campaign.getId());
+        response.setDecision(KIND_RESOLVE_NO_COLLECT);
+        response.setDecidedAt(now);
+        response.setMessage("Resolved without collecting. Campaign " + campaign.getId() + " closed; no money was requested.");
+        response.setReview(toReviewItem(merchantId, review));
+        response.setCampaign(CampaignDto.fromEntity(campaignRepository.findById(campaign.getId()).orElse(campaign)));
+        response.setValidationSummary(List.of("Tenant ownership verified for merchant " + merchantId,
+                "Review kind " + KIND_RESOLVE_NO_COLLECT, "No in-flight action"));
+        return response;
     }
 
     private ReviewQueue loadReview(UUID merchantId, UUID reviewId) {

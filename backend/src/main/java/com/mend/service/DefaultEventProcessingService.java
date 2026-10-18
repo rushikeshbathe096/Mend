@@ -117,6 +117,11 @@ public class DefaultEventProcessingService implements EventProcessingService {
      * (invariant 8): only read, never trusted beyond the taxonomy lookup. Anything missing stays null (unknown).
      */
     private ProviderFailure extractProviderFailure(WebhookEvent event) {
+        return providerFailureOf(objectMapper, event);
+    }
+
+    /** M4 U4.8: the documented failure fields of a stored webhook (shared with the legacy reclassification). */
+    static ProviderFailure providerFailureOf(ObjectMapper objectMapper, WebhookEvent event) {
         if (event.getRawPayload() != null && !event.getRawPayload().isBlank()) {
             try {
                 JsonNode entity = objectMapper.readTree(event.getRawPayload()).path("payload").path("payment").path("entity");

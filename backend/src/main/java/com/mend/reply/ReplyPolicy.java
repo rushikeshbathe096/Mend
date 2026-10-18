@@ -61,7 +61,7 @@ public class ReplyPolicy {
             case OPT_OUT -> optOut(reply, suggestion);
             case ALREADY_PAID -> alreadyPaid(reply, suggestion);
             case DISPUTE -> review(reply, suggestion, "CUSTOMER_DISPUTE: the customer's reply disputes the charge (reply suggestion "
-                    + suggestion.getId() + "). Approving resumes collection; reject if the dispute stands.", REVIEW_CUSTOMER_DISPUTE);
+                    + suggestion.getId() + "). Approving resumes collection; resolve without collecting if the dispute stands.", REVIEW_CUSTOMER_DISPUTE);
             case PROMISE_TO_PAY, OTHER -> SHOWN_ONLY;
         };
     }
@@ -95,7 +95,7 @@ public class ReplyPolicy {
         }
         return review(reply, suggestion, "CUSTOMER_SAYS_PAID: the customer's reply says the payment was made; no payment link "
                 + "awaits evidence, so a human checks (reply suggestion " + suggestion.getId() + "). Approving resumes collection; "
-                + "reject if the payment is confirmed.", REVIEW_CUSTOMER_SAYS_PAID);
+                + "resolve without collecting if the payment is confirmed.", REVIEW_CUSTOMER_SAYS_PAID);
     }
 
     private String review(CustomerReply reply, ReplySuggestion suggestion, String reason, String effect) {

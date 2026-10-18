@@ -94,6 +94,19 @@ public class ReviewQueueController {
         return ResponseEntity.ok(humanApprovalService.rejectReview(effectiveMerchantId, id, comment, currentUser));
     }
 
+    /** M4 U4.8(b): close a reply review (dispute / customer says paid) without collecting. */
+    @PostMapping("/{id}/resolve-no-collect")
+    public ResponseEntity<ReviewDecisionResponse> resolveWithoutCollecting(
+            @PathVariable UUID id,
+            @RequestBody(required = false) ReviewDecisionRequest request,
+            @RequestHeader(value = "X-Merchant-Id", required = false) String merchantHeader,
+            @CurrentUser AuthenticatedUser currentUser) {
+
+        UUID effectiveMerchantId = resolveMerchantId(merchantHeader, currentUser);
+        String comment = request != null ? request.getComment() : null;
+        return ResponseEntity.ok(humanApprovalService.resolveWithoutCollecting(effectiveMerchantId, id, comment, currentUser));
+    }
+
     private UUID resolveMerchantId(String merchantHeader, AuthenticatedUser currentUser) {
         if (merchantHeader != null && !merchantHeader.isBlank()) {
             try {
