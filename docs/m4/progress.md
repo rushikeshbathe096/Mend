@@ -158,3 +158,42 @@ Tests: SnapshotBuilderTest 6, SnapshotValidatorTest 13 (11 parameterized defects
 EvaluationPurityTest 1.
 Revert proof: audit `as_of` filter removed → `idempotentAndPointInTime:203 expected: <3d3e…> but was: <7e16…>`.
 Verify: backend `[INFO] Tests run: 1034, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+
+#### U4.3 review (fresh subagent; ran the 24 tests on a clean copy): 4 MAJOR. Dispositions (commit `dfa7a3d`)
+- FIXED MAJOR 1 (label from current config): DECISION U4.3-f — MEASURED only in `razorpay-live` with a non-simulated
+  source; mock, simulator, Razorpay test mode, unknown key mode, demo webhooks (`MEND_DEMO_SIMULATED`) and SYNTHETIC
+  captures are SYNTHETIC. Rule written into the manifest. Revert proof (old rule) →
+  `SnapshotBuilderTest.syntheticLabels:126 razorpay-test ==> expected: <true> but was: <false>`.
+- FIXED MAJOR 2 (late commits / mixed reads): `as_of ≤ now − mend.eval.snapshot.settle-minutes` (default 15; tests 0) and
+  one REPEATABLE READ transaction (`EvalSnapshotTimingTest.settleMargin`).
+- FIXED MAJOR 3 (non-atomic files): temp dir → atomic move after commit (TransactionSynchronization), deleted on rollback;
+  a reused snapshot with missing/mismatching files is rewritten (`tenantScopedAndSelfHealing`). Default dir stays
+  `${java.io.tmpdir}` (documented; set `mend.eval.snapshot.dir` in any real deployment).
+- FIXED MAJOR 4 (validator gaps): state RECOVERED with no attribution (also outside the horizon) → RECOVERED_WITHOUT_ATTRIBUTION;
+  recovered without capture_source → SCHEMA_INCONSISTENT. Revert proof → `SnapshotValidatorTest.reviewDefects:65`.
+- FIXED MINOR 5: post-M4 = earlier of configured `mend.eval.m4-start` and the merchant's first assignment ≤ as_of
+  (`flyway_schema_history` dropped). MINOR 6: legacy-dispatch subquery bounded by as_of; V13-backfilled times documented
+  (UNASSIGNED rows only). MINOR 7: audit_logs append-only by convention only — documented in ADR-004 §5. MINOR 8: unknown
+  merchants in the filter are refused. MINOR 9: parameters truncated to microseconds; V25 unique index + `ON CONFLICT DO
+  NOTHING`. MINOR 10: decisions file validated (orphans, propensity range, chosen ∈ alternatives, point, offset) plus rate,
+  TREATMENT propensity, capture-within-horizon and currency checks. MINOR 11: checksum over per-file hashes (manifest
+  records both). MINOR 12: failure webhooks batch-read per chunk. MINOR 14: TREATMENT contact via the real scheduler,
+  merchant-filter isolation, nightly-window arithmetic (`EvalSnapshotTimingTest`).
+- DOCUMENTED MINOR 13 (attribution is as of as_of, any horizon), NIT 15 (raw merchant ids only in the admin-side DB row),
+  NIT 17 (amount = failed payment amount; captured amount TBD). FIXED NIT 16 (static mapper).
+
+### U4.4 metrics + intervals
+Plan as in M4-plan. Commit `e7baa36`.
+- `com.mend.evaluation.stats`: Wilson, Newcombe (method 10), seeded percentile Bootstrap (≥ 2 000, stratified, exact
+  BigDecimal means), Median, SampleSize (design-doc table reproduced), ChiSquare SRM (erfc).
+- `com.mend.evaluation.metrics`: SnapshotFiles (sha + re-validation; tampered refused; INVALID refused without
+  `--allow-invalid`), MetricsReport (invoice unit, per holdout-rate stratum, per merchant and overall; rates, cumulative
+  by day, money, descriptive median, contact rate, attribution, by class, by strategy/channel, cost, system health),
+  ReportWriter (Markdown + JSON), `cli/ReportCli` + `scripts/eval/report.sh` (jar + PropertiesLauncher; usage smoke OK).
+- DECISION U4.4-a: an invoice's outcome is its first campaign's row (the HASH assignment, else the earliest); later campaigns
+  of the same invoice are not separate units.
+- DECISION U4.4-b: money figures use INR rows with a known amount only; unknown / other-currency counted and excluded.
+- DECISION U4.4-c: snapshot label = SYNTHETIC if any row is SYNTHETIC (conservative).
+Tests: StatisticsTest 12 (published Newcombe example 56/70 − 48/80 → 0.0524 … 0.3339; Wilson; bootstrap; power table),
+MetricsReportTest 6 (hand-computed rates/money/cost, insufficient data, TBD, INTERIM/FINAL, integrity, CLI).
+Verify: backend `[INFO] Tests run: 1059, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
