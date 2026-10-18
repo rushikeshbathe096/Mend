@@ -2,7 +2,7 @@
 
 MEND is a financial workflow system (revenue recovery on Razorpay). Correctness before intelligence.
 
-## Current milestone: M3 complete — next: M4 (needs design pack)
+## Current milestone: M4 in progress (design pack `docs/m4/`, ADR-004 Proposed) — branch `m4/evaluation`
 M3 (honest intelligence) is complete: ADR-003 Accepted, final run backend 941 / 0 / 0 / 0, frontend 62, ai-service 90
 (`docs/m3/m3-final-test-run-summary.txt`), summary `docs/m3/M3-summary.md`. M3 follow-ups (tag `m3-followups`): UTC sessions,
 UNCLASSIFIED → payment link only (owner decision B), LEGACY_DECISION at dispatch; backend 971 / 0 / 0 / 0.
@@ -35,6 +35,17 @@ Out of scope until M4 has a design pack: debit wiring, deployment, metrics regis
 16. The payment flow makes no ai-service call.
 17. LLM output is a suggestion: only the deterministic ReplyPolicy acts on it, never with a financial action.
 18. A model id is recorded only as the provider reported it; without a model there is no output ("model unavailable").
+
+### M4 invariants (ADR-004)
+19. Observed recovery ≠ incremental recovery. Causal claims come only from randomized TREATMENT vs CONTROL comparisons.
+20. Every reported number is labelled MEASURED (real provider evidence), SYNTHETIC (simulator/generated) or TBD, with its n.
+    SYNTHETIC results are never presented as revenue. A number that was not computed is TBD, never estimated.
+21. Assignment and propensities are logged at decision time, in the decision's transaction, and never rewritten (DB-enforced).
+22. CONTROL withholds only recovery contact (no intent, no provider call); compliance, opt-out, safety reviews and customer
+    requests still apply. A campaign is assigned once, at first eligibility, never re-assigned.
+23. Evaluation data is PII-free (hashed ids only), tenant-scoped, versioned and checksummed; metrics read snapshots, never live tables.
+24. No new infrastructure (no vector DB, Kafka, new services); no new Maven/npm/pip dependency without asking.
+25. The simulator never writes to production tables and runs the production policy classes, not copies.
 
 ## Tests
 - Run: `cd backend && ./mvnw test`
