@@ -56,3 +56,27 @@ Next: U4.1 (review of U4.0 runs in parallel).
   allow-list, day + offsets), 14 (erasure procedure M5-owned, documented).
 - FIXED NIT 15 (10 000 bp everywhere), 16 (`Long.remainderUnsigned` stated; tolerance fixed in the test at 5σ), 17 (status
   wording), 18 (AGENTS.md scope lines), 19 (transaction wording).
+
+### U4.1 holdout assignment
+Plan: V22 (rate column, salts, immutable assignments, CONTROL intent trigger), pure `HoldoutAssigner`,
+`ExperimentAssignmentService` hooked into `transitionState` on CLASSIFIED → ELIGIBLE, CONTROL skipped in lifecycle /
+orchestrator / intent creation / approval, config API `holdoutRateBp`.
+Commits: `4d851fe` feature, then the test-hygiene follow-up commit.
+- DECISION U4.1-a: refusal paths (intent creation, review approval for CONTROL) write no audit row: nothing changes state, and
+  an audit row in the throwing transaction would roll back anyway (see out-of-scope finding OOS-1).
+- DECISION U4.1-b: a CONTROL review can be left PENDING / rejected; approval is refused (it resumes collection).
+- DECISION U4.1-c: no executor check for CONTROL: an assignment is written only on CLASSIFIED → ELIGIBLE, before any intent
+  can exist for the campaign, and the V22 trigger makes a CONTROL intent impossible.
+- DECISION U4.1-d: TRUNCATE immutability is checked in `pg_trigger`, not executed (TestHygieneTest forbids table-wide
+  statements on the shared test database).
+Tests: HoldoutAssignerTest 7 (known answers from Python hmac, 100 000 seeded keys within 5σ, decile chi-square < 27.877),
+ExperimentPurityTest 1, HoldoutAssignmentIntegrationTest 11. CampaignLifecycleServiceTest audit count 4 → 5 (M4 behaviour
+change comment).
+Revert proofs:
+- CONTROL skip removed from lifecycle + orchestrator → 6 errors (`controlTakesNoAction:143->failPayment:114 » UnexpectedRollback`:
+  the intent guard then throws inside the classification transaction).
+- invoice reuse off → `secondCampaignOfInvoiceReusesArm:273 expected: <CONTROL> but was: <TREATMENT>`.
+- V22 intent trigger removed → `controlRefusedOnEveryPath:178 Expected DataAccessException to be thrown, but nothing was thrown`.
+Verify: backend `[INFO] Tests run: 990, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+Out-of-scope finding OOS-1: `HumanApprovalService.approveReview` writes `REVIEW_APPROVAL_BLOCKED` and then throws in the
+same transaction, so that audit row is always rolled back (pre-existing).
