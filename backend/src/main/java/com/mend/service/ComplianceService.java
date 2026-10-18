@@ -41,6 +41,7 @@ public class ComplianceService {
     private final ActionIntentRepository actionIntentRepository;
     private final ComplianceEngine complianceEngine;
     private final AuditService auditService;
+    private final DecisionLogService decisionLogService;
 
     public ComplianceService(
             CampaignRepository campaignRepository,
@@ -50,7 +51,9 @@ public class ComplianceService {
             ComplianceDecisionRepository complianceDecisionRepository,
             ActionIntentRepository actionIntentRepository,
             ComplianceEngine complianceEngine,
-            AuditService auditService) {
+            AuditService auditService,
+            DecisionLogService decisionLogService) {
+        this.decisionLogService = decisionLogService;
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.merchantConfigRepository = merchantConfigRepository;
@@ -152,6 +155,11 @@ public class ComplianceService {
                     .map(this::mapToDecision)
                     .orElse(decision);
         }
+
+        // M4 U4.2: the decision and its versions, in this transaction (invariant 21)
+        decisionLogService.compliance(decision, entity.getId(),
+                classificationResult != null ? classificationResult.getTaxonomyVersion() : null,
+                recoveryDecisionEntity != null ? recoveryDecisionEntity.getPolicyVersion() : null);
 
         // Emits Audit Log
         String auditEventType = decision.getStatus() == ComplianceStatus.COMPLIANCE_ALLOWED

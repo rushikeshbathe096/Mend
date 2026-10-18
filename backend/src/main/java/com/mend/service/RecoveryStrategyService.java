@@ -36,6 +36,7 @@ public class RecoveryStrategyService {
     private final RecoveryDecisionRepository recoveryDecisionRepository;
     private final RecoveryStrategyEngine recoveryStrategyEngine;
     private final AuditService auditService;
+    private final DecisionLogService decisionLogService;
 
     public RecoveryStrategyService(
             CampaignRepository campaignRepository,
@@ -43,7 +44,9 @@ public class RecoveryStrategyService {
             MerchantConfigRepository merchantConfigRepository,
             RecoveryDecisionRepository recoveryDecisionRepository,
             RecoveryStrategyEngine recoveryStrategyEngine,
-            AuditService auditService) {
+            AuditService auditService,
+            DecisionLogService decisionLogService) {
+        this.decisionLogService = decisionLogService;
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.merchantConfigRepository = merchantConfigRepository;
@@ -110,6 +113,10 @@ public class RecoveryStrategyService {
                     .map(this::mapToDecision)
                     .orElse(decision);
         }
+
+        // M4 U4.2: the decision, its alternatives and its propensity, in this transaction (invariant 21)
+        decisionLogService.strategy(decision, entity.getId(),
+                classificationResult != null ? classificationResult.getTaxonomyVersion() : null, merchantConfig);
 
         // Update campaign strategy property
         campaign.setStrategy(decision.getStrategy().name());

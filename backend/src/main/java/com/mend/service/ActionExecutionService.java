@@ -58,6 +58,7 @@ public class ActionExecutionService {
     private final ReconcileBackoff deferBackoff;
     private final java.time.Duration minDeferral;
     private final com.mend.provider.ProviderCapabilities capabilities;
+    private final DecisionLogService decisionLogService;
 
     public ActionExecutionService(
             ActionIntentRepository actionIntentRepository,
@@ -75,7 +76,9 @@ public class ActionExecutionService {
             com.mend.provider.ProviderCapabilities capabilities,
             @org.springframework.beans.factory.annotation.Value("${mend.execution.max-deferrals:5}") int maxDeferrals,
             @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-base-seconds:30}") long deferBackoffBaseSeconds,
-            @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-cap-seconds:21600}") long deferBackoffCapSeconds) {
+            @org.springframework.beans.factory.annotation.Value("${mend.execution.defer-backoff-cap-seconds:21600}") long deferBackoffCapSeconds,
+            DecisionLogService decisionLogService) {
+        this.decisionLogService = decisionLogService;
         this.actionIntentRepository = actionIntentRepository;
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
@@ -115,8 +118,13 @@ public class ActionExecutionService {
             executionTransactionTemplate.executeWithoutResult(status -> {
                 if (transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now())) {
                     // U2.4 review (invariant 9): the CLAIMED -> FAILED transition is audited (ids and the block code only)
-                    actionIntentRepository.findById(intentId).ifPresent(i -> auditService.logEvent(i.getMerchantId(), i.getCampaignId(),
-                            "ACTION_COMPLIANCE_BLOCKED", "SYSTEM", null, "ActionIntent " + intentId + " blocked before dispatch: " + e.getMessage()));
+                    actionIntentRepository.findById(intentId).ifPresent(i -> {
+                        auditService.logEvent(i.getMerchantId(), i.getCampaignId(),
+                                "ACTION_COMPLIANCE_BLOCKED", "SYSTEM", null, "ActionIntent " + intentId + " blocked before dispatch: " + e.getMessage());
+                        // M4 U4.2: the dispatch decision (blocked), in the transaction that applied it (invariant 21)
+                        decisionLogService.dispatch(i.getMerchantId(), i.getCampaignId(), intentId, DecisionLogService.BLOCKED,
+                                blockCode(e), e instanceof LegacyDecisionException legacy ? legacy.policyVersion : null);
+                    });
                     if (e instanceof LegacyDecisionException legacy) {
                         routeLegacyDecisionToReview(legacy, intentId);
                     }
@@ -180,6 +188,8 @@ public class ActionExecutionService {
                     "ACTION_EXPIRED", "SYSTEM", null,
                     "ActionIntent " + intent.getId() + " expired before execution."
             );
+            decisionLogService.dispatch(intent.getMerchantId(), intent.getCampaignId(), intent.getId(), DecisionLogService.EXPIRED,
+                    "INTENT_EXPIRED", null);
             return ExecutionPreparation.halt(intent, "ActionIntent expired at " + intent.getExpiresAt());
         }
 
@@ -225,7 +235,7 @@ public class ActionExecutionService {
         // 6b. M3 U2.4 (ADR-003 §5): contact opt-out, re-read under a share lock in this dispatch transaction. A stored
         // ALLOWED decision from before the opt-out does not authorize contacting the customer afterwards.
         if (campaignRepository.isContactOptedOutForShare(campaign.getId()).orElse(Boolean.TRUE)) {
-            throw new ComplianceBlockedException("Customer opted out of contact (" + ComplianceReason.CUSTOMER_OPTED_OUT + ")");
+            throw new OptedOutAtDispatchException();
         }
 
         // 7. Transition Campaign ACTION_PENDING -> EXECUTING if applicable
@@ -256,6 +266,9 @@ public class ActionExecutionService {
         if (!transitions.dispatch(intent.getId(), callerClaimToken, Instant.now())) {
             throw new ClaimLostBeforeDispatch(intent);
         }
+        // M4 U4.2: logged in the fence transaction; a failed insert rolls the dispatch back, so no provider call follows.
+        decisionLogService.dispatch(intent.getMerchantId(), intent.getCampaignId(), intent.getId(), DecisionLogService.DISPATCHED,
+                null, storedDecision.getPolicyVersion());
 
         // Note: the intent/campaign objects were loaded before the dispatch update; only their ids are used afterwards.
         return ExecutionPreparation.proceed(intent, campaign, callerClaimToken);
@@ -304,6 +317,24 @@ public class ActionExecutionService {
             this.campaignId = campaignId;
             this.decisionId = decisionId;
             this.policyVersion = policyVersion;
+        }
+    }
+
+    /** Decision-log code of a pre-dispatch block (ids and codes only). */
+    private static String blockCode(ComplianceBlockedException e) {
+        if (e instanceof LegacyDecisionException) {
+            return ComplianceReason.LEGACY_DECISION.name();
+        }
+        if (e instanceof OptedOutAtDispatchException) {
+            return ComplianceReason.CUSTOMER_OPTED_OUT.name();
+        }
+        return "PRE_DISPATCH_COMPLIANCE";
+    }
+
+    /** M3 U2.4 opt-out found at the pre-dispatch re-check (message unchanged; a type so U4.2 can log its code). */
+    static final class OptedOutAtDispatchException extends ComplianceBlockedException {
+        OptedOutAtDispatchException() {
+            super("Customer opted out of contact (" + ComplianceReason.CUSTOMER_OPTED_OUT + ")");
         }
     }
 

@@ -37,12 +37,15 @@ public class ExperimentAssignmentService {
     private final MerchantExperimentSaltRepository saltRepository;
     private final MerchantConfigRepository merchantConfigRepository;
     private final AuditService auditService;
+    private final DecisionLogService decisionLogService;
     private final SecureRandom random = new SecureRandom();
 
     public ExperimentAssignmentService(HoldoutAssignmentRepository assignmentRepository,
                                        MerchantExperimentSaltRepository saltRepository,
                                        MerchantConfigRepository merchantConfigRepository,
-                                       AuditService auditService) {
+                                       AuditService auditService,
+                                       DecisionLogService decisionLogService) {
+        this.decisionLogService = decisionLogService;
         this.assignmentRepository = assignmentRepository;
         this.saltRepository = saltRepository;
         this.merchantConfigRepository = merchantConfigRepository;
@@ -81,6 +84,8 @@ public class ExperimentAssignmentService {
         HoldoutAssignment stored = assignmentRepository.findById(campaign.getId())
                 .orElseThrow(() -> new IllegalStateException("holdout assignment missing after insert for campaign " + campaign.getId()));
         if (written == 1) {
+            // U4.2: the assignment and its propensity are logged in the assigning transaction (invariant 21).
+            decisionLogService.assignment(stored);
             auditService.logStructuredEvent(campaign.getMerchantId(), campaign.getId(), "HOLDOUT_ASSIGNED", "SYSTEM", null,
                     "Holdout assignment " + stored.getArm() + " (rate " + stored.getHoldoutRateBp() + " bp, " + stored.getSource() + ")",
                     Map.of("arm", stored.getArm().name(), "holdoutRateBp", stored.getHoldoutRateBp(), "saltVersion", stored.getSaltVersion(),
