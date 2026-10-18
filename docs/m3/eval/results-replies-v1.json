@@ -1,0 +1,208 @@
+{
+  "dataset_version": "replies-v1",
+  "headline_split": "test",
+  "splits": {
+    "dev": {
+      "dataset": "replies-v1-dev",
+      "dataset_sha256": "0f98731931810cccd8a16b933b456ff511d6ec91aaf9dbc1e5cad190b252d0c2",
+      "rows": 60,
+      "label_source": "SYNTHETIC",
+      "baseline": {
+        "system": "keyword-baseline-v1",
+        "per_class": {
+          "OPT_OUT": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 12
+          },
+          "ALREADY_PAID": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 12
+          },
+          "DISPUTE": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 12
+          },
+          "PROMISE_TO_PAY": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 12
+          },
+          "OTHER": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 12
+          }
+        },
+        "macro_f1": 1.0,
+        "confusion_matrix": {
+          "OPT_OUT": {
+            "OPT_OUT": 12,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 0,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "ALREADY_PAID": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 12,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 0,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "DISPUTE": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 12,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 0,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "PROMISE_TO_PAY": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 12,
+            "OTHER": 0,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "OTHER": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 12,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          }
+        },
+        "invalid_output_rate": 0.0,
+        "abstention_rate": 0.0,
+        "promised_date_exact_match": {
+          "hits": 12,
+          "total": 12
+        },
+        "model_ids_reported": []
+      },
+      "model": {
+        "status": "TBD",
+        "reason": "no GEMINI_API_KEY in the environment; the model was not run",
+        "prompt_version": "reply-parse-v1"
+      }
+    },
+    "test": {
+      "dataset": "replies-v1-test",
+      "dataset_sha256": "0cce00f3b63e8f3fd53d35040373acf7ac34331f7e4ebf4fe9002c8e77081b86",
+      "rows": 40,
+      "label_source": "SYNTHETIC",
+      "baseline": {
+        "system": "keyword-baseline-v1",
+        "per_class": {
+          "OPT_OUT": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 8
+          },
+          "ALREADY_PAID": {
+            "precision": 1.0,
+            "recall": 0.125,
+            "f1": 0.2222,
+            "support": 8
+          },
+          "DISPUTE": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 8
+          },
+          "PROMISE_TO_PAY": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 8
+          },
+          "OTHER": {
+            "precision": 0.2051,
+            "recall": 1.0,
+            "f1": 0.3404,
+            "support": 8
+          }
+        },
+        "macro_f1": 0.1125,
+        "confusion_matrix": {
+          "OPT_OUT": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 8,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "ALREADY_PAID": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 1,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 7,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "DISPUTE": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 8,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "PROMISE_TO_PAY": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 8,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          },
+          "OTHER": {
+            "OPT_OUT": 0,
+            "ALREADY_PAID": 0,
+            "DISPUTE": 0,
+            "PROMISE_TO_PAY": 0,
+            "OTHER": 8,
+            "ABSTAIN": 0,
+            "INVALID": 0
+          }
+        },
+        "invalid_output_rate": 0.0,
+        "abstention_rate": 0.0,
+        "promised_date_exact_match": {
+          "hits": 0,
+          "total": 8
+        },
+        "model_ids_reported": []
+      },
+      "model": {
+        "status": "TBD",
+        "reason": "no GEMINI_API_KEY in the environment; the model was not run",
+        "prompt_version": "reply-parse-v1"
+      }
+    }
+  }
+}
