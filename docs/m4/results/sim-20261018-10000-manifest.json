@@ -1,0 +1,21 @@
+{
+  "snapshot_id" : "sim-20261018-10000",
+  "schema_version" : "eval-snapshot-v2",
+  "created_at" : "2026-02-12T00:00:00Z",
+  "window_from" : "2026-01-01T00:00:00Z",
+  "window_to" : "2026-01-29T00:00:00Z",
+  "as_of" : "2026-02-12T00:00:00Z",
+  "horizon_days" : 14,
+  "provider_mode" : "simulator",
+  "merchant_refs" : [ "cb419646f2967e0527d0d45a3c1abe55" ],
+  "row_count" : 10000,
+  "decision_count" : 33898,
+  "sha256" : "9c7e614225e2764b0507e0ef1eb5fa59a621cbf48e24bff44bd1952981b9dea4",
+  "sha256_rule" : "sha256(\"campaigns.jsonl:\" + sha256(campaigns.jsonl) + \"\\ndecisions.jsonl:\" + sha256(decisions.jsonl) + \"\\nparams:\" + sha256(canonical params) + \"\\n\")",
+  "canonical_params" : "schema_version=eval-snapshot-v2;window_from=2026-01-01T00:00:00Z;window_to=2026-01-29T00:00:00Z;as_of=2026-02-12T00:00:00Z;horizon_days=14;provider_mode=simulator",
+  "campaigns_sha256" : "c0e93a04bb29eaf73357da3bf994c170f75cfb4410e0a603655dcf9e4a4c4e6e",
+  "decisions_sha256" : "0672a24515625fa68a3a303b4f52e38be2e946262d3497c9b5097d6c6633fd44",
+  "evidence_label_rule" : "MEASURED only for provider mode razorpay-live and non-simulated sources; else SYNTHETIC",
+  "status" : "VALID",
+  "errors" : [ ]
+}
