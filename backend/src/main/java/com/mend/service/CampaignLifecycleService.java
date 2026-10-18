@@ -295,10 +295,8 @@ public class CampaignLifecycleService {
      * fail closed, also when their class name matches a taxonomy class. No confidence.
      */
     public boolean evaluateEligibility(ClassificationResult classificationResult) {
-        if (classificationResult == null) {
-            return false;
-        }
-        return classificationResult.deterministicClass();
+        // M4 U4.5 review: the rule is shared with the replay simulator
+        return com.mend.strategy.ActionPolicy.eligible(classificationResult);
     }
 
     @Transactional(readOnly = true)

@@ -15,7 +15,8 @@ import java.util.UUID;
  *   <li>Failure fields: Razorpay {@code error_reason} values drawn with the weights in {@link #REASONS} (documented reasons of
  *       each taxonomy class plus documented-but-unmapped declines), classified later by the production taxonomy.</li>
  *   <li>Amount (paise): {@link #AMOUNTS} with their weights (199, 499, 999, 1 999, 4 999 INR).</li>
- *   <li>First eligibility: uniform over the window; one invoice per failure ({@code inv:inv_SYN<seed>_<n>}).</li>
+ *   <li>First eligibility: uniform over the window; one invoice per failure ({@code inv:inv_SYN<seed>_<n>}), except that a share
+ *       {@code reuseShare} of failures reuses an earlier failure's invoice (a second failed payment of the same invoice).</li>
  *   <li>Ids: name-based UUIDs of (seed, index), so a re-run gives the same ids.</li>
  * </ul>
  */
@@ -43,6 +44,10 @@ public final class SyntheticGenerator {
     }
 
     public static List<ReplayEvent> generate(long seed, int size, UUID merchantId, Instant windowStart, Duration window) {
+        return generate(seed, size, merchantId, windowStart, window, 0.0);
+    }
+
+    public static List<ReplayEvent> generate(long seed, int size, UUID merchantId, Instant windowStart, Duration window, double reuseShare) {
         SplittableRandom random = new SplittableRandom(seed);
         List<ReplayEvent> events = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
@@ -50,8 +55,14 @@ public final class SyntheticGenerator {
             long amount = AMOUNTS[pickIndex(AMOUNT_WEIGHTS, random)];
             Instant eligibleAt = windowStart.plusSeconds((long) (random.nextDouble() * window.toSeconds()));
             UUID campaignId = UUID.nameUUIDFromBytes(("sim:" + seed + ":" + i).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            events.add(new ReplayEvent(merchantId, campaignId, "inv:inv_SYN" + seed + "_" + i,
-                    ProviderFailure.of("BAD_REQUEST_ERROR", reason, "customer"), null, amount, eligibleAt));
+            String invoice = "inv:inv_SYN" + seed + "_" + i;
+            if (i > 0 && random.nextDouble() < reuseShare) {
+                ReplayEvent earlier = events.get(random.nextInt(i));
+                invoice = earlier.invoiceKey();
+                amount = earlier.amountMinor();
+            }
+            events.add(new ReplayEvent(merchantId, campaignId, invoice, ProviderFailure.of("BAD_REQUEST_ERROR", reason, "customer"),
+                    null, null, amount, eligibleAt));
         }
         return events;
     }

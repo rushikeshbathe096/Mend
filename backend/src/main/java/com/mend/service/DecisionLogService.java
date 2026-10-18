@@ -20,10 +20,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.TreeSet;
 import java.util.UUID;
 
 /**
@@ -117,24 +114,9 @@ public class DecisionLogService {
                 v.assignment(), Instant.now()));
     }
 
-    /**
-     * The strategies the policy could have chosen for this merchant: every strategy when the merchant config does not
-     * restrict them, else the enabled ones plus the two the engine always may fall back to (MANUAL_REVIEW, NO_ACTION).
-     * Always contains the chosen strategy. Sorted, so the row is reproducible.
-     */
+    /** Shared with the simulator (M4 U4.5 review). */
     static List<String> strategyAlternatives(RecoveryStrategy chosen, MerchantConfig config) {
-        String enabled = config != null && config.getEnabledRecoveryActions() != null
-                ? config.getEnabledRecoveryActions().toUpperCase(Locale.ROOT) : "";
-        TreeSet<String> alternatives = new TreeSet<>();
-        for (RecoveryStrategy s : RecoveryStrategy.values()) {
-            // same matching rule as RecoveryStrategyEngine rule 5 (substring of the enabled list, or ALL)
-            if (enabled.isBlank() || enabled.contains("ALL") || enabled.contains(s.name())
-                    || s == RecoveryStrategy.MANUAL_REVIEW || s == RecoveryStrategy.NO_ACTION) {
-                alternatives.add(s.name());
-            }
-        }
-        alternatives.add(chosen.name());
-        return new ArrayList<>(alternatives);
+        return com.mend.strategy.ActionPolicy.strategyAlternatives(chosen, config);
     }
 
     private DecisionLogEntry save(DecisionLogEntry entry) {

@@ -239,22 +239,12 @@ public class ActionIntentService {
         return actionIntentRepository.findByCampaignId(campaignId);
     }
 
+    /** M4 U4.5 review: the rule lives in {@link com.mend.strategy.ActionPolicy#scheduleDelay} (shared with the simulator). */
     private Instant calculateScheduledTime(UUID merchantId, RecoveryStrategy strategy) {
         Instant now = Instant.now();
-        if (strategy == RecoveryStrategy.RETRY_IMMEDIATELY || strategy == RecoveryStrategy.CUSTOMER_ACTION_REQUIRED) {
-            return now;
-        }
-
-        if (strategy == RecoveryStrategy.RETRY_LATER) {
-            long delayMinutes = defaultRetryDelayMinutes;
-            Optional<MerchantConfig> configOpt = merchantConfigRepository.findByMerchantId(merchantId);
-            if (configOpt.isPresent() && configOpt.get().getContactWindowHours() != null) {
-                delayMinutes = configOpt.get().getContactWindowHours() * 60L;
-            }
-            return now.plus(Duration.ofMinutes(delayMinutes));
-        }
-
-        return now;
+        MerchantConfig config = strategy == RecoveryStrategy.RETRY_LATER
+                ? merchantConfigRepository.findByMerchantId(merchantId).orElse(null) : null;
+        return now.plus(com.mend.strategy.ActionPolicy.scheduleDelay(strategy, config, defaultRetryDelayMinutes));
     }
 
 }

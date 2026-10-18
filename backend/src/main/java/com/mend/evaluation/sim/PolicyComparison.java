@@ -60,6 +60,22 @@ public final class PolicyComparison {
                 .append(rupees(c.perFailureDifferenceMinor().low())).append(" … ").append(rupees(c.perFailureDifferenceMinor().high()))
                 .append(" INR (n = ").append(c.a().failures()).append("); recovered failures ").append(c.recoveredDifference() >= 0 ? "+" : "")
                 .append(c.recoveredDifference()).append(".\n");
+        md.append("\nThe interval covers only the Monte Carlo noise of this run under the assumed outcome model, not uncertainty in "
+                + "the model itself: the difference follows from the assumptions below by construction.\n");
+        return md.toString();
+    }
+
+    /** The outcome-model assumptions that drive every comparison (all SYNTHETIC). */
+    public static String assumptions(OutcomeModel m) {
+        StringBuilder md = new StringBuilder("### Outcome-model assumptions (SYNTHETIC, not measured)\n\n"
+                + "| failure class | P(original captured late, no action) | P(link paid when sent) |\n|---|---|---|\n");
+        for (com.mend.taxonomy.PaymentFailureClass c : com.mend.taxonomy.PaymentFailureClass.values()) {
+            md.append("| ").append(c.name().replace("_", "\\_")).append(" | ").append(m.lateCapture().getOrDefault(c, 0.0)).append(" | ")
+                    .append(m.linkPay().getOrDefault(c, 0.0)).append(" |\n");
+        }
+        md.append("\nLate capture time: exponential, mean ").append(m.lateCaptureMeanHours()).append(" h; link payment time: exponential, "
+                + "mean ").append(m.linkPayMeanHours()).append(" h within the 72 h link validity; wired retries succeed with ")
+                .append(m.retrySuccess()).append(" (halved after 24 h).\n");
         return md.toString();
     }
 

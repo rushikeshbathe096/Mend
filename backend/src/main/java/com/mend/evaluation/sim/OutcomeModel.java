@@ -15,14 +15,15 @@ import java.util.SplittableRandom;
  *       horizon; time exponential with mean {@link #lateCaptureMeanHours}.</li>
  *   <li>Payment link (only when MEND contacts with a link): probability per class that the customer pays it; time
  *       exponential with mean {@link #linkPayMeanHours}; a link not paid within its 72 h validity is never paid.</li>
- *   <li>Retry strategies: debits are not wired (ADR-002), so by default a retry makes no provider contact and has no effect,
- *       as in production. With {@code retriesWired} a hypothetical retry succeeds with {@code retrySuccess} after the retry
- *       delay (used only to compare retry timings offline).</li>
+ *   <li>Retry strategies: debits are not wired (ADR-002). As in production (Razorpay mode), an allowed retry is dispatched
+ *       (a DISPATCH row, counted as a contact by the snapshot) and the provider answers NotSupported: no capture. With
+ *       {@code retriesWired} a hypothetical retry captures with {@code retrySuccess}, halved when it fires more than 24 h after
+ *       eligibility (an assumption, used only to compare retry timings offline). The delay itself comes from production's
+ *       {@code ActionPolicy.scheduleDelay}.</li>
  * </ul>
  */
 public record OutcomeModel(Map<PaymentFailureClass, Double> lateCapture, Map<PaymentFailureClass, Double> linkPay,
-                           double lateCaptureMeanHours, double linkPayMeanHours, boolean retriesWired, double retrySuccess,
-                           Duration retryDelay) {
+                           double lateCaptureMeanHours, double linkPayMeanHours, boolean retriesWired, double retrySuccess) {
 
     public static final Duration LINK_TTL = Duration.ofHours(72);
 
@@ -44,11 +45,11 @@ public record OutcomeModel(Map<PaymentFailureClass, Double> lateCapture, Map<Pay
         put(late, link, PaymentFailureClass.INSTRUMENT_INVALID, 0.03, 0.22);
         put(late, link, PaymentFailureClass.MANDATE_INVALID, 0.03, 0.15);
         put(late, link, PaymentFailureClass.UNCLASSIFIED, 0.07, 0.12);
-        return new OutcomeModel(late, link, 72.0, 18.0, false, 0.15, Duration.ofMinutes(15));
+        return new OutcomeModel(late, link, 72.0, 18.0, false, 0.15);
     }
 
-    public OutcomeModel withRetries(boolean wired, double success, Duration delay) {
-        return new OutcomeModel(lateCapture, linkPay, lateCaptureMeanHours, linkPayMeanHours, wired, success, delay);
+    public OutcomeModel withRetries(boolean wired, double success) {
+        return new OutcomeModel(lateCapture, linkPay, lateCaptureMeanHours, linkPayMeanHours, wired, success);
     }
 
     private static void put(Map<PaymentFailureClass, Double> late, Map<PaymentFailureClass, Double> link, PaymentFailureClass c,
@@ -67,17 +68,17 @@ public record OutcomeModel(Map<PaymentFailureClass, Double> lateCapture, Map<Pay
         return draw(linkPay.getOrDefault(c, 0.0), linkPayMeanHours, LINK_TTL.toHours(), random);
     }
 
-    /** Hours until a (hypothetical, wired) retry captures, or -1. A longer delay than 24 h loses half its success. */
-    double retryHours(SplittableRandom random) {
-        double p = retryDelay.compareTo(Duration.ofHours(24)) > 0 ? retrySuccess / 2 : retrySuccess;
-        return random.nextDouble() < p ? retryDelay.toMinutes() / 60.0 : -1;
+    /** Whether a (hypothetical, wired) retry fired after {@code delay} captures. A delay above 24 h halves the success. */
+    boolean retryCaptures(Duration delay, SplittableRandom random) {
+        double p = delay.compareTo(Duration.ofHours(24)) > 0 ? retrySuccess / 2 : retrySuccess;
+        return random.nextDouble() < p;
     }
 
     private static double draw(double probability, double meanHours, double capHours, SplittableRandom random) {
         if (random.nextDouble() >= probability) {
             return -1;
         }
-        double hours = -meanHours * Math.log(1 - random.nextDouble());
+        double hours = -meanHours * StrictMath.log(1 - random.nextDouble());   // StrictMath: identical on every JVM
         return hours <= capHours ? hours : -1;
     }
 }

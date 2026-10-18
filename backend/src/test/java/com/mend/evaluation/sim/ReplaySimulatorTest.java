@@ -92,9 +92,13 @@ class ReplaySimulatorTest {
 
         ReplaySimulator.Result a = run(11, 2000, 2000, PolicyVariant.A_UNCLASSIFIED_INELIGIBLE);
         assertTrue(a.outcomes().stream().filter(o -> o.failureClass() == PaymentFailureClass.UNCLASSIFIED).noneMatch(ReplaySimulator.Outcome::eligible));
-        // retries are not wired (as in production): RETRY_* make no contact
-        assertTrue(b.outcomes().stream().filter(o -> o.strategy() == RecoveryStrategy.RETRY_LATER || o.strategy() == RecoveryStrategy.RETRY_IMMEDIATELY)
-                .noneMatch(ReplaySimulator.Outcome::contacted));
+        // U4.5 review: as in production (Razorpay mode) an allowed retry is dispatched (a contact) but NotSupported: never a
+        // MEND capture unless retries are wired
+        List<ReplaySimulator.Outcome> retries = b.outcomes().stream()
+                .filter(o -> o.strategy() == RecoveryStrategy.RETRY_LATER || o.strategy() == RecoveryStrategy.RETRY_IMMEDIATELY).toList();
+        assertFalse(retries.isEmpty());
+        assertTrue(retries.stream().anyMatch(ReplaySimulator.Outcome::contacted));
+        assertTrue(retries.stream().noneMatch(o -> o.source() == com.mend.evaluation.snapshot.CampaignFacts.CaptureSource.MEND));
     }
 
     @Test
@@ -109,6 +113,85 @@ class ReplaySimulatorTest {
         }
         PolicyComparison.Comparison c = PolicyComparison.compare("A", a, "B", b, 2000, 1L);
         assertTrue(c.b().recoveredMinor() >= c.a().recoveredMinor(), "B adds links, never removes a recovery");
+    }
+
+    @Test
+    @DisplayName("No action after recovery: a contacted campaign's original capture always comes after its contact")
+    void noActionAfterRecovery() {
+        ReplaySimulator.Result r = new ReplaySimulator().run(SyntheticGenerator.generate(19, 3000, MERCHANT, START, WINDOW),
+                new ReplaySimulator.Config(19, 0, 14, PolicyVariant.B_CURRENT, OutcomeModel.defaults().withRetries(true, 0.15), START, WINDOW, 48, null));
+        assertTrue(r.content().campaigns().stream().anyMatch(row -> row.contacted() && "ORIGINAL".equals(row.captureSource())));
+        assertTrue(r.content().campaigns().stream().noneMatch(row -> row.contacted() && row.captureOffsetS() != null
+                && "ORIGINAL".equals(row.captureSource()) && row.captureOffsetS() <= row.firstContactOffsetS()));
+    }
+
+    @Test
+    @DisplayName("Retry delay comes from production's rule: RETRY_LATER is contacted after the merchant's contact window")
+    void retryDelayFromProduction() {
+        ReplaySimulator.Result r = new ReplaySimulator().run(SyntheticGenerator.generate(23, 1500, MERCHANT, START, WINDOW),
+                new ReplaySimulator.Config(23, 0, 14, PolicyVariant.B_CURRENT, OutcomeModel.defaults(), START, WINDOW, 48, null));
+        assertTrue(r.content().campaigns().stream().filter(row -> "RETRY_LATER".equals(row.strategy()) && row.contacted())
+                .allMatch(row -> row.firstContactOffsetS() == 48 * 3600 + 60));
+        assertTrue(r.content().campaigns().stream().anyMatch(row -> "RETRY_LATER".equals(row.strategy()) && row.contacted()));
+    }
+
+    @Test
+    @DisplayName("A merchant restriction yields MANUAL_REVIEW from the production engine and no contact")
+    void restrictedMerchantConfig() {
+        ReplaySimulator.Result r = new ReplaySimulator().run(SyntheticGenerator.generate(29, 500, MERCHANT, START, WINDOW),
+                new ReplaySimulator.Config(29, 0, 14, PolicyVariant.B_CURRENT, OutcomeModel.defaults(), START, WINDOW, null, "RETRY_LATER"));
+        List<ReplaySimulator.Outcome> review = r.outcomes().stream().filter(o -> o.strategy() == RecoveryStrategy.MANUAL_REVIEW).toList();
+        assertFalse(review.isEmpty());
+        assertTrue(review.stream().noneMatch(ReplaySimulator.Outcome::contacted));
+    }
+
+    @Test
+    @DisplayName("Reused invoices: one arm per invoice (INVOICE_REUSE) and one link in flight (DUPLICATE_ACTION)")
+    void reusedInvoices() {
+        ReplaySimulator.Result r = new ReplaySimulator().run(SyntheticGenerator.generate(31, 3000, MERCHANT, START, WINDOW, 0.25),
+                new ReplaySimulator.Config(31, 2000, 14, PolicyVariant.B_CURRENT, OutcomeModel.defaults(), START, WINDOW));
+        Map<String, java.util.Set<String>> armsByInvoice = r.content().campaigns().stream().collect(Collectors.groupingBy(
+                com.mend.evaluation.snapshot.SnapshotRow::invoiceRef, Collectors.mapping(com.mend.evaluation.snapshot.SnapshotRow::arm, Collectors.toSet())));
+        assertTrue(armsByInvoice.values().stream().allMatch(arms -> arms.size() == 1));
+        assertTrue(r.content().campaigns().stream().anyMatch(row -> "INVOICE_REUSE".equals(row.assignmentSource())));
+        assertTrue(r.content().campaigns().stream().anyMatch(row -> "DUPLICATE_ACTION".equals(row.complianceReason())));
+        assertTrue(SnapshotWriter.prepare("x", r.content(), r.params()).valid());
+    }
+
+    @Test
+    @DisplayName("Snapshot replay: stored class and version are used; a legacy row (no taxonomy version) fails closed")
+    void snapshotReplay() {
+        ReplaySimulator.Result original = run(37, 400, 2000, PolicyVariant.B_CURRENT);
+        List<ReplayEvent> events = new java.util.ArrayList<>(SnapshotReplay.events(original.content().campaigns(), MERCHANT));
+        ReplayEvent legacy = new ReplayEvent(MERCHANT, UUID.randomUUID(), "ref:legacy", null, "INSUFFICIENT_FUNDS", null, 100L, START);
+        events.add(legacy);
+        ReplaySimulator.Result replay = new ReplaySimulator().run(events,
+                new ReplaySimulator.Config(37, 0, 14, PolicyVariant.B_CURRENT, OutcomeModel.defaults(), START, WINDOW));
+        assertEquals(events.size(), replay.outcomes().size());
+        assertFalse(replay.outcomes().get(events.size() - 1).eligible(), "legacy row is not eligible");
+        assertEquals(original.content().campaigns().size(), replay.outcomes().stream().filter(ReplaySimulator.Outcome::eligible).count());
+    }
+
+    @Test
+    @DisplayName("SimulateCli end to end: same seed → identical files; report and comparison labelled SYNTHETIC")
+    void cliIsReproducibleAndLabelled(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        Map<String, String> args = Map.of("seed", "41", "size", "800", "resamples", "2000");
+        List<java.nio.file.Path> fa = com.mend.evaluation.cli.SimulateCli.run(withOut(args, tmp.resolve("a")));
+        List<java.nio.file.Path> fb = com.mend.evaluation.cli.SimulateCli.run(withOut(args, tmp.resolve("b")));
+        for (int i = 1; i < fa.size(); i++) {
+            assertEquals(java.nio.file.Files.readString(fa.get(i)), java.nio.file.Files.readString(fb.get(i)), fa.get(i).getFileName().toString());
+        }
+        assertTrue(java.nio.file.Files.readString(fa.get(1)).contains("**Label: SYNTHETIC**"));
+        String policies = java.nio.file.Files.readString(fa.get(2));
+        assertTrue(policies.contains("**Label: SYNTHETIC**"));
+        assertTrue(policies.contains("Monte Carlo noise"));
+        assertFalse(policies.contains("MEASURED"));
+    }
+
+    private static Map<String, String> withOut(Map<String, String> args, java.nio.file.Path out) {
+        Map<String, String> m = new java.util.HashMap<>(args);
+        m.put("out", out.toString());
+        return m;
     }
 
     @Test

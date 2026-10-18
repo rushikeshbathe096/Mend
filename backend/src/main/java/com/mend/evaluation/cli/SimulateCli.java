@@ -73,14 +73,19 @@ public final class SimulateCli {
         ReplaySimulator.Result b0 = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.B_CURRENT, model, WINDOW_START, WINDOW));
         md.append(PolicyComparison.markdown("Owner decision B (UNCLASSIFIED → payment link) vs A (UNCLASSIFIED ineligible)",
                 PolicyComparison.compare("A: UNCLASSIFIED ineligible", a0, "B: UNCLASSIFIED link (current)", b0, resamples, seed)));
-        OutcomeModel fast = model.withRetries(true, 0.15, Duration.ofMinutes(15));
-        OutcomeModel slow = model.withRetries(true, 0.15, Duration.ofHours(48));
-        ReplaySimulator.Result rf = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.B_CURRENT, fast, WINDOW_START, WINDOW));
-        ReplaySimulator.Result rs = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.B_CURRENT, slow, WINDOW_START, WINDOW));
-        md.append("\n").append(PolicyComparison.markdown("Retry timing, HYPOTHETICAL wired retries (debits are not wired in MEND): RETRY_LATER after 48 h vs 15 min",
-                PolicyComparison.compare("retry after 48 h", rs, "retry after 15 min", rf, resamples, seed)));
-        md.append("\nThe retry comparison is an artefact of the assumed model (success halves after 24 h); it says nothing about real "
-                + "retries, which MEND does not perform (RETRY_PAYMENT is NotSupported in Razorpay mode).\n");
+        // RETRY_LATER's delay is production's rule (ActionPolicy.scheduleDelay = the merchant's contact window)
+        OutcomeModel wired = model.withRetries(true, 0.15);
+        ReplaySimulator.Result rf = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.B_CURRENT, wired,
+                WINDOW_START, WINDOW, 1, null));
+        ReplaySimulator.Result rs = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.B_CURRENT, wired,
+                WINDOW_START, WINDOW, 48, null));
+        md.append("\n").append(PolicyComparison.markdown("Retry timing, HYPOTHETICAL wired retries (debits are not wired in MEND): merchant "
+                        + "contact window 48 h vs 1 h (RETRY_LATER delay by production's rule)",
+                PolicyComparison.compare("contact window 48 h", rs, "contact window 1 h", rf, resamples, seed)));
+        md.append("\nThe retry comparison is an artefact of the assumed model (a retry fired more than 24 h after eligibility succeeds "
+                + "half as often); it says nothing about real retries, which MEND does not perform (RETRY_PAYMENT is NotSupported in "
+                + "Razorpay mode, so in production an allowed retry is dispatched and captures nothing).\n");
+        md.append("\n").append(PolicyComparison.assumptions(model));
         Path policies = out.resolve(id + "-policies.md");
         Files.writeString(policies, md.toString(), StandardCharsets.UTF_8);
         return List.of(snapshotDir, report, policies);
