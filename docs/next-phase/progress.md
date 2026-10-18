@@ -318,3 +318,24 @@ Tests: ai-service `73 passed` (+12 test_eval.py).
 - FIXED NIT 9 (bounded read), NIT 10 (banner text, refetch), NIT 11 (system admin may clear).
 Verify: backend `[INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
 `Tests: 62 passed, 62 total`, build OK, lint 0 errors.
+
+#### U2.5 review (fresh subagent): no blocker. Dispositions (commit `e2c72c1`)
+- FIXED MAJOR 1+2: eval validity parity with the backend (all keys, real date, ASCII). Revert proof: old `valid()` →
+  `test_validity_matches_the_backend_schema[suggestion6/7/8-False]` fail.
+- FIXED MAJOR 3 (documented): the test split was written knowing the frozen rules → RESULTS.md calls 0.1125 close to an
+  adversarial lower bound; model comparisons need `replies-v2`.
+- FIXED MAJOR 4 (recorded-results test compares baseline + hashes only), MINOR 5 (provider_errors apart), MINOR 6
+  (dated/undated date match), MINOR 7 (hand-checked metrics + stubbed model path), NIT 10 (conventions documented;
+  empty/mixed files refused).
+- DOCUMENTED MINOR 8 (label limitations in LABEL-GUIDE; v1 is never edited).
+- DEVIATION (MINOR 9): the spec names one `replies-v1.jsonl`; shipped as dev + test splits of `replies-v1` (U2.5-a).
+
+### U2.6 — ai-service reduction (commit `53ec57d`)
+- Deleted agent/* (LangGraph graph, router, state, tools, MCP tools, checkpointer, llm), `/api/v1/classify` + heuristic +
+  hardcoded confidences, the benchmark JSONs. main.py = `/health` + `/api/v1/parse_reply`.
+- requirements: fastapi, uvicorn, pydantic, httpx, pytest. `.env.example` cleaned; backend `mend.ai.read-timeout-ms`
+  removed (unused).
+- Tests: count kept (73 → 79 at U2.6, 84 after the U2.5 fixes); tests of deleted code replaced by tests of the remaining
+  surface (auth, deleted routes gone, PII/key never logged, key only in a header, prompt injection is data, malformed
+  provider answers).
+Verify: `scripts/ci/ai-service.sh` (fresh venv from requirements) → `79 passed` at U2.6; local `84 passed` after U2.5 fixes.
