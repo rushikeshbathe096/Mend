@@ -48,6 +48,14 @@ public class Campaign {
     @Column(nullable = false)
     private Integer attemptCount = 0;
 
+    /**
+     * M3 U2.4 (V21): the customer opted out of contact; compliance blocks CUSTOMER_OPTED_OUT while set. Read-only here:
+     * it changes only through CampaignRepository.markContactOptedOut / clearContactOptOut, so saving a stale campaign
+     * entity can never clear (or set) it.
+     */
+    @Column(name = "contact_opted_out_at", insertable = false, updatable = false)
+    private Instant contactOptedOutAt;
+
     @Column
     private Instant nextActionAt;
 
@@ -131,6 +139,10 @@ public class Campaign {
 
     public void setInvoiceKey(String invoiceKey) {
         this.invoiceKey = invoiceKey;
+    }
+
+    public Instant getContactOptedOutAt() {
+        return contactOptedOutAt;
     }
 
     @PreUpdate

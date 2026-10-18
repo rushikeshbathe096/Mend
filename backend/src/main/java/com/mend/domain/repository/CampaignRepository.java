@@ -5,10 +5,12 @@ import com.mend.domain.enums.CampaignStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -65,4 +67,23 @@ public interface CampaignRepository extends JpaRepository<Campaign, UUID> {
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @org.springframework.data.jpa.repository.Query("SELECT c FROM Campaign c WHERE c.id = :id")
     Optional<Campaign> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") UUID id);
+
+    /** M3 U2.4: records a contact opt-out; a no-op (0) when the campaign is not the merchant's or already opted out. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE campaigns SET contact_opted_out_at = :now WHERE id = :id AND merchant_id = :merchantId AND contact_opted_out_at IS NULL",
+            nativeQuery = true)
+    int markContactOptedOut(@Param("id") UUID id, @Param("merchantId") UUID merchantId, @Param("now") Instant now);
+
+    /** M3 U2.4: a merchant admin clears the opt-out; 0 when not the merchant's or not opted out. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE campaigns SET contact_opted_out_at = NULL WHERE id = :id AND merchant_id = :merchantId AND contact_opted_out_at IS NOT NULL",
+            nativeQuery = true)
+    int clearContactOptOut(@Param("id") UUID id, @Param("merchantId") UUID merchantId);
+
+    /**
+     * M3 U2.4: the opt-out as of now, read with a share lock inside the dispatch transaction. An opt-out committed
+     * before this read blocks the dispatch; one arriving later waits for the dispatch transaction to commit.
+     */
+    @Query(value = "SELECT contact_opted_out_at IS NOT NULL FROM campaigns WHERE id = :id FOR SHARE", nativeQuery = true)
+    Optional<Boolean> isContactOptedOutForShare(@Param("id") UUID id);
 }

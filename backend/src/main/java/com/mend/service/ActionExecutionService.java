@@ -8,6 +8,7 @@ import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.RecoveryAttribution;
+import com.mend.domain.enums.ComplianceReason;
 import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
@@ -202,6 +203,12 @@ public class ActionExecutionService {
                 String reason = latestCompliance.map(c -> c.getReason().name()).orElse("MISSING_COMPLIANCE_DECISION");
                 throw new ComplianceBlockedException("Compliance decision missing or not ALLOWED: " + reason);
             }
+        }
+
+        // 6b. M3 U2.4 (ADR-003 §5): contact opt-out, re-read under a share lock in this dispatch transaction. A stored
+        // ALLOWED decision from before the opt-out does not authorize contacting the customer afterwards.
+        if (campaignRepository.isContactOptedOutForShare(campaign.getId()).orElse(Boolean.TRUE)) {
+            throw new ComplianceBlockedException("Customer opted out of contact (" + ComplianceReason.CUSTOMER_OPTED_OUT + ")");
         }
 
         // 7. Transition Campaign ACTION_PENDING -> EXECUTING if applicable

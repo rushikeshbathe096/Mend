@@ -50,6 +50,7 @@ class TenantGuardServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired private MerchantMemberService merchantMemberService;
     @Autowired private CampaignQueryService campaignQueryService;
     @Autowired private HumanApprovalService humanApprovalService;
+    @Autowired private com.mend.service.CustomerReplyService customerReplyService;
     @Autowired private WebhookQueryService webhookQueryService;
     @Autowired private MerchantRepository merchantRepository;
 
@@ -114,7 +115,12 @@ class TenantGuardServiceIntegrationTest extends AbstractIntegrationTest {
                 new GuardedCall("HumanApprovalService.rejectReview", u -> humanApprovalService.rejectReview(m, any, "no", u)),
                 new GuardedCall("WebhookQueryService.getWebhooks",
                         u -> webhookQueryService.getWebhooks(m, null, 0, 5, "receivedAt", "desc", u)),
-                new GuardedCall("WebhookQueryService.getWebhook", u -> webhookQueryService.getWebhook(m, any, u))
+                new GuardedCall("WebhookQueryService.getWebhook", u -> webhookQueryService.getWebhook(m, any, u)),
+                // M3 U2.4: customer replies are PII; every method is guarded and the campaign must be the merchant's
+                new GuardedCall("CustomerReplyService.submit", u -> customerReplyService.submit(m, any, "reply", u)),
+                new GuardedCall("CustomerReplyService.list", u -> customerReplyService.list(m, any, u)),
+                new GuardedCall("CustomerReplyService.retry", u -> customerReplyService.retry(m, any, any, u)),
+                new GuardedCall("CustomerReplyService.clearOptOut", u -> customerReplyService.clearOptOut(m, any, u))
         );
     }
 

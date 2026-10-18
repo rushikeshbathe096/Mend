@@ -44,6 +44,15 @@ public class ActionIntentTransitions {
                 CampaignStatus.ACTION_PENDING) == 1;
     }
 
+    /**
+     * M3 U2.4: an AWAITING_PAYMENT intent's evidence lookup runs now instead of later (ALREADY_PAID reply). Not a status
+     * change; fenced by status so nothing else (in particular NEEDS_RECONCILIATION / SAFE_RETRY) is ever affected.
+     */
+    @Transactional
+    public boolean bringForwardPaymentLookup(UUID id, Instant now) {
+        return repository.bringForwardPaymentLookup(id, now) == 1;
+    }
+
     /** SCHEDULED → READY. */
     @Transactional
     public boolean promote(UUID id) {

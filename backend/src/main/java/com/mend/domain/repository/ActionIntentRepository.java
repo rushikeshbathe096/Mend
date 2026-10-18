@@ -334,4 +334,19 @@ public interface ActionIntentRepository extends JpaRepository<ActionIntent, UUID
             """)
     int safeRetry(@Param("id") UUID id, @Param("resendSafeTypes") java.util.Collection<String> resendSafeTypes,
                   @Param("maxExecutionAttempts") int maxExecutionAttempts, @Param("seenVersion") long seenVersion);
+
+    /**
+     * M3 U2.4 (ALREADY_PAID reply): brings an AWAITING_PAYMENT intent's next evidence lookup forward to {@code now}. Only
+     * the schedule changes (no status, no version bump: an in-flight reconcile keeps its version fence, and the
+     * AWAITING_PAYMENT branch is a read-only lookup that never resends). NEEDS_RECONCILIATION is never touched.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE ActionIntent a
+               SET a.reconcileAfter = :now
+             WHERE a.id = :id
+               AND a.status = com.mend.domain.enums.ActionIntentStatus.AWAITING_PAYMENT
+               AND (a.reconcileAfter IS NULL OR a.reconcileAfter > :now)
+            """)
+    int bringForwardPaymentLookup(@Param("id") UUID id, @Param("now") Instant now);
 }

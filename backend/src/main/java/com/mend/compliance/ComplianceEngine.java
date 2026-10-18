@@ -19,8 +19,11 @@ public class ComplianceEngine {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceEngine.class);
 
-    /** v2.0 (M3 U2.2): classification rule by taxonomy class; no confidence rule (ADR-003 §4). */
-    public static final String POLICY_VERSION = "v2.0";
+    /**
+     * v2.0 (M3 U2.2): classification rule by taxonomy class; no confidence rule (ADR-003 §4).
+     * v2.1 (M3 U2.4): adds the CUSTOMER_OPTED_OUT block (ADR-003 §5).
+     */
+    public static final String POLICY_VERSION = "v2.1";
 
     public ComplianceDecision evaluate(ComplianceContext context) {
         // Rule 1: Fail Closed & Missing Context (Task 3.7 & Task 11)
@@ -63,6 +66,16 @@ public class ComplianceEngine {
                     campaignId, merchantId, recoveryDecisionId, strategy,
                     ComplianceReason.TENANT_MISMATCH,
                     "Merchant config tenant ID (" + merchantConfig.getMerchantId() + ") does not match campaign merchant ID (" + merchantId + ")"
+            );
+        }
+
+        // Rule 2b (M3 U2.4, ADR-003 §5): the customer opted out of contact. Fail closed; only a merchant admin clears it.
+        if (campaign.getContactOptedOutAt() != null) {
+            log.info("Compliance evaluation blocked for campaign '{}': customer opted out of contact", campaignId);
+            return createBlockedDecision(
+                    campaignId, merchantId, recoveryDecisionId, strategy,
+                    ComplianceReason.CUSTOMER_OPTED_OUT,
+                    "Customer opted out of contact at " + campaign.getContactOptedOutAt()
             );
         }
 

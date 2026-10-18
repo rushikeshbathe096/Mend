@@ -14,6 +14,8 @@ public class CampaignDto {
     private String customerIdHash;
     private CampaignStatus currentState;
     private String failureClass;
+    /** M3 U2.4: set when the customer opted out of contact (compliance blocks CUSTOMER_OPTED_OUT). */
+    private java.time.Instant contactOptedOutAt;
     private String strategy;
     private Integer attemptCount;
     private Instant nextActionAt;
@@ -33,6 +35,7 @@ public class CampaignDto {
         dto.setCustomerIdHash(campaign.getCustomerIdHash());
         dto.setCurrentState(campaign.getCurrentState());
         dto.setFailureClass(campaign.getFailureClass());
+        dto.setContactOptedOutAt(campaign.getContactOptedOutAt());
         dto.setStrategy(campaign.getStrategy());
         dto.setAttemptCount(campaign.getAttemptCount());
         dto.setNextActionAt(campaign.getNextActionAt());
@@ -137,5 +140,13 @@ public class CampaignDto {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public java.time.Instant getContactOptedOutAt() {
+        return contactOptedOutAt;
+    }
+
+    public void setContactOptedOutAt(java.time.Instant contactOptedOutAt) {
+        this.contactOptedOutAt = contactOptedOutAt;
     }
 }
