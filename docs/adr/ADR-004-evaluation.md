@@ -20,8 +20,10 @@ deterministic, so logs alone cannot support a counterfactual. Design: `docs/m4/M
      re-enters ELIGIBLE keeps its assignment. Campaigns that were eligible before M4 have none (UNASSIGNED, not in the
      experiment).
    - One arm per invoice: a later campaign of an invoice that already has an assignment copies that stored arm, bucket
-     and rate (`source = INVOICE_REUSE`) instead of hashing under the current rate. The invoice is also the analysis
-     unit.
+     and rate (`source = INVOICE_REUSE`) instead of hashing under the current rate, under a per-invoice advisory lock.
+     The invoice is also the analysis unit. **DECISION U4.1-e:** reuse applies only while the merchant's holdout is on.
+     At rate 0 the merchant has ended the experiment, so a new campaign of a former CONTROL invoice is hashed at rate 0
+     (TREATMENT) and is not withheld indefinitely.
 2. **Holdout rate per merchant.** `merchant_config.holdout_rate_bp`, an integer from 0 to 5 000 (0.5).
    **DECISION: default 0 (off).** Withholding recovery is a revenue decision that only the merchant can make, so it is
    opt-in. The cap of 0.5 keeps MEND from withholding recovery from most of a merchant's campaigns.
@@ -31,8 +33,9 @@ deterministic, so logs alone cannot support a counterfactual. Design: `docs/m4/M
    - A CONTROL campaign gets no strategy, no intent and no provider call. It stays ELIGIBLE and is tracked.
    - A late original capture still recovers it, attributed `ORIGINAL_PAYMENT_LATE_CAPTURE`.
    - Original-payment events, replies, opt-outs, disputes and safety reviews are handled as for any campaign.
-   - Intent creation for a CONTROL campaign is refused in `ActionIntentService` (`HOLDOUT_CONTROL`, audited) and by a
-     database trigger on `action_intents`.
+   - Intent creation for a CONTROL campaign is refused in `ActionIntentService` (`HOLDOUT_CONTROL`, HTTP 409) and by a
+     database trigger on `action_intents`. A refusal changes no state, so it writes no audit row (one written in the
+     throwing transaction would roll back). Review approval for CONTROL is refused; the review stays PENDING.
    - Compliance and opt-out apply unchanged to TREATMENT. Nothing that compliance or a customer requires is ever withheld.
 4. **Append-only decision log.** One `decision_log` row per decision point, in the decision's transaction:
    - `ASSIGNMENT`: chosen TREATMENT or CONTROL; alternatives are both arms (TREATMENT alone when the rate is 0); the

@@ -50,6 +50,8 @@ class CampaignControllerTest {
     private AuditService auditService;
     @Mock
     private com.mend.service.ActionIntentClaimService actionIntentClaimService;
+    @Mock
+    private com.mend.service.ExperimentAssignmentService experimentAssignmentService;
 
     private CampaignController campaignController;
 
@@ -76,7 +78,8 @@ class CampaignControllerTest {
                 campaignRepository,
                 actionIntentRepository,
                 auditService,
-                actionIntentClaimService
+                actionIntentClaimService,
+                experimentAssignmentService
         );
     }
 

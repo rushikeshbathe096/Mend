@@ -10,7 +10,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/** M3 U2.1: the experiment is pure Java (no Spring, JPA, HTTP, Jackson, Razorpay adapter or other MEND package imports). */
+/** M4 U4.1: the experiment is pure Java (no Spring, JPA, HTTP, Jackson, Razorpay adapter or other MEND package imports). */
 class ExperimentPurityTest {
 
     @Test

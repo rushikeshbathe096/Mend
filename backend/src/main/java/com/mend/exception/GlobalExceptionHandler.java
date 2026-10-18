@@ -33,6 +33,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
     }
 
+    /** M4 U4.1: a recovery action for a holdout CONTROL campaign is a conflict with the experiment, not a server error. */
+    @ExceptionHandler(HoldoutControlException.class)
+    public ResponseEntity<ErrorResponse> handleHoldoutControl(HoldoutControlException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
     /** No handler for the path (e.g. /api/v1/demo when the demo is disabled): 404, not 500. */
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
     public ResponseEntity<ErrorResponse> handleNoResourceFound(org.springframework.web.servlet.resource.NoResourceFoundException ex) {

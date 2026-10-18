@@ -41,6 +41,7 @@ public class CampaignController {
     private final ActionIntentRepository actionIntentRepository;
     private final AuditService auditService;
     private final com.mend.service.ActionIntentClaimService actionIntentClaimService;
+    private final com.mend.service.ExperimentAssignmentService experimentAssignmentService;
 
     public CampaignController(
             CampaignQueryService campaignQueryService,
@@ -53,7 +54,9 @@ public class CampaignController {
             CampaignRepository campaignRepository,
             ActionIntentRepository actionIntentRepository,
             AuditService auditService,
-            com.mend.service.ActionIntentClaimService actionIntentClaimService) {
+            com.mend.service.ActionIntentClaimService actionIntentClaimService,
+            com.mend.service.ExperimentAssignmentService experimentAssignmentService) {
+        this.experimentAssignmentService = experimentAssignmentService;
         this.campaignQueryService = campaignQueryService;
         this.campaignLifecycleService = campaignLifecycleService;
         this.recoveryOrchestratorService = recoveryOrchestratorService;
@@ -199,7 +202,10 @@ public class CampaignController {
                 .findFirst().map(d -> d.getStatus().name()).orElse(null);
 
         String message = "Recovery orchestration initiated successfully.";
-        if (executionResult != null && executionResult.isSuccess()) {
+        if (experimentAssignmentService.isControl(campaign.getId())) {
+            // M4 U4.1: the holdout CONTROL arm gets no recovery action (ADR-004 §3)
+            message = "Holdout CONTROL: MEND takes no recovery action for this campaign (it is still tracked).";
+        } else if (executionResult != null && executionResult.isSuccess()) {
             // only a mock-mode synthetic capture reports SUCCESS (ActionExecutionService.toReport); a link is PENDING
             message = "Mock provider simulated a capture (SYNTHETIC, no real money moved).";
         } else if (executionResult != null && executionResult.isFailure()) {

@@ -211,7 +211,7 @@ public class HumanApprovalService {
         }
 
         // M4 U4.1 (invariant 22): approval resumes collection, which is recovery contact; a holdout CONTROL campaign gets
-        // none. The review can still be rejected (and, for reply reviews, resolved without collecting).
+        // none. The review stays PENDING for a human, who can reject it.
         if (experimentAssignmentService.isControl(campaign.getId())) {
             throw new InvalidRequestException("Approval blocked: campaign is in the holdout CONTROL arm; MEND takes no recovery action ("
                     + com.mend.exception.HoldoutControlException.CODE + ")");

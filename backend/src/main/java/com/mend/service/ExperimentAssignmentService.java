@@ -64,17 +64,23 @@ public class ExperimentAssignmentService {
             return existing.get();
         }
         String invoiceKey = Objects.requireNonNull(campaign.getInvoiceKey(), "campaign invoice_key (NOT NULL since V13)");
+        // U4.1 review: two campaigns of one invoice becoming eligible at once must not both hash (a rate change between
+        // their reads would put the invoice in two arms). The lock lasts until this transaction ends.
+        assignmentRepository.lockInvoice("holdout:" + campaign.getMerchantId() + ":" + invoiceKey);
+        int currentRateBp = merchantConfigRepository.findByMerchantId(campaign.getMerchantId())
+                .map(MerchantConfig::getHoldoutRateBp).orElse(0);
         Optional<HoldoutAssignment> sameInvoice = assignmentRepository.findFirstForInvoice(campaign.getMerchantId(), invoiceKey, campaign.getId());
         int written;
-        if (sameInvoice.isPresent()) {
-            // One arm per invoice: copy the stored decision, never re-hash under the current rate.
+        if (sameInvoice.isPresent() && currentRateBp > 0) {
+            // One arm per invoice while the experiment runs: copy the stored decision, never re-hash under a new rate.
+            // DECISION U4.1-e: with the holdout off (rate 0) the merchant has ended the experiment, so a new campaign of a
+            // former CONTROL invoice is hashed at rate 0 (TREATMENT) instead of being withheld indefinitely.
             HoldoutAssignment first = sameInvoice.get();
             written = assignmentRepository.insertIfAbsent(campaign.getId(), campaign.getMerchantId(), first.getArm().name(),
                     first.getBucket(), first.getHoldoutRateBp(), first.getSaltVersion(), first.getHashVersion(),
                     HoldoutAssignment.SOURCE_INVOICE_REUSE, Instant.now());
         } else {
-            int rateBp = merchantConfigRepository.findByMerchantId(campaign.getMerchantId())
-                    .map(MerchantConfig::getHoldoutRateBp).orElse(0);
+            int rateBp = currentRateBp;
             MerchantExperimentSalt salt = salt(campaign.getMerchantId(), MerchantExperimentSalt.ASSIGNMENT);
             int bucket = HoldoutAssigner.bucket(salt.getSalt(), invoiceKey);
             Arm arm = HoldoutAssigner.arm(bucket, rateBp);

@@ -58,6 +58,9 @@ class HoldoutAssignmentIntegrationTest {
     @Autowired private HoldoutAssignmentRepository assignmentRows;
     @Autowired private AuditLogRepository auditLogs;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.mend.reply.ReplyPolicy replyPolicy;
+    @Autowired private CustomerReplyRepository customerReplies;
+    @Autowired private com.mend.controller.CampaignController campaignController;
 
     @MockitoSpyBean private PaymentProvider provider;
 
@@ -254,18 +257,20 @@ class HoldoutAssignmentIntegrationTest {
     }
 
     @Test
-    @DisplayName("One arm per invoice: a second campaign of the same invoice copies the stored arm, even after a rate change")
+    @DisplayName("One arm per invoice: a second campaign of the same invoice copies the stored arm, even after a rate change (0.5 -> 0.1)")
     void secondCampaignOfInvoiceReusesArm() {
         holdoutRate(5000);
         String invoiceId = null;
         for (int i = 0; i < 10_000 && invoiceId == null; i++) {
             String candidate = "inv_H" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-            if (HoldoutAssigner.arm(HoldoutAssigner.bucket(SALT, "inv:" + candidate), 5000) == Arm.CONTROL) {
+            int bucket = HoldoutAssigner.bucket(SALT, "inv:" + candidate);
+            // CONTROL at 0.5, but TREATMENT if it were re-hashed at 0.1
+            if (bucket >= 1000 && bucket < 5000) {
                 invoiceId = candidate;
             }
         }
         Campaign first = failInvoicePayment(invoiceId);
-        holdoutRate(0);
+        holdoutRate(1000);
         Campaign second = failInvoicePayment(invoiceId);
 
         assertEquals(first.getInvoiceKey(), second.getInvoiceKey());
@@ -330,6 +335,134 @@ class HoldoutAssignmentIntegrationTest {
         request.setHoldoutRateBp(null);
         assertEquals(2000, merchantConfigService.updateMerchantConfig(merchantId, request, admin).getHoldoutRateBp());
         assertEquals(2000, merchantConfigService.getMerchantConfig(merchantId, admin).getHoldoutRateBp());
+    }
+
+    @Test
+    @DisplayName("CONTROL keeps customer requests: an OPT_OUT reply still opts out, a DISPUTE reply still opens a review")
+    void controlKeepsCustomerRequests() {
+        holdoutRate(5000);
+        Campaign campaign = failPayment(paymentIdIn(Arm.CONTROL, 5000), "card_expired");
+
+        CustomerReply stop = customerReplies.save(new CustomerReply(UUID.randomUUID(), merchantId, campaign.getId(), "please stop", null));
+        String effect = jdbcTransaction(() -> replyPolicy.apply(stop,
+                ReplySuggestion.valid(stop.getId(), merchantId, ReplyIntent.OPT_OUT, null, false, "test-model", "test-prompt")));
+        assertEquals(com.mend.reply.ReplyPolicy.CONTACT_OPTED_OUT, effect);
+        assertNotNull(jdbc.queryForObject("SELECT contact_opted_out_at FROM campaigns WHERE id = ?", java.sql.Timestamp.class, campaign.getId()));
+
+        CustomerReply dispute = customerReplies.save(new CustomerReply(UUID.randomUUID(), merchantId, campaign.getId(), "not mine", null));
+        assertEquals(com.mend.reply.ReplyPolicy.REVIEW_CUSTOMER_DISPUTE, jdbcTransaction(() -> replyPolicy.apply(dispute,
+                ReplySuggestion.valid(dispute.getId(), merchantId, ReplyIntent.DISPUTE, null, false, "test-model", "test-prompt"))));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM review_queue WHERE campaign_id = ? AND status = 'PENDING'",
+                Integer.class, campaign.getId()));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    @DisplayName("Manual start-recovery on a CONTROL campaign: no intent, no provider call, an honest message")
+    void controlManualStart() {
+        holdoutRate(5000);
+        Campaign campaign = failPayment(paymentIdIn(Arm.CONTROL, 5000), "card_expired");
+        var response = campaignController.startRecovery(new com.mend.dto.StartRecoveryRequest(campaign.getPaymentId(), null, null),
+                merchantId.toString(), TestUsers.withRole(merchantId, "MERCHANT_ADMIN")).getBody();
+        assertNotNull(response);
+        assertNull(response.getActionIntent());
+        assertTrue(response.getMessage().startsWith("Holdout CONTROL"), response.getMessage());
+        assertTrue(intents.findByCampaignId(campaign.getId()).isEmpty());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    @DisplayName("Concurrent first eligibility of two campaigns of one invoice: one HASH, one INVOICE_REUSE, the same arm (real threads)")
+    void concurrentCampaignsOfOneInvoice() throws Exception {
+        holdoutRate(2000);
+        String invoiceId = "inv_C" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        List<Campaign> classified = new java.util.ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            classified.add(classifiedCampaignOfInvoice(invoiceId));
+        }
+        runConcurrently(classified);
+
+        List<HoldoutAssignment> rows = classified.stream().map(c -> assignmentRows.findById(c.getId()).orElseThrow()).toList();
+        assertEquals(rows.get(0).getArm(), rows.get(1).getArm());
+        assertEquals(java.util.Set.of(HoldoutAssignment.SOURCE_HASH, HoldoutAssignment.SOURCE_INVOICE_REUSE),
+                java.util.Set.of(rows.get(0).getSource(), rows.get(1).getSource()));
+    }
+
+    @Test
+    @DisplayName("Concurrent first assignments for a merchant without a salt: one salt row, both assignments use it (real threads)")
+    void concurrentSaltCreation() throws Exception {
+        UUID saltless = UUID.randomUUID();
+        merchants.save(new Merchant(saltless, "M4 saltless merchant"));
+        UUID previous = merchantId;
+        merchantId = saltless;
+        try {
+            List<Campaign> classified = List.of(
+                    classifiedCampaignOfInvoice("inv_S" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)),
+                    classifiedCampaignOfInvoice("inv_S" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
+            runConcurrently(classified);
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM merchant_experiment_salts WHERE merchant_id = ?", Integer.class, saltless));
+            for (Campaign c : classified) {
+                assertEquals(1, assignmentRows.findById(c.getId()).orElseThrow().getSaltVersion());
+            }
+        } finally {
+            merchantId = previous;
+            TestRows.deleteMerchant(jdbc, saltless);
+        }
+    }
+
+    @Test
+    @DisplayName("DECISION U4.1-e: with the holdout turned off (rate 0) a new campaign of a former CONTROL invoice is TREATMENT")
+    void holdoutOffEndsTheExperimentForNewCampaigns() {
+        holdoutRate(5000);
+        String invoiceId = null;
+        for (int i = 0; i < 10_000 && invoiceId == null; i++) {
+            String candidate = "inv_O" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            if (HoldoutAssigner.arm(HoldoutAssigner.bucket(SALT, "inv:" + candidate), 5000) == Arm.CONTROL) {
+                invoiceId = candidate;
+            }
+        }
+        Campaign first = failInvoicePayment(invoiceId);
+        assertEquals(Arm.CONTROL, assignmentRows.findById(first.getId()).orElseThrow().getArm());
+        holdoutRate(0);
+        Campaign second = failInvoicePayment(invoiceId);
+        HoldoutAssignment after = assignmentRows.findById(second.getId()).orElseThrow();
+        assertEquals(Arm.TREATMENT, after.getArm());
+        assertEquals(HoldoutAssignment.SOURCE_HASH, after.getSource());
+        assertEquals(Arm.CONTROL, assignmentRows.findById(first.getId()).orElseThrow().getArm());
+    }
+
+    /** A CLASSIFIED campaign whose failure webhook names {@code invoiceId} (so its invoice key is "inv:" + id). */
+    private Campaign classifiedCampaignOfInvoice(String invoiceId) {
+        String payId = "pay_C" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
+        String externalId = "payment.failed_" + payId;
+        WebhookEvent event = new WebhookEvent(UUID.randomUUID(), externalId, "payment.failed", "RAZORPAY",
+                "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + payId + "\",\"invoice_id\":\"" + invoiceId
+                        + "\",\"amount\":49900,\"currency\":\"INR\",\"status\":\"failed\"}}}}");
+        event.setMerchantId(merchantId);
+        webhooks.save(event);
+        Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, externalId, null, null);
+        return campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "test", "SYSTEM", null);
+    }
+
+    /** Both campaigns go CLASSIFIED -> ELIGIBLE at the same moment, each in its own transaction on its own thread. */
+    private void runConcurrently(List<Campaign> classified) throws Exception {
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(classified.size());
+        try {
+            List<java.util.concurrent.Future<?>> futures = new java.util.ArrayList<>();
+            for (Campaign c : classified) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return campaignLifecycleService.transitionState(c.getMerchantId(), c.getId(), CampaignStatus.ELIGIBLE, "test", "SYSTEM", null);
+                }));
+            }
+            start.countDown();
+            for (java.util.concurrent.Future<?> f : futures) {
+                f.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Autowired private org.springframework.transaction.support.TransactionTemplate transactionTemplate;

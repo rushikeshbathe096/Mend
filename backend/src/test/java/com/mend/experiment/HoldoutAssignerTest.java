@@ -67,6 +67,39 @@ class HoldoutAssignerTest {
     }
 
     @Test
+    @DisplayName("Rates 0.01, 0.2 and 0.5 over 100 000 seeded keys: CONTROL share within 4 sigma; 100-bucket-bin chi-square below p = 0.001")
+    void distributionAtSeveralRatesAndFineBins() {
+        SplittableRandom rnd = new SplittableRandom(4_2026L);
+        byte[] salt = new byte[32];
+        for (int i = 0; i < 32; i++) {
+            salt[i] = (byte) rnd.nextInt(256);
+        }
+        int n = 100_000;
+        int[] buckets = new int[n];
+        int[] bins = new int[100];
+        for (int i = 0; i < n; i++) {
+            buckets[i] = HoldoutAssigner.bucket(salt, "ord:order_" + Long.toHexString(rnd.nextLong()));
+            bins[buckets[i] / 100]++;
+        }
+        for (int rate : new int[]{100, 2000, 5000}) {
+            int control = 0;
+            for (int b : buckets) {
+                if (HoldoutAssigner.arm(b, rate) == Arm.CONTROL) {
+                    control++;
+                }
+            }
+            double p = rate / 10_000.0;
+            assertTrue(Math.abs(control - n * p) <= 4 * Math.sqrt(n * p * (1 - p)), "rate " + rate + ": " + control);
+        }
+        double chi2 = 0;
+        for (int count : bins) {
+            chi2 += Math.pow(count - n / 100.0, 2) / (n / 100.0);
+        }
+        // chi-square critical value, 99 degrees of freedom, p = 0.001
+        assertTrue(chi2 < 148.230, "100-bin chi-square " + chi2);
+    }
+
+    @Test
     @DisplayName("Rate 0 (default) gives TREATMENT for every bucket; CONTROL iff bucket < rate")
     void rateBoundaries() {
         for (int bucket : new int[]{0, 1, 4999, 5000, 9999}) {
@@ -98,7 +131,7 @@ class HoldoutAssignerTest {
     }
 
     @Test
-    @DisplayName("A different salt gives an unrelated assignment (about 80 % agreement at rate 0.2, not 100 %)")
+    @DisplayName("A different salt gives an unrelated assignment (about 68 % agreement at rate 0.2, not 100 %)")
     void saltMatters() {
         byte[] other = SALT.clone();
         other[0] ^= 1;

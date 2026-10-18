@@ -40,6 +40,10 @@ public interface HoldoutAssignmentRepository extends JpaRepository<HoldoutAssign
     Optional<HoldoutAssignment> findFirstForInvoice(@Param("merchantId") UUID merchantId, @Param("invoiceKey") String invoiceKey,
                                                     @Param("campaignId") UUID campaignId);
 
+    /** U4.1 review: serializes first assignments of one invoice (two campaigns at once) for the rest of the transaction. */
+    @Query(value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))) l", nativeQuery = true)
+    Integer lockInvoice(@Param("lockKey") String lockKey);
+
     @Query("SELECT a.arm FROM HoldoutAssignment a WHERE a.campaignId = :campaignId")
     Optional<Arm> findArmByCampaignId(@Param("campaignId") UUID campaignId);
 
