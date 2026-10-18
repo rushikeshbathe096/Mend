@@ -320,11 +320,6 @@ export default function DashboardPage() {
                           </div>
                         </div>
                           <div className="flex items-center space-x-3">
-                            {c.confidence !== undefined && (
-                              <span className="text-xs font-mono font-semibold text-gray-500">
-                                {(c.confidence * 100).toFixed(0)}% Conf
-                              </span>
-                            )}
                             <Badge status={c.currentState} />
                           </div>
                       </div>

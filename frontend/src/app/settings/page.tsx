@@ -33,7 +33,7 @@ export default function MerchantSettingsPage() {
     maxContactAttempts: 2,
     contactWindowHours: 24,
     retryStrategy: 'EXPONENTIAL_BACKOFF',
-    escalationThreshold: 0.7,
+    escalationThreshold: 2,
     enabledRecoveryActions: ['PAYMENT_RETRY', 'CUSTOMER_NOTIFY'],
   });
 
@@ -50,7 +50,7 @@ export default function MerchantSettingsPage() {
         maxContactAttempts: res.maxContactAttempts ?? 2,
         contactWindowHours: res.contactWindowHours ?? 24,
         retryStrategy: res.retryStrategy || 'EXPONENTIAL_BACKOFF',
-        escalationThreshold: res.escalationThreshold ?? 0.7,
+        escalationThreshold: res.escalationThreshold ?? 2,
         enabledRecoveryActions: res.enabledRecoveryActions || ['PAYMENT_RETRY', 'CUSTOMER_NOTIFY'],
       });
       setError(null);
@@ -178,18 +178,20 @@ export default function MerchantSettingsPage() {
                 {/* Escalation Threshold */}
                 <div>
                   <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-2">
-                    AI Escalation Confidence Threshold ({(form.escalationThreshold * 100).toFixed(0)}%)
+                    <span id="escalation-threshold-label">Escalation Threshold ({form.escalationThreshold} of 10)</span>
                   </label>
+                  {/* M3: an integer 1-10 (the backend rejects anything else); it was a 0.1-1.0 "AI confidence" slider. */}
                   <input
                     type="range"
-                    min={0.1}
-                    max={1.0}
-                    step={0.05}
+                    aria-labelledby="escalation-threshold-label"
+                    min={1}
+                    max={10}
+                    step={1}
                     value={form.escalationThreshold}
-                    onChange={(e) => setForm({ ...form, escalationThreshold: parseFloat(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, escalationThreshold: parseInt(e.target.value, 10) })}
                     className="w-full accent-blue-600 cursor-pointer"
                   />
-                  <p className="text-[11px] text-gray-500 mt-1">Minimum AI confidence required before auto-executing aggressive actions.</p>
+                  <p className="text-[11px] text-gray-500 mt-1">Saved with your settings. No recovery rule uses it yet, and it is not an AI confidence.</p>
                 </div>
               </div>
 

@@ -97,7 +97,7 @@ export default function DemoEnginePage() {
         </div>
 
         <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-300 leading-relaxed">
-          Demo runs execute the same production code paths (campaign state machine, agent decision records, compliance-gated
+          Demo runs execute the same production code paths (failure taxonomy, campaign state machine, compliance-gated
           ActionIntents, provider execution and reconciliation). Rows are isolated with the <code className="font-mono font-bold">pay_demo_*</code>{' '}
           reference prefix and are audit-logged under your merchant. Provider calls run against the configured{' '}
           <code className="font-mono font-bold">mend.payment.provider</code> (mock/test-mode by default) - no real money moves.

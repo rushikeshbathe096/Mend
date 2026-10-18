@@ -15,7 +15,6 @@ import {
   PaymentSummaryDto,
   PageResponse,
   StartRecoveryResponseDto,
-  AgentDecisionRecordDto,
 } from '@/types';
 
 interface StartRecoveryModalProps {
@@ -115,8 +114,8 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
     <Modal
       isOpen={isOpen}
       onClose={handleCloseModal}
-      title="Start AI Payment Recovery"
-      subtitle="Authoritative multi-agent orchestration, compliance gating, and execution pipeline"
+      title="Start Payment Recovery"
+      subtitle="Deterministic strategy, compliance gating, and execution pipeline"
       maxWidth="2xl"
     >
       <div className="space-y-6">
@@ -177,7 +176,7 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
               3
             </span>
             <span className={`text-xs font-bold ${step === 'result' ? 'text-gray-900 dark:text-white' : 'text-gray-400'}`}>
-              Agent Orchestration & Outcome
+              Orchestration & Outcome
             </span>
           </div>
         </div>
@@ -332,7 +331,7 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
             <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-xs text-blue-900 dark:text-blue-300 space-y-2 leading-relaxed">
               <span className="font-bold block">Authoritative Recovery Pipeline Execution:</span>
               <p>
-                Mend will analyze payment telemetry, customer history, risk signals, strategy performance, and compliance rules using the 6-agent architecture before executing authorized payment recovery through the payment provider.
+                Mend picks the strategy from the failure class (a rule table over the Razorpay error_reason) and checks the compliance rules before any authorized action runs through the payment provider. No AI is involved.
               </p>
             </div>
 
@@ -351,7 +350,7 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
                 className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center space-x-2"
               >
                 {isSubmitting && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                <span>Start AI Recovery</span>
+                <span>Start Recovery</span>
               </button>
             </div>
           </div>
@@ -363,35 +362,13 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
             <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
             <div className="space-y-1">
               <h3 className="text-base font-bold text-gray-900 dark:text-white">Orchestrating Recovery Pipeline</h3>
-              <p className="text-xs text-gray-500">Evaluating multi-agent consensus, compliance safety rules, and provider execution...</p>
+              <p className="text-xs text-gray-500">Waiting for the backend: strategy, compliance rules, then provider execution...</p>
             </div>
 
-            <div className="max-w-md mx-auto bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 text-left space-y-2 text-xs font-mono">
-              <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-bold">
-                <span>✓</span>
-                <span>Payment context & tenant ownership verified</span>
-              </div>
-              <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-bold">
-                <span>✓</span>
-                <span>Risk & Fraud Agent evaluation</span>
-              </div>
-              <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-bold">
-                <span>✓</span>
-                <span>Recovery Strategy & Decision Engine</span>
-              </div>
-              <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-bold">
-                <span>✓</span>
-                <span>Compliance Policy Safety Gate</span>
-              </div>
-              <div className="flex items-center space-x-2 text-blue-600 dark:text-blue-400 font-bold animate-pulse">
-                <span>&rarr;</span>
-                <span>Creating ActionIntent & Dispatching Provider Worker...</span>
-              </div>
-            </div>
           </div>
         )}
 
-        {/* STEP 4: RESULT & AGENT DECISION EVIDENCE */}
+        {/* STEP 4: RESULT */}
         {step === 'result' && resultData && (
           <div className="space-y-6">
             {/* Outcome Banner */}
@@ -399,7 +376,7 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
               <div className="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 space-y-2">
                 <div className="flex items-center space-x-2 text-emerald-800 dark:text-emerald-300 font-bold text-sm">
                   <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs">✓</span>
-                  <span>Payment Recovery Successful!</span>
+                  <span>{resultData.campaign?.currentState === 'RECOVERED' ? 'Payment Recovered' : 'Simulated Capture (mock provider)'}</span>
                 </div>
                 <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
                   {resultData.message || 'The payment was successfully recovered through the provider execution boundary.'}
@@ -417,7 +394,7 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
                   <span>Merchant Human Approval Required</span>
                 </div>
                 <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                  {resultData.message || 'Agent consensus requires human review before execution. Item routed to review queue.'}
+                  {resultData.message || 'This recovery needs merchant review before execution. Item routed to the review queue.'}
                 </p>
               </div>
             ) : resultData.complianceStatus === 'COMPLIANCE_BLOCKED' ? (
@@ -439,41 +416,6 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
                 <p className="text-xs text-gray-600 dark:text-gray-300">{resultData.message}</p>
               </div>
             )}
-
-            {/* AI Decision Transparency Cards */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
-                AI Orchestrator Evidence & Governance
-              </h4>
-
-              {resultData.agentDecisions && resultData.agentDecisions.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {resultData.agentDecisions.map((ad: AgentDecisionRecordDto) => (
-                    <div
-                      key={ad.id}
-                      className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/40 space-y-2 text-xs"
-                    >
-                      <div className="flex items-center justify-between font-bold">
-                        <span className="text-gray-900 dark:text-white">{ad.decision}</span>
-                        {ad.confidence !== undefined && ad.confidence !== null && (
-                          <span className="px-2 py-0.5 rounded font-mono font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px]">
-                            {(ad.confidence * 100).toFixed(0)}% Confidence
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-gray-600 dark:text-gray-300 leading-relaxed font-medium">{ad.reasoning}</p>
-                      {ad.selectedAction && (
-                        <div className="text-[11px] font-mono text-gray-500">Proposed: {ad.selectedAction}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 text-xs text-gray-500 font-mono">
-                  No decision records stored.
-                </div>
-              )}
-            </div>
 
             {/* Direct Navigation Links */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-gray-100 dark:border-gray-800">

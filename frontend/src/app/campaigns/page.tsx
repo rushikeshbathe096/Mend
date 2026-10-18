@@ -260,7 +260,6 @@ export default function CampaignsPage() {
                   <tr>
                     <th className="px-6 py-3.5">Payment Ref</th>
                     <th className="px-6 py-3.5">Failure Class</th>
-                    <th className="px-6 py-3.5">AI Confidence</th>
                     <th className="px-6 py-3.5">Strategy</th>
                     <th className="px-6 py-3.5">Attempts</th>
                     <th className="px-6 py-3.5">State</th>
@@ -299,23 +298,6 @@ export default function CampaignsPage() {
                         <span className="font-semibold text-gray-800 dark:text-gray-200">
                           {c.failureClass || 'UNCLASSIFIED'}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 font-mono font-semibold">
-                        {c.confidence !== undefined && c.confidence !== null ? (
-                          <span
-                            className={
-                              c.confidence >= 0.8
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : c.confidence >= 0.5
-                                ? 'text-amber-600 dark:text-amber-400'
-                                : 'text-rose-600 dark:text-rose-400'
-                            }
-                          >
-                            {(c.confidence * 100).toFixed(0)}%
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">N/A</span>
-                        )}
                       </td>
                       <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
                         {c.strategy || 'PENDING'}

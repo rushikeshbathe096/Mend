@@ -284,15 +284,10 @@ export default function RecoveryActionsPage() {
                             <p className="text-gray-700 dark:text-gray-300 font-medium leading-relaxed">{review.reason || 'Pending merchant review'}</p>
                           </div>
                           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3.5">
-                            <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1">Agent consensus</div>
+                            <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1">Failure class</div>
                             <div className="space-y-1">
-                              <div className="font-mono font-bold text-gray-900 dark:text-white">
-                                {review.agentDecision || review.agentSelectedAction || 'REVIEW_REQUIRED'}
-                              </div>
-                              {review.agentConfidence !== undefined && review.agentConfidence !== null && (
-                                <div className="text-gray-500">Confidence: {(review.agentConfidence * 100).toFixed(0)}%</div>
-                              )}
-                              {review.failureClass && <div className="text-gray-500">Failure: {review.failureClass}</div>}
+                              <div className="font-mono font-bold text-gray-900 dark:text-white">{review.failureClass || 'UNCLASSIFIED'}</div>
+                              <div className="text-gray-500">Attempts so far: {review.attemptCount ?? 0}</div>
                             </div>
                           </div>
                           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3.5">
@@ -309,13 +304,6 @@ export default function RecoveryActionsPage() {
                             </div>
                           </div>
                         </div>
-
-                        {review.agentReasoning && (
-                          <div className="text-xs text-gray-600 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3.5 font-medium">
-                            <span className="font-bold text-gray-900 dark:text-white block mb-0.5">Agent reasoning (structured summary):</span>
-                            {review.agentReasoning}
-                          </div>
-                        )}
 
                         {canDecide && (
                           <div className="flex justify-end space-x-3 pt-2 border-t border-gray-200 dark:border-gray-800">
@@ -456,16 +444,11 @@ export default function RecoveryActionsPage() {
                     : 'Rejecting will cancel pending action intents and transition the campaign to a cancelled state through the authoritative state machine.'}
                 </p>
                 <div className="rounded-xl bg-gray-50 dark:bg-gray-800/70 border border-gray-200 dark:border-gray-700 p-3.5 text-xs">
-                  <div className="font-bold text-gray-900 dark:text-white mb-1">Agent recommendation</div>
+                  <div className="font-bold text-gray-900 dark:text-white mb-1">Proposed recovery</div>
                   <div className="font-mono text-gray-700 dark:text-gray-300">
-                    {activeReview?.agentDecision || activeReview?.agentSelectedAction || 'N/A'}
-                    {activeReview?.agentConfidence !== undefined && activeReview?.agentConfidence !== null
-                      ? ` at ${(activeReview.agentConfidence * 100).toFixed(0)}% confidence`
-                      : ''}
+                    {activeReview?.strategy || 'N/A'} for {activeReview?.failureClass || 'UNCLASSIFIED'}
                   </div>
-                  {activeReview?.agentReasoning && (
-                    <p className="text-gray-500 mt-2">{activeReview.agentReasoning}</p>
-                  )}
+                  {activeReview?.reason && <p className="text-gray-500 mt-2">{activeReview.reason}</p>}
                 </div>
               </div>
 

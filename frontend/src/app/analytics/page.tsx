@@ -233,31 +233,31 @@ export default function AnalyticsPage() {
               )}
             </div>
 
-            {/* AI Model Intelligence Telemetry */}
+            {/* Failure classification (M3: deterministic Razorpay taxonomy; was an "AI Orchestrator Confidence" card) */}
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm space-y-4">
               <div>
                 <h2 className="text-base font-bold text-gray-900 dark:text-white">
-                  AI Orchestrator Confidence
+                  Failure Classification
                 </h2>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Model prediction certainty & governance evaluation
+                  Rule table over the Razorpay error_reason; no model, no confidence
                 </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4 pt-2">
                 <div className="p-4 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900">
-                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 block">Avg Confidence</span>
-                  <div className="text-2xl font-black text-blue-900 dark:text-blue-100 font-mono mt-1">
-                    {recovery.aiConfidenceMetrics?.averageConfidence !== undefined && recovery.aiConfidenceMetrics?.averageConfidence !== null
-                      ? `${(recovery.aiConfidenceMetrics.averageConfidence * 100).toFixed(0)}%`
-                      : `${(overview?.recoveryRate ?? 0).toFixed(0)}%`}
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 block">Classified</span>
+                  <div className="text-2xl font-black text-blue-900 dark:text-blue-100 font-mono mt-1" data-testid="classified-count">
+                    {Object.entries(recovery.failureClassBreakdown ?? {})
+                      .filter(([failureClass]) => failureClass !== 'UNCLASSIFIED')
+                      .reduce((sum, [, count]) => sum + count, 0)}
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900">
-                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 block">High Confidence</span>
-                  <div className="text-2xl font-black text-emerald-900 dark:text-emerald-100 font-mono mt-1">
-                    {recovery.aiConfidenceMetrics?.highConfidenceCount ?? overview?.totalCampaigns ?? 0}
+                <div className="p-4 rounded-xl bg-amber-50/50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900">
+                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 block">Unclassified</span>
+                  <div className="text-2xl font-black text-amber-900 dark:text-amber-100 font-mono mt-1" data-testid="unclassified-count">
+                    {recovery.failureClassBreakdown?.UNCLASSIFIED ?? 0}
                   </div>
                 </div>
               </div>
@@ -362,7 +362,7 @@ export default function AnalyticsPage() {
           </div>
         )}
 
-        {/* Agent intelligence overview */}
+        {/* Review and execution overview */}
         {!loading && recovery && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm">

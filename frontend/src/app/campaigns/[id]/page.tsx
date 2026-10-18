@@ -9,7 +9,7 @@ import { MetricCard } from '@/components/common/MetricCard';
 import { Modal } from '@/components/common/Modal';
 import { Timeline, TimelineStep } from '@/components/common/Timeline';
 import { RecoveryLifecycle } from '@/components/common/RecoveryLifecycle';
-import { AgentDecisionStack } from '@/components/common/AgentDecisionStack';
+import { FailureClassificationPanel } from '@/components/common/FailureClassificationPanel';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
@@ -17,7 +17,7 @@ import { errorMessage } from '@/lib/errors';
 import { useLoad } from '@/lib/useLoad';
 import { intentStepStatus } from '@/lib/intentStatus';
 import { useAuth } from '@/context/AuthContext';
-import { CampaignDto, CampaignTimelineDto, AgentDecisionRecordDto, PageResponse, ReviewItemDto, CampaignDto as CD } from '@/types';
+import { CampaignDto, CampaignTimelineDto, PageResponse, ReviewItemDto, CampaignDto as CD } from '@/types';
 
 export default function CampaignDetailPage() {
   const params = useParams();
@@ -26,10 +26,9 @@ export default function CampaignDetailPage() {
 
   const [campaign, setCampaign] = useState<CampaignDto | null>(null);
   const [timeline, setTimeline] = useState<CampaignTimelineDto | null>(null);
-  const [agentDecisions, setAgentDecisions] = useState<AgentDecisionRecordDto[]>([]);
 
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'timeline' | 'actions' | 'compliance' | 'ai' | 'audit'>('timeline');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'actions' | 'compliance' | 'classification' | 'audit'>('timeline');
 
   const [pendingReview, setPendingReview] = useState<ReviewItemDto | null>(null);
   const [controlLoading, setControlLoading] = useState(false);
@@ -38,16 +37,14 @@ export default function CampaignDetailPage() {
 
   const { loading, reload: fetchCampaignDetails } = useLoad(!currentMerchantId || !campaignId ? null : `${currentMerchantId}|${campaignId}`, async (isCurrent) => {
     try {
-      const [cData, tData, dData] = await Promise.all([
+      const [cData, tData] = await Promise.all([
         api.get<CampaignDto>(`/campaigns/${campaignId}`, { merchantId: currentMerchantId }),
         api.get<CampaignTimelineDto>(`/campaigns/${campaignId}/timeline`, { merchantId: currentMerchantId }),
-        api.get<AgentDecisionRecordDto[]>(`/campaigns/${campaignId}/decisions`, { merchantId: currentMerchantId }).catch(() => []),
       ]);
       if (!isCurrent()) return;
 
       setCampaign(cData);
       setTimeline(tData);
-      setAgentDecisions(dData || []);
       setError(null);
 
       // Detect an active human-approval review for this campaign
@@ -80,7 +77,7 @@ export default function CampaignDetailPage() {
       ),
     });
 
-    // Step 2: AI Classification
+    // Step 2: deterministic failure classification (M3)
     if (timeline.classification) {
       steps.push({
         id: 'classification',
@@ -88,16 +85,7 @@ export default function CampaignDetailPage() {
         subtitle: `Classified as ${timeline.classification.failureClass}`,
         timestamp: timeline.classification.createdAt,
         status: 'COMPLETED',
-        details: (
-          <div className="space-y-1">
-            <div className="font-semibold text-gray-800 dark:text-gray-200">
-              Confidence: {(timeline.classification.confidence * 100).toFixed(0)}%
-            </div>
-            {timeline.classification.reasoning && (
-              <p className="text-gray-500 italic">&ldquo;{timeline.classification.reasoning}&rdquo;</p>
-            )}
-          </div>
-        ),
+        details: <FailureClassificationPanel classification={timeline.classification} />,
       });
     }
 
@@ -268,17 +256,13 @@ export default function CampaignDetailPage() {
               <MetricCard
                 title="Failure Class"
                 value={campaign.failureClass || 'UNCLASSIFIED'}
-                subtext="AI-classified root cause"
+                subtext="From the Razorpay error_reason"
                 variant="indigo"
               />
               <MetricCard
-                title="AI Confidence"
-                value={
-                  campaign.confidence !== undefined && campaign.confidence !== null
-                    ? `${(campaign.confidence * 100).toFixed(0)}%`
-                    : 'N/A'
-                }
-                subtext="Model prediction certainty score"
+                title="Classification"
+                value={!timeline?.classification ? 'None' : timeline.classification.taxonomyVersion ? 'Deterministic' : 'Legacy'}
+                subtext={timeline?.classification?.taxonomyVersion ?? 'Razorpay error taxonomy'}
                 variant="emerald"
               />
               <MetricCard
@@ -305,7 +289,7 @@ export default function CampaignDetailPage() {
                   { id: 'timeline', label: 'Recovery Lifecycle' },
                   { id: 'actions', label: `Action Intents (${timeline?.actionIntents?.length || 0})` },
                   { id: 'compliance', label: `Compliance (${timeline?.complianceDecisions?.length || 0})` },
-                  { id: 'ai', label: `AI Agent Decisions (${agentDecisions.length})` },
+                  { id: 'classification', label: 'Failure Classification' },
                   { id: 'audit', label: `Audit Log (${timeline?.auditLogs?.length || 0})` },
                 ].map((tab) => (
                   <button
@@ -393,14 +377,13 @@ export default function CampaignDetailPage() {
                   </div>
                 )}
 
-                {activeTab === 'ai' && (
+                {activeTab === 'classification' && (
                   <div className="space-y-4">
-                    {agentDecisions.length === 0 ? (
-                      <div className="p-6 text-center border-2 border-dashed border-gray-200 dark:border-gray-800 rounded-xl">
-                        <p className="text-sm text-gray-500 font-medium">No dedicated AI Agent decision records for this campaign.</p>
-                        <p className="text-xs text-gray-400 mt-1">Rule-based or heuristic orchestrator decisions apply directly.</p>
-                      </div>
-                    ) : <AgentDecisionStack decisions={agentDecisions} />}
+                    {timeline?.classification ? (
+                      <FailureClassificationPanel classification={timeline.classification} />
+                    ) : (
+                      <p className="text-sm text-gray-500 italic py-6 text-center">No failure classification recorded for this campaign.</p>
+                    )}
                   </div>
                 )}
 

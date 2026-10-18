@@ -158,67 +158,11 @@ export default function PaymentDetailPage() {
                     <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Compliance Evaluations</span>
                     <span className="font-mono font-bold">{detail.complianceDecisions?.length ?? 0}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Agent Decisions</span>
-                    <span className="font-mono font-bold">{detail.agentDecisions?.length ?? 0}</span>
-                  </div>
                   <p className="text-[11px] text-gray-400 pt-2 border-t border-gray-100 dark:border-gray-800">
                     Provider credentials are never displayed. All financial and state values originate from the authoritative backend.
                   </p>
                 </div>
               </div>
-            </div>
-
-            {/* Agent Decision Transparency */}
-            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-base font-bold text-gray-900 dark:text-white">AI Decision Transparency</h2>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Structured evidence summaries - never hidden chain-of-thought</p>
-                </div>
-              </div>
-
-              {!detail.agentDecisions || detail.agentDecisions.length === 0 ? (
-                <p className="text-sm text-gray-500 italic py-6 text-center">
-                  No structured agent decision records exist for this payment yet.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {detail.agentDecisions.map((ad) => (
-                    <div key={ad.id} className="p-5 rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50 space-y-3">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm font-bold text-gray-900 dark:text-white">{ad.decision || 'DECISION'}</span>
-                          {ad.confidence !== undefined && ad.confidence !== null && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                              {(ad.confidence * 100).toFixed(0)}%
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-gray-400 font-mono">{new Date(ad.createdAt).toLocaleString()}</span>
-                      </div>
-                      {ad.selectedAction && (
-                        <div className="text-xs">
-                          <span className="font-bold text-gray-500 uppercase tracking-wide">Proposed action:</span>{' '}
-                          <span className="font-mono text-gray-800 dark:text-gray-200">{ad.selectedAction}</span>
-                        </div>
-                      )}
-                      <div className="text-xs text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-3 font-medium">
-                        {ad.reasoning || 'No reasoning summary stored.'}
-                      </div>
-                      {ad.evidence && ad.evidence !== '' && (
-                        <div className="text-[11px] text-gray-500 font-mono break-words">Evidence: {ad.evidence}</div>
-                      )}
-                      {ad.requiresHumanApproval && (
-                        <div className="flex items-center space-x-2 text-[11px] font-bold text-amber-700 dark:text-amber-400">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                          Required merchant human approval
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Execution history: ActionIntents */}
