@@ -118,3 +118,43 @@ Revert proofs:
 - (A swallowed log failure inside the fence is still rolled back by Spring's rollback-only marking: safe either way.)
 Verify after both: backend `[INFO] Tests run: 1006, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`;
 `scripts/ci/migrations.sh` → FreshDatabaseMigrationTest 1/0/0/0, BUILD SUCCESS.
+
+#### U4.2 review (fresh subagent): no blocker. Dispositions (commit `c4b8b5b`)
+- FIXED MAJOR 1 (rows lacked versions): every row carries the versions in force (taxonomy of the latest classification,
+  engine strategy/compliance versions, stored hash version; DISPATCH carries the authorizing decision's version; an OD-1
+  override COMPLIANCE row has no strategy version). ADR-004 §4 amended. Revert proof (versions nulled) →
+  `treatmentPathWritesOneRowPerPoint:144 expected: <razorpay-error-taxonomy-v1> but was: <null>`.
+- FIXED MINOR 2 (demo recorded a dispatch without a row): demo dispatch + DISPATCH row (`DEMO_SIMULATED`) in one transaction.
+- FIXED MINOR 3 (sweeper expiry unlogged): `INTENT_EXPIRED_UNCLAIMED` row. Revert proof →
+  `sweeperExpiryIsLogged:287->single exactly one row per decision point: []`.
+- REJECTED MINOR 4 (unique DISPATCH per intent): a deferred intent is legitimately dispatched again (M2
+  `deferFromExecuting`), so several DISPATCH rows per intent are correct; documented in ADR-004 §4.
+- FIXED MINOR 5: tests for LEGACY_DECISION dispatch row (in LegacyDecisionDispatchTest), OD-1 override second COMPLIANCE
+  row, sweeper expiry, STRATEGY log failure rolls the whole decision back, `assertEquals(CLAIMED)` after a failed fence log.
+- FIXED NIT 6 (`Persistable`, no merge SELECT), NIT 7 (override → null strategy version), NIT 8 (comment on the BLOCKED path).
+- Test constructions changed for the new claim-service dependency (ActionIntentClaimServiceTest, OneInFlightPerInvoiceTest).
+
+### U4.3 evaluation snapshots
+Plan as in M4-plan (point-in-time, horizon outcome, PII-free, validated, idempotent). Commit `9a6ff62`.
+- V24 `eval_snapshots` (immutable; status VALID ⇔ no errors, CHECK). Files under `mend.eval.snapshot.dir` (default
+  `${java.io.tmpdir}/mend-eval-snapshots`, outside the repository): campaigns.jsonl, decisions.jsonl, campaigns.csv,
+  manifest.json; sha256 over campaigns.jsonl + decisions.jsonl.
+- Pure `com.mend.evaluation.snapshot` (CampaignFacts → SnapshotRow via SnapshotBuilder; SnapshotCodec; SnapshotValidator);
+  `EvalSnapshotService` reads append-only timestamped sources only; `EvalSnapshotController`
+  (`POST/GET /api/v1/internal/eval/snapshots`, SYSTEM_ADMIN); `EvalSnapshotJob` (nightly, `mend.eval.snapshot.schedule-enabled`,
+  default off); `scripts/eval/snapshot.sh` (curl; `bash -n` OK; shellcheck not installed here).
+- DECISION U4.3-a: eligibility time = first `CAMPAIGN_STATE_TRANSITION` → ELIGIBLE audit row; post-M4 = at/after V22
+  `installed_on`. Capture evidence = RECOVERED transition (attribution → MEND/ORIGINAL/SYNTHETIC/UNKNOWN) or the codes
+  `CAPTURED_ON_TERMINAL_CAMPAIGN`, `CAPTURED_EVIDENCE_NOT_APPLIED` (MEND), `ORIGINAL_PAYMENT_CAPTURED_ON_TERMINAL_CAMPAIGN`.
+- DECISION U4.3-b: contacts = DISPATCHED decision rows (append-only) plus `dispatched_at` of intents with no DISPATCH row
+  (pre-U4.2); `dispatched_at` alone is overwritten by a re-dispatch, so it is not point-in-time.
+- DECISION U4.3-c: provider mode from configuration: mock → whole snapshot SYNTHETIC; razorpay key prefix → test / live
+  (test mode is MEASURED provider evidence but never revenue; the report says so).
+- DECISION U4.3-d: strategy / compliance per row come from the decision log only (pre-U4.2 campaigns have none; they are
+  UNASSIGNED and outside causal figures anyway). customer_ref is null for webhook campaigns (no customer key): interference
+  is TBD until a customer key exists.
+- DECISION U4.3-e: a re-run with identical parameters and checksum returns the stored snapshot (no duplicate row).
+Tests: SnapshotBuilderTest 6, SnapshotValidatorTest 13 (11 parameterized defects + 2), EvalSnapshotIntegrationTest 4,
+EvaluationPurityTest 1.
+Revert proof: audit `as_of` filter removed → `idempotentAndPointInTime:203 expected: <3d3e…> but was: <7e16…>`.
+Verify: backend `[INFO] Tests run: 1034, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
