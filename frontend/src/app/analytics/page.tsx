@@ -17,7 +17,9 @@ import {
   AnalyticsFailureBreakdownDto,
   AnalyticsStrategyPerformanceDto,
   ReviewQueueSummaryDto,
+  ExperimentSummaryDto,
 } from '@/types';
+import { ExperimentPanel } from '@/components/analytics/ExperimentPanel';
 
 export default function AnalyticsPage() {
   const { currentMerchantId } = useAuth();
@@ -29,18 +31,20 @@ export default function AnalyticsPage() {
   const [failureBreakdown, setFailureBreakdown] = useState<AnalyticsFailureBreakdownDto | null>(null);
   const [strategyPerformance, setStrategyPerformance] = useState<AnalyticsStrategyPerformanceDto | null>(null);
   const [reviewSummary, setReviewSummary] = useState<ReviewQueueSummaryDto | null>(null);
+  const [experiment, setExperiment] = useState<ExperimentSummaryDto | null>(null);
 
   const [error, setError] = useState<string | null>(null);
 
   const { loading, reload: fetchAnalytics } = useLoad(currentMerchantId, async (isCurrent) => {
     try {
-      const [overviewData, recoveryData, funnelData, failureData, strategyData, reviewsData] = await Promise.all([
+      const [overviewData, recoveryData, funnelData, failureData, strategyData, reviewsData, experimentData] = await Promise.all([
         api.get<AnalyticsOverviewDto>('/analytics/overview', { merchantId: currentMerchantId }),
         api.get<AnalyticsRecoveryDto>('/analytics/recovery', { merchantId: currentMerchantId }),
         api.get<AnalyticsFunnelDto>('/analytics/funnel', { merchantId: currentMerchantId }).catch(() => null),
         api.get<AnalyticsFailureBreakdownDto>('/analytics/failure-breakdown', { merchantId: currentMerchantId }).catch(() => null),
         api.get<AnalyticsStrategyPerformanceDto>('/analytics/strategy-performance', { merchantId: currentMerchantId }).catch(() => null),
         api.get<ReviewQueueSummaryDto>('/reviews/summary', { merchantId: currentMerchantId }).catch(() => null),
+        api.get<ExperimentSummaryDto>('/analytics/experiment', { merchantId: currentMerchantId }).catch(() => null),
       ]);
 
       if (!isCurrent()) return;
@@ -50,6 +54,7 @@ export default function AnalyticsPage() {
       setFailureBreakdown(failureData);
       setStrategyPerformance(strategyData);
       setReviewSummary(reviewsData);
+      setExperiment(experimentData);
       setError(null);
     } catch (err: unknown) {
       if (isCurrent()) setError(errorMessage(err, 'Failed to load recovery analytics telemetry.'));
@@ -101,9 +106,9 @@ export default function AnalyticsPage() {
               variant="rose"
             />
             <MetricCard
-              title="Total Revenue Recovered"
+              title="Recovered on a MEND Action (observed)"
               value={formatCurrency(overview?.amountRecovered ?? 0)}
-              subtext={`${overview?.recoveredCampaigns ?? 0} successful campaign recoveries`}
+              subtext={`${overview?.recoveredCampaigns ?? 0} recoveries; observed, not incremental (see the holdout experiment)`}
               variant="emerald"
               trend={{ value: `${overview?.recoveryRate ?? 0}% Rate`, positive: true }}
             />
@@ -121,6 +126,38 @@ export default function AnalyticsPage() {
             />
           </div>
         )}
+
+        {/* M4 U4.8: recoveries MEND did not cause, simulated ones, and unknown amounts, never folded into the totals */}
+        {!loading && overview && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <MetricCard
+              title="Late Capture"
+              value={overview.recoveredLateCaptureCount ?? '—'}
+              subtext={`${formatCurrency(overview.amountRecoveredLateCapture)} · original payment captured later, not MEND`}
+              variant="default"
+            />
+            <MetricCard
+              title="Attribution Unknown"
+              value={overview.recoveredAttributionUnknownCount ?? '—'}
+              subtext={`${formatCurrency(overview.amountRecoveredAttributionUnknown)} · recovered, attribution not recorded`}
+              variant="default"
+            />
+            <MetricCard
+              title="SYNTHETIC (simulated)"
+              value={overview.recoveredSyntheticCount ?? '—'}
+              subtext={`${formatCurrency(overview.amountRecoveredSynthetic)} · mock provider: never revenue`}
+              variant="default"
+            />
+            <MetricCard
+              title="Amount Unknown"
+              value={overview.amountUnknownCount ?? '—'}
+              subtext="Campaigns with no verified amount, excluded from totals"
+              variant="amber"
+            />
+          </div>
+        )}
+
+        {!loading && <ExperimentPanel experiment={experiment} />}
 
         {/* Recovery Funnel from the analytics service */}
         {!loading && funnel && funnel.stages && funnel.stages.length > 0 && (

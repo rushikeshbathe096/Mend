@@ -112,7 +112,13 @@ export default function CustomerProfilePage() {
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              <MetricCard
+                title="SYNTHETIC (simulated)"
+                value={countOrDash(summary.recoveredSyntheticCount)}
+                subtext={`${formatCurrency(summary.amountRecoveredSynthetic)} · mock provider: never revenue`}
+                variant="default"
+              />
               <MetricCard
                 title="Late Capture"
                 value={countOrDash(summary.recoveredLateCaptureCount)}

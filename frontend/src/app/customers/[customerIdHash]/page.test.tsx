@@ -79,6 +79,15 @@ describe('CustomerProfilePage attribution and unknown amounts', () => {
     expect(card('Recovered Value')).toHaveTextContent('₹499.00');
   });
 
+  it('shows SYNTHETIC (mock-provider) recoveries apart, as never revenue (M4 U4.8)', async () => {
+    (api.get as jest.Mock).mockResolvedValue(profile({ recoveredSyntheticCount: 5, amountRecoveredSynthetic: 300 }));
+    render(<CustomerProfilePage />);
+    await waitFor(() => expect(screen.getByText('Recovered by MEND')).toBeInTheDocument());
+    expect(card('SYNTHETIC (simulated)')).toHaveTextContent('5');
+    expect(card('SYNTHETIC (simulated)')).toHaveTextContent('₹300.00');
+    expect(card('SYNTHETIC (simulated)')).toHaveTextContent('never revenue');
+  });
+
   it('shows a dash, not 0, when the backend did not send the new fields', async () => {
     (api.get as jest.Mock).mockResolvedValue(profile({}));
 

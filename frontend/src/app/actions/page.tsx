@@ -28,6 +28,33 @@ const ACTION_STATUSES = [
 
 type Tab = 'approvals' | 'intents';
 
+type Decision = 'approve' | 'reject' | 'resolve-no-collect';
+
+/** Modal copy per decision. M4 U4.8: reply reviews (dispute / customer says paid) can be closed without collecting. */
+const DECISION_COPY: Record<Decision, { title: string; subtitle: string; body: string; commentLabel: string; confirm: string }> = {
+  approve: {
+    title: 'Approve Recovery Action',
+    subtitle: 'authorize execution after backend revalidation',
+    body: 'The backend will revalidate tenant ownership, campaign state, ActionIntent state, compliance policy and your authorization before any action is authorized. Execution always runs through the provider boundary - never directly from this screen.',
+    commentLabel: 'Approval comment (optional)',
+    confirm: 'Confirm Approval',
+  },
+  reject: {
+    title: 'Reject Recovery Action',
+    subtitle: 'terminate this recovery safely',
+    body: 'Rejecting will cancel pending action intents and transition the campaign to a cancelled state through the authoritative state machine.',
+    commentLabel: 'Rejection reason (optional)',
+    confirm: 'Confirm Rejection',
+  },
+  'resolve-no-collect': {
+    title: 'Resolve Without Collecting',
+    subtitle: 'close the campaign; no money is requested',
+    body: 'Closes this review and the campaign without collecting: pending intents are cancelled and nothing is sent to the customer. Refused while a payment link is already live (it cannot be withdrawn).',
+    commentLabel: 'Resolution note (optional)',
+    confirm: 'Confirm Resolution',
+  },
+};
+
 export default function RecoveryActionsPage() {
   const { currentMerchantId, user } = useAuth();
   const currentRole = user?.memberships?.find((m) => m.merchantId === currentMerchantId)?.roleName || '';
@@ -52,7 +79,7 @@ export default function RecoveryActionsPage() {
 
   // Decision modal state
   const [activeReview, setActiveReview] = useState<ReviewItemDto | null>(null);
-  const [decisionAction, setDecisionAction] = useState<'approve' | 'reject' | null>(null);
+  const [decisionAction, setDecisionAction] = useState<Decision | null>(null);
   const [decisionComment, setDecisionComment] = useState('');
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
@@ -105,7 +132,7 @@ export default function RecoveryActionsPage() {
     },
   );
 
-  const openDecisionModal = (review: ReviewItemDto, action: 'approve' | 'reject') => {
+  const openDecisionModal = (review: ReviewItemDto, action: Decision) => {
     setActiveReview(review);
     setDecisionAction(action);
     setDecisionComment('');
@@ -131,7 +158,7 @@ export default function RecoveryActionsPage() {
         decisionComment.trim() ? { comment: decisionComment.trim() } : {},
         { merchantId: currentMerchantId }
       );
-      setDecisionResult(result.message || `Review ${decisionAction}ed successfully.`);
+      setDecisionResult(result.message || 'Decision recorded.');
       const errors = await Promise.all([fetchApprovals(), fetchIntents()]);
       setError(errors.find((e) => e !== null) ?? null);
     } catch (err: unknown) {
@@ -307,6 +334,15 @@ export default function RecoveryActionsPage() {
 
                         {canDecide && (
                           <div className="flex justify-end space-x-3 pt-2 border-t border-gray-200 dark:border-gray-800">
+                            {review.kind === 'RESOLVE_NO_COLLECT' && (
+                              <button
+                                onClick={() => openDecisionModal(review, 'resolve-no-collect')}
+                                disabled={expired}
+                                className="px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg text-xs font-bold disabled:opacity-40 transition-colors"
+                              >
+                                Resolve without collecting
+                              </button>
+                            )}
                             <button
                               onClick={() => openDecisionModal(review, 'reject')}
                               disabled={expired}
@@ -420,8 +456,8 @@ export default function RecoveryActionsPage() {
       <Modal
         isOpen={activeReview !== null && decisionAction !== null}
         onClose={closeDecisionModal}
-        title={decisionAction === 'approve' ? 'Approve Recovery Action' : 'Reject Recovery Action'}
-        subtitle={`${activeReview?.paymentId || activeReview?.campaignId} - ${decisionAction === 'approve' ? 'authorize execution after backend revalidation' : 'terminate this recovery safely'}`}
+        title={DECISION_COPY[decisionAction ?? 'approve'].title}
+        subtitle={`${activeReview?.paymentId || activeReview?.campaignId} - ${DECISION_COPY[decisionAction ?? 'approve'].subtitle}`}
         maxWidth="lg"
       >
         <div className="space-y-4">
@@ -439,9 +475,7 @@ export default function RecoveryActionsPage() {
 
               <div className="text-sm text-gray-700 dark:text-gray-300 space-y-3">
                 <p>
-                  {decisionAction === 'approve'
-                    ? 'The backend will revalidate tenant ownership, campaign state, ActionIntent state, compliance policy and your authorization before any action is authorized. Execution always runs through the provider boundary - never directly from this screen.'
-                    : 'Rejecting will cancel pending action intents and transition the campaign to a cancelled state through the authoritative state machine.'}
+                  {DECISION_COPY[decisionAction ?? 'approve'].body}
                 </p>
                 <div className="rounded-xl bg-gray-50 dark:bg-gray-800/70 border border-gray-200 dark:border-gray-700 p-3.5 text-xs">
                   <div className="font-bold text-gray-900 dark:text-white mb-1">Proposed recovery</div>
@@ -454,7 +488,7 @@ export default function RecoveryActionsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 uppercase tracking-wider">
-                  {decisionAction === 'approve' ? 'Approval comment (optional)' : 'Rejection reason (optional)'}
+                  {DECISION_COPY[decisionAction ?? 'approve'].commentLabel}
                 </label>
                 <textarea
                   value={decisionComment}
@@ -476,11 +510,11 @@ export default function RecoveryActionsPage() {
                   onClick={submitDecision}
                   disabled={decisionLoading}
                   className={`px-5 py-2 rounded-lg text-xs font-bold text-white transition-colors disabled:opacity-50 flex items-center space-x-2 ${
-                    decisionAction === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
+                    decisionAction === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : decisionAction === 'reject' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-gray-700 hover:bg-gray-800'
                   }`}
                 >
                   {decisionLoading && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                  <span>{decisionAction === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}</span>
+                  <span>{DECISION_COPY[decisionAction ?? 'approve'].confirm}</span>
                 </button>
               </div>
             </>

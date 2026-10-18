@@ -94,6 +94,9 @@ export interface CustomerSummaryDto {
   amountRecoveredAttributionUnknown?: number;
   /** Campaigns with no resolvable amount: excluded from every sum, never defaulted. */
   amountUnknownCount?: number;
+  /** Mock-provider simulated captures (SYNTHETIC): never MEND's, never revenue. */
+  recoveredSyntheticCount?: number;
+  amountRecoveredSynthetic?: number;
   riskSignals: string[];
   lastActivityAt: string;
 }
@@ -240,6 +243,39 @@ export interface AnalyticsOverviewDto {
   complianceBlocks?: number;
   averageIngestionToCampaignLatencyMs?: number;
   averageExecutionLatencyMs?: number;
+  /** Campaigns with no verified amount: excluded from every sum, never defaulted. */
+  amountUnknownCount?: number;
+  /** RECOVERED by a late capture of the original payment: not a MEND recovery. */
+  recoveredLateCaptureCount?: number;
+  amountRecoveredLateCapture?: number;
+  /** RECOVERED with no attribution (before V15). */
+  recoveredAttributionUnknownCount?: number;
+  amountRecoveredAttributionUnknown?: number;
+  /** Mock-provider simulated captures (SYNTHETIC): never revenue. */
+  recoveredSyntheticCount?: number;
+  amountRecoveredSynthetic?: number;
+}
+
+/** M4 U4.8: holdout arm counts (operational) and causal figures from the latest VALID evaluation snapshot. */
+export interface ExperimentFigureDto {
+  stratum: string;
+  name: string;
+  value: string;
+  low?: string | null;
+  high?: string | null;
+  n: number;
+  label: 'MEASURED' | 'SYNTHETIC' | 'TBD';
+  status: string;
+  note?: string;
+}
+
+export interface ExperimentSummaryDto {
+  holdoutRateBp: number;
+  assignedTreatment: number;
+  assignedControl: number;
+  snapshot: { id: string; asOf: string; horizonDays: number; providerMode: string; label: string; interim: boolean } | null;
+  figures: ExperimentFigureDto[];
+  note: string;
 }
 
 export interface ComplianceMetrics {
@@ -305,6 +341,8 @@ export interface ReviewItemDto {
   createdAt: string;
   reviewedAt?: string;
   expiresAt?: string;
+  /** M4 U4.8: RESOLVE_NO_COLLECT for reply reviews (dispute / customer says paid), else COLLECT. */
+  kind?: 'COLLECT' | 'RESOLVE_NO_COLLECT';
 }
 
 export interface ReviewDecisionResponse {

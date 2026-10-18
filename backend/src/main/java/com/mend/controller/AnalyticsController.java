@@ -21,9 +21,21 @@ import java.util.UUID;
 public class AnalyticsController {
 
     private final AnalyticsQueryService analyticsQueryService;
+    private final com.mend.service.ExperimentReportService experimentReportService;
 
-    public AnalyticsController(AnalyticsQueryService analyticsQueryService) {
+    public AnalyticsController(AnalyticsQueryService analyticsQueryService,
+                               com.mend.service.ExperimentReportService experimentReportService) {
         this.analyticsQueryService = analyticsQueryService;
+        this.experimentReportService = experimentReportService;
+    }
+
+    /** M4 U4.8(c): holdout arm counts (operational) and causal figures from the latest VALID snapshot (or TBD). */
+    @GetMapping("/experiment")
+    public ResponseEntity<com.mend.dto.ExperimentSummaryDto> getExperiment(
+            @RequestHeader(value = "X-Merchant-Id", required = false) String merchantHeader,
+            @CurrentUser AuthenticatedUser currentUser) {
+        UUID effectiveMerchantId = resolveMerchantId(merchantHeader, currentUser);
+        return ResponseEntity.ok(experimentReportService.forMerchant(effectiveMerchantId, currentUser));
     }
 
     @GetMapping("/overview")
