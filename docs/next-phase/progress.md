@@ -194,3 +194,72 @@ No AI call left on the payment path. Dispositions:
 - Also fixed: the demo now produces deterministic classification rows from simulated Razorpay error fields.
 Verify: backend `[INFO] Tests run: 892, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
 Next: U2.3 (restore stash "u23-frontend-wip").
+
+### U2.3 — delete AI theatre (branch m3/honest-intelligence)
+Plan: backend deletions → DTO/API honesty → demo + dev seed → tests rewritten (count kept) → frontend → verify → fresh review.
+Commits: `1c2363f` backend, `f005c62` frontend.
+- Deleted: agent/*, AgentOrchestrationController, AgentDecisionQueryController, AiClassificationClient +
+  FastApiClassificationClient, dto/ai/*, AgentDecisionRecord entity/repository/DTO, AiClassificationException, legacy
+  enums FailureClass / RecommendedAction; frontend AgentDecisionStack (+ test) and the "AI Agent Decisions" tab.
+- Replacement for low-confidence MANUAL_REVIEW gating (ADR-003 §4): MANUAL_REVIEW comes only from the strategy table
+  (a computed strategy the merchant has not enabled) and explicit review codes; a failure without evidence (UNCLASSIFIED,
+  legacy row, no row) is blocked by compliance as UNKNOWN_CLASSIFICATION before the strategy rules.
+- DECISION U2.3-a: API DTOs (campaign, classification, recovery decision, review item) drop confidence; the entity
+  columns stay as history (no migration). `ClassificationResultDto.taxonomyVersion` added.
+- DECISION U2.3-b: `agent_decision_records` stays as a legacy table: no writer, no API, rows untouched, no migration.
+- DECISION U2.3-c: start-recovery reads approval from a PENDING review and compliance from the latest stored decision;
+  no decision → `complianceStatus: null` (was a default "COMPLIANCE_ALLOWED"). SUCCESS (only a mock-mode synthetic
+  capture) is labelled SYNTHETIC.
+- DECISION U2.3-d: operational health returns only measured values (Redis stream sizes, status UP/UNKNOWN, null when not
+  measured) instead of hardcoded HEALTHY / 45 ms / AI "UP" / fallback rate 0.0.
+- DECISION U2.3-e: demo AGENT_FAILURE → UNCLASSIFIED_FAILURE (same safe outcome: EXHAUSTED, no action); dev seed classes
+  come from FailureTaxonomy over simulated Razorpay reasons, no confidence/model; the UNCLASSIFIED segment is seeded with 0
+  attempts and an UNKNOWN_CLASSIFICATION block (was 3 retries of a legacy UNKNOWN class).
+- DECISION U2.3-f: settings escalation threshold is an integer 1–10 (backend validation); no rule reads it — labelled so.
+- DECISION U2.3-g: `mend.ai.*` properties stay until U2.4 decides the reply-parsing client (removed in U2.6 if unused).
+Tests (count kept): AiAgentIntegrationTest → AiTheatreRemovedIntegrationTest (3), AiClassificationClientTest →
+HonestApiDtoTest (3), CrossTenantReadIsolation agent cases → payment detail / campaign read (2), AiOffHotPathTest proof →
+no AI bean in the context; +2 CampaignControllerTest; frontend −1 AgentDecisionStack, +4 FailureClassificationPanel,
++1 settings slider.
+Revert proofs:
+- `.orElse("COMPLIANCE_ALLOWED")` → `CampaignControllerTest.startRecovery_noDecisionReportsNoComplianceStatusAndNoApproval:210`
+- CampaignDto confidence getter → `HonestApiDtoTest.legacyConfidenceAndAgentFieldsAreNotExposed:53 expected: <false> but was: <true>`
+- HEAD settings page → `SettingsPage › edits the escalation threshold as an integer from 1 to 10, not as an AI confidence`
+- HEAD dashboard → `DashboardPage › 2. fetches dashboard APIs and renders real backend values on success`
+Verify: backend `[INFO] Tests run: 894, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
+`Tests: 57 passed, 57 total`, build `✓ Compiled successfully`, lint `✖ 1 problem (0 errors, 1 warning)` (pre-existing).
+
+#### U2.3 review (fresh subagent): no blocker. Dispositions
+- FIXED MAJOR 1: dev seed stamped real policy versions on segment-chosen decisions → "dev-seed".
+- FIXED MINOR 2: seed/demo rows without evidence → shared `FailureClassification.evidence`; revert proof
+  `Phase19MerchantProductIntegrationTest.lowRiskRetryScenarioRecoversThroughRealExecutionPath:143 expected: <insufficient_funds> but was: <>`.
+- FIXED MINOR 3 (demo preset labelled), MINOR 4 (landing review route = MANUAL_REVIEW via merchant actions).
+- FIXED MINOR 5: analytics counted legacy names as classified → `countFailureClasses`; revert proof
+  `countFailureClasses › counts taxonomy classes, UNCLASSIFIED and legacy pre-M3 names separately`.
+- FIXED MINOR 6: mock SUCCESS headed "Payment Recovered" → "Simulated Capture"; revert proof
+  `StartRecoveryModal › allows user to select payment, review context, and trigger end-to-end start-recovery`.
+- FIXED NIT 7 (health UP only with both sizes), NIT 8b (exact 404 asserted).
+- KEPT NIT 8a: `mend.ai.*` stays; U2.4's reply client uses `mend.ai.base-url`, so AiOffHotPathTest's unreachable address
+  still means "a call would hang" (DECISION U2.3-g).
+Verify: backend `[INFO] Tests run: 895, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
+`Tests: 59 passed, 59 total`, build OK, lint `✖ 1 problem (0 errors, 1 warning)`.
+
+### U2.4 — customer-reply parsing (plan)
+- V20 `customer_replies` (merchant_id, campaign_id, text ≤ 2000, status PENDING/PARSED/FAILED, attempts, next_attempt_at,
+  last_error, created_at) and `reply_suggestions` (reply_id unique, intent, promised_date, abstain, valid,
+  validation_error, model_id, model_version, prompt_version, effect, created_at); V21 `campaigns.contact_opted_out_at`.
+  New tables / nullable column only: no existing row rewritten.
+- API `POST/GET /api/v1/campaigns/{id}/replies` (TenantGuard user access + campaign must belong to the merchant),
+  `POST /api/v1/campaigns/{id}/replies/{replyId}/retry` (FAILED only), `DELETE /api/v1/campaigns/{id}/opt-out`
+  (MERCHANT_ADMIN, audited).
+- `ReplyParsingJob` (scheduled, `FOR UPDATE SKIP LOCKED`, exponential backoff, attempt cap → FAILED) calls ai-service
+  `POST /api/v1/parse_reply` through `ReplyParserClient`; `ReplySuggestionValidator` (strict: enum, ISO date, abstain
+  boolean, no extra fields) → `ReplyPolicy`.
+- DECISION U2.4-a: intent enum = OPT_OUT, ALREADY_PAID, DISPUTE, PROMISE_TO_PAY (optional promised_date), OTHER.
+- DECISION U2.4-b: ai-service calls Gemini `generateContent` over httpx (already a dependency, no new one); the model id is
+  the response's `modelVersion`; no `GEMINI_API_KEY` → `503 {"error":"model_unavailable"}` and no output.
+- Policy: OPT_OUT → `contact_opted_out_at` + audit; compliance `CUSTOMER_OPTED_OUT` for new intents and in the executor's
+  pre-dispatch gate (same transaction as the fence). ALREADY_PAID → AWAITING_PAYMENT link intents get `reconcile_after =
+  now` (fenced by status), never NEEDS_RECONCILIATION; none → review `CUSTOMER_SAYS_PAID`. DISPUTE → review
+  `CUSTOMER_DISPUTE` (appends to an open review). Others → shown only. Never RECOVERED.
+- Retention: 90 days, purge job M5-owned (documented).
