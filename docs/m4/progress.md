@@ -197,3 +197,35 @@ Plan as in M4-plan. Commit `e7baa36`.
 Tests: StatisticsTest 12 (published Newcombe example 56/70 − 48/80 → 0.0524 … 0.3339; Wilson; bootstrap; power table),
 MetricsReportTest 6 (hand-computed rates/money/cost, insufficient data, TBD, INTERIM/FINAL, integrity, CLI).
 Verify: backend `[INFO] Tests run: 1059, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+
+#### U4.4 review (fresh subagent; formulas re-computed in Python, all correct): 2 MAJOR + test MAJOR. Dispositions (`3f37a59`)
+- FIXED MAJOR 1 (outcome was the chosen campaign's, not the invoice's): snapshot schema **v2** adds invoice-level columns
+  computed in the builder from exact times (first campaign, campaigns, mature, recovered within H of the invoice's first
+  eligibility across all its campaigns, capture offset/source, contacts across all campaigns). Units = first rows; a later
+  re-hashed campaign's contact now shows as CONTROL contamination (ALERT). Revert proof (campaign-level outcome) →
+  `invoiceLevelOutcome:172 expected: <2.50 %> but was: <0.00 %>`.
+- FIXED MAJOR 2 (decision metric without uncertainty): cost per incremental rupee carries the money interval
+  (cost ÷ bounds), inherits UNSTABLE, is TBD when the money interval reaches 0, notes the configured assumption. Revert proof
+  → `moneyAndCost:132 inherits the money figure's instability expected: <UNSTABLE> but was: <OK>`.
+- FIXED MAJOR 18 (tests): exact percentile-index test, erfc at p 1e-3 / 1e-4, Newcombe edges, invoice collapse, strata +
+  SRM ALERT, label fail-closed, cost per observed rupee, money status.
+- FIXED MINOR 3 (label fails closed: MEASURED only non-empty + all MEASURED + razorpay-live), 4 (per-arm money bootstrap CI,
+  n ≥ 100), 5 (median "insufficient data"), 6 (by-strategy min n), 7 (non-numbers labelled TBD), 8 (per-class EXPLORATORY),
+  9 (INTERIM/FINAL per stratum), 10 (multiplyExact, cost ≥ 0), 11 (same subset for cost and money), 12 (manifest params in
+  the checksum; safe snapshot id), 13 (renamed "amount of recovered invoices … failure amount, not captured amount"),
+  NIT 14 (pp), 15 (Markdown escaping, separated notes), 16 (short refs), 17 (LATE_CAPTURE naming; north-star figure).
+Verify: backend `[INFO] Tests run: 1071, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+
+### U4.5 replay simulator
+Commit `58d455e` (adapted to snapshot v2 in `3f37a59`).
+- `com.mend.evaluation.sim`: SyntheticGenerator (seeded; documented reason/amount weights), OutcomeModel (documented
+  assumptions: late capture / link payment per class, exponential times, link TTL 72 h; retries not wired by default, as in
+  production), ReplaySimulator (production FailureTaxonomy, `ClassificationResult.deterministicClass`, RecoveryStrategyEngine,
+  ComplianceEngine, HoldoutAssigner; common random numbers per event), PolicyVariant (B current / A UNCLASSIFIED
+  ineligible as an eligibility gate in front of the production engines), PolicyComparison (paired bootstrap of per-failure
+  differences); `cli/SimulateCli` + `scripts/eval/simulate.sh`.
+- DECISION U4.5-a: policy A no longer exists in production code; it is expressed as an input gate, never a copied engine.
+- DECISION U4.5-b: retry timing is compared only with *hypothetical* wired retries (labelled so).
+Tests: ReplaySimulatorTest 6 (reproducible; engines are the production classes and agree with direct calls; no DB-typed
+fields; CONTROL never contacted; B gives UNCLASSIFIED links only; A ineligible; paired draws; VALID SYNTHETIC snapshot;
+generator weights). Revert proof (unseeded draws) → `pairedDraws:107`, `reproducible:48` fail.
