@@ -178,3 +178,19 @@ Review: running (fresh subagent). Next: U2.3.
   DTOs, analytics aiConfidenceMetrics, demo/dev-seed fake values; ClassificationResultDto.taxonomyVersion; rewrite
   AiAgentIntegrationTest, AiClassificationClientTest, CrossTenantReadIsolation agent cases without lowering the count.
 - Then U2.4–U2.7 as planned in `docs/m3/M3-plan.md`. Phase 2 is not merged; no `m3-complete` tag.
+
+#### U2.2 review (fresh subagent) — resumed after the pause
+No AI call left on the payment path. Dispositions:
+- FIXED MAJOR 1: pre-M3 rows named like taxonomy classes were authorized → a row decides only with a taxonomy version
+  (`deterministicAndRecoverable`, strategy engine likewise); revert proof: old ComplianceEngine →
+  `testLegacyRowWithTaxonomyNameBlocked:251 INSUFFICIENT_FUNDS @ 0.55 ==> expected: <true> but was: <false>`.
+- FIXED MAJOR 2: AiOffHotPathTest now uses a spy on the real client at a non-answering address, runs to RECOVERED via the
+  scheduler, `verifyNoInteractions`; type check widened to every path service.
+- DEFERRED to U2.3 (frontend + analytics removal): MAJOR 3 null confidence shown as 0%; MINOR 4 averageConfidence 0.0.
+- FIXED MINOR 5: class rule before strategy rules (legacy → UNKNOWN_CLASSIFICATION, no unapprovable review); revert proof:
+  `testLegacyClassBlockedBeforeStrategyRules:266 expected: <UNKNOWN_CLASSIFICATION> but was: <STRATEGY_NOT_SUPPORTED>`.
+- DOCUMENTED MINOR 6 (pre-M3 intents not re-classified at dispatch) in ADR-003 consequences.
+- FIXED NIT 7 (exhaustive switch expression; imports).
+- Also fixed: the demo now produces deterministic classification rows from simulated Razorpay error fields.
+Verify: backend `[INFO] Tests run: 892, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+Next: U2.3 (restore stash "u23-frontend-wip").
