@@ -6,6 +6,9 @@ from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, Header, HTTPException, status
 import httpx
+from fastapi.responses import JSONResponse
+
+import reply_parser
 
 from contextlib import asynccontextmanager
 from agent.router import router as agent_router
@@ -288,6 +291,30 @@ def health_check():
         model_provider=provider,
         llm_enabled=llm_active
     )
+
+class ParseReplyRequest(BaseModel):
+    """A customer reply (PII: never logged). The backend caps the text at 2000 characters; so does this endpoint."""
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
+@app.post("/api/v1/parse_reply")
+def parse_reply_endpoint(request: ParseReplyRequest, x_mend_internal_token: Optional[str] = Header(default=None)):
+    """M3 (ADR-003 §5): the model's suggestion, passed through unvalidated; the backend validates it strictly."""
+    require_internal_auth(x_mend_internal_token)
+    try:
+        result = reply_parser.parse_reply(request.text)
+    except reply_parser.ModelUnavailable:
+        return JSONResponse(status_code=503, content={"error": "model_unavailable"})
+    except reply_parser.ModelError as e:
+        logger.warning("parse_reply model error: %s", e)
+        return JSONResponse(status_code=502, content={"error": "model_error", "detail": str(e)})
+    return {
+        "suggestion": result.suggestion,
+        "output_error": result.output_error,
+        "model_id": result.model_id,
+        "prompt_version": result.prompt_version,
+    }
+
 
 @app.post("/api/v1/classify", response_model=ClassificationResponse, status_code=status.HTTP_200_OK)
 def classify_endpoint(request: ClassificationRequest, x_mend_internal_token: Optional[str] = Header(default=None)):
