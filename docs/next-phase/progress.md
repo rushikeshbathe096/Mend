@@ -303,3 +303,18 @@ Tests: ai-service `73 passed` (+12 test_eval.py).
 - requirements: fastapi, uvicorn, pydantic, httpx, pytest (exactly what is imported).
 - Tests: the count (73) must not drop (HARD STOP). Deleted tests of deleted code are replaced by tests of the remaining
   surface: auth, PII/secret handling, provider error mapping, prompt-injection pass-through, health.
+
+#### U2.4 review (fresh subagent): no blocker. Dispositions
+- FIXED MAJOR 1 (poison reply retried forever / over-long untrusted strings): revert proof
+  `ReplyParsingIntegrationTest.untrustedValuesCannotPoisonTheJob:348 expected: <FAILED> but was: <PENDING>`.
+- FIXED MAJOR 2 (compliance-blocked abandon not audited): revert proof
+  `optOutBlocksContactAtComplianceAndDispatch:156 the abandoned claim is audited ==> expected: <1> but was: <0>`.
+- FIXED MINOR 3 (bring-forward vs reconcile lease; rate limit): revert proof
+  `alreadyPaidBringsForwardTheLookupOnly:199 expected: <…03:03:34…> but was: <…03:02:34…>`.
+- FIXED MINOR 4 (lease vs batch: one row per claim), MINOR 5 (promised_date presence) with revert proof
+  `ReplySuggestionValidatorTest.invalidSuggestions:49 expected: <Invalid[error=PROMISED_DATE_MISSING]>`.
+- FIXED MINOR 6 (reconciler now run in the ALREADY_PAID tests), MINOR 7 (behavioural payment-path proof).
+- DOCUMENTED MINOR 8 in ADR-003 (approving a reply review resumes collection; separate review kind M4-owned).
+- FIXED NIT 9 (bounded read), NIT 10 (banner text, refetch), NIT 11 (system admin may clear).
+Verify: backend `[INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
+`Tests: 62 passed, 62 total`, build OK, lint 0 errors.
