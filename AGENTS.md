@@ -2,12 +2,14 @@
 
 MEND is a financial workflow system (revenue recovery on Razorpay). Correctness before intelligence.
 
-## Current milestone: M2 complete — next: M3 (do not start without a design pack)
+## Current milestone: M3 complete — next: M4 (needs design pack)
+M3 (honest intelligence) is complete: ADR-003 Accepted, final run backend 941 / 0 / 0 / 0, frontend 62, ai-service 90
+(`docs/m3/m3-final-test-run-summary.txt`), summary `docs/m3/M3-summary.md`.
 M1 (provider correctness) is complete: tag `m1-complete`, ADR-001 Accepted.
 M2 (execution safety) is complete: ADR-002 Accepted, final run 647 / 0 / 0 / 0 (`docs/m2/m2-final-test-run-summary.txt`), summary `docs/m2/M2-summary.md`.
-Only work on the unit you were given (`docs/m2/agent-prompts/U*.md`). Do not start M3+ work. Write anything else you notice under "Out-of-scope findings" in your final message.
+Only work on the unit you were given (M2 prompts: `docs/m2/agent-prompts/U*.md`; M3 units: `docs/m3/M3-plan.md`). Do not start M4+ work without its design pack. Write anything else you notice under "Out-of-scope findings" in your final message.
 
-Out of scope in M2: debit wiring, AI service, CI/deployment, metrics registration, Redis changes, new dependencies (ask first), frontend changes.
+Out of scope until M4 has a design pack: debit wiring, deployment, metrics registration, Redis changes, a second AI task, new dependencies (ask first). (Historical M2 scope also excluded AI service, CI and frontend changes; M3 and the CI phase changed those under their own specs.)
 
 ## Non-negotiable invariants
 1. Money is `long` minor units (paise). Never `double`/`float`. No `BigDecimal` in provider code.
@@ -28,9 +30,14 @@ Out of scope in M2: debit wiring, AI service, CI/deployment, metrics registratio
 14. At most one in-flight intent (CLAIMED, EXECUTING, NEEDS_RECONCILIATION, AWAITING_PAYMENT) per (merchant, invoice_key) — enforced by the database.
 15. Campaign-level (original payment) events never finalize a recovery intent.
 
+### M3 invariants (ADR-003)
+16. The payment flow makes no ai-service call.
+17. LLM output is a suggestion: only the deterministic ReplyPolicy acts on it, never with a financial action.
+18. A model id is recorded only as the provider reported it; without a model there is no output ("model unavailable").
+
 ## Tests
 - Run: `cd backend && ./mvnw test`
-- Baseline for M2: 519 run / 0 failures / 0 errors / 1 skipped — `docs/m1/m1-final-test-run-summary.txt` (raw logs are local-only).
+- Baseline for M2 (historical; current: `docs/m3/m3-final-test-run-summary.txt`): 519 run / 0 failures / 0 errors / 1 skipped — `docs/m1/m1-final-test-run-summary.txt` (raw logs are local-only).
 - Never delete or weaken an existing test. If a legitimate behaviour change breaks one: keep it, change the assertion, put `// M2 behaviour change: <reason>, see ADR-002` above it, and add a regression test.
 - Concurrency tests use real PostgreSQL, real threads and latches; simulate time with SQL updates, not long sleeps.
 - Test databases: every `./mvnw test` run creates its own empty database `mend_test_<epoch>_<random>` on the docker-compose Postgres (port 5433), Flyway migrates it from V1, and it is dropped when the run ends (`com.mend.testsupport.IsolatedTestDatabase`, auto-registered via `META-INF/services` + `junit-platform.properties`). Stale `mend_test_*` databases older than 24 h are dropped at the next start. `application-test.properties` has no fallback URL, and the extension also sets `spring.datasource.*` / `spring.flyway.*` as system properties (they outrank an exported `SPRING_DATASOURCE_URL`), so tests never touch the dev database `mend`. Details: `docs/hygiene/pre-m3-hygiene.md`. Override the server with `-Dmend.test.db.server-url=jdbc:postgresql://host:port/postgres` (also `mend.test.db.user` / `.password`, or `MEND_TEST_DB_*` env vars). Never hand-edit a database to make tests pass. Classes within one run still share that run's database, so keep "park other rows" / own-row cleanup patterns.

@@ -20,9 +20,5 @@ __pycache__/
 *.class
 /ai-service/.venv/
 ai-service/.pytest_cache/
-.ai-service/.langgraph_checkpoints.json
-.ai/langgraph_checkpoints.json
-.langgraph_checkpoints.json
-ai-service/.langgraph_checkpoints.json
 docs/**/*.txt
 !docs/**/*-summary.txt

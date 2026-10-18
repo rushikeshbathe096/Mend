@@ -8,6 +8,7 @@ import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.ActionType;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.RecoveryAttribution;
+import com.mend.domain.enums.ComplianceReason;
 import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignAttemptRepository;
@@ -111,8 +112,13 @@ public class ActionExecutionService {
         } catch (ComplianceBlockedException e) {
             log.warn("ActionIntent '{}' execution blocked by compliance: {}", intentId, e.getMessage());
             // Fenced by the caller's token: a stale worker cannot fail someone else's live claim.
-            executionTransactionTemplate.executeWithoutResult(status ->
-                    transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now()));
+            executionTransactionTemplate.executeWithoutResult(status -> {
+                if (transitions.abandonClaim(intentId, claimToken, ActionIntentStatus.FAILED, Instant.now())) {
+                    // U2.4 review (invariant 9): the CLAIMED -> FAILED transition is audited (ids and the block code only)
+                    actionIntentRepository.findById(intentId).ifPresent(i -> auditService.logEvent(i.getMerchantId(), i.getCampaignId(),
+                            "ACTION_COMPLIANCE_BLOCKED", "SYSTEM", null, "ActionIntent " + intentId + " blocked before dispatch: " + e.getMessage()));
+                }
+            });
             throw e;
         } catch (ClaimLostBeforeDispatch lost) {
             // The prepare transaction (incl. any campaign transition) rolled back; no provider call is made.
@@ -202,6 +208,12 @@ public class ActionExecutionService {
                 String reason = latestCompliance.map(c -> c.getReason().name()).orElse("MISSING_COMPLIANCE_DECISION");
                 throw new ComplianceBlockedException("Compliance decision missing or not ALLOWED: " + reason);
             }
+        }
+
+        // 6b. M3 U2.4 (ADR-003 §5): contact opt-out, re-read under a share lock in this dispatch transaction. A stored
+        // ALLOWED decision from before the opt-out does not authorize contacting the customer afterwards.
+        if (campaignRepository.isContactOptedOutForShare(campaign.getId()).orElse(Boolean.TRUE)) {
+            throw new ComplianceBlockedException("Customer opted out of contact (" + ComplianceReason.CUSTOMER_OPTED_OUT + ")");
         }
 
         // 7. Transition Campaign ACTION_PENDING -> EXECUTING if applicable

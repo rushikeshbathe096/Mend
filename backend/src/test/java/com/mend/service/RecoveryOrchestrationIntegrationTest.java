@@ -72,7 +72,7 @@ public class RecoveryOrchestrationIntegrationTest extends AbstractIntegrationTes
         event.setMerchantId(merchantId);
         event = webhookEventRepository.save(event);
 
-        ClassificationResult result = new ClassificationResult(
+        ClassificationResult result = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(),
                 event.getId(),
                 null,
@@ -81,7 +81,7 @@ public class RecoveryOrchestrationIntegrationTest extends AbstractIntegrationTes
                 "SCHEDULE_RETRY",
                 "Soft failure due to insufficient funds",
                 "v1.0.0"
-        );
+        ));
 
         // Step 2: Process classification through CampaignLifecycleService (triggers orchestration)
         Campaign campaign = campaignLifecycleService.processClassificationResult(event, result);
@@ -121,7 +121,7 @@ public class RecoveryOrchestrationIntegrationTest extends AbstractIntegrationTes
         event.setMerchantId(merchantId);
         event = webhookEventRepository.save(event);
 
-        ClassificationResult result = new ClassificationResult(
+        ClassificationResult result = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(),
                 event.getId(),
                 null,
@@ -130,7 +130,7 @@ public class RecoveryOrchestrationIntegrationTest extends AbstractIntegrationTes
                 "SCHEDULE_RETRY",
                 "Soft failure due to insufficient funds",
                 "v1.0.0"
-        );
+        ));
 
         // Process classification
         Campaign campaign = campaignLifecycleService.processClassificationResult(event, result);
@@ -160,7 +160,7 @@ public class RecoveryOrchestrationIntegrationTest extends AbstractIntegrationTes
         event.setMerchantId(merchantId);
         event = webhookEventRepository.save(event);
 
-        ClassificationResult result = new ClassificationResult(
+        ClassificationResult result = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(),
                 event.getId(),
                 null,
@@ -169,7 +169,7 @@ public class RecoveryOrchestrationIntegrationTest extends AbstractIntegrationTes
                 "SCHEDULE_RETRY",
                 "Soft failure due to insufficient funds",
                 "v1.0.0"
-        );
+        ));
 
         Campaign campaign = campaignLifecycleService.processClassificationResult(event, result);
 

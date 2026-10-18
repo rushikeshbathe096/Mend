@@ -30,7 +30,8 @@ public class ClassificationResult {
     @Column(nullable = false, length = 50)
     private String failureClass;
 
-    @Column(nullable = false, precision = 3, scale = 2)
+    /** AI-era confidence on historical rows only; NULL for deterministic classifications (M3, V19). */
+    @Column(precision = 3, scale = 2)
     private BigDecimal confidence;
 
     @Column(columnDefinition = "TEXT")
@@ -45,6 +46,10 @@ public class ClassificationResult {
 
     @Column(length = 50)
     private String modelVersion;
+
+    /** Version of the deterministic taxonomy table that produced this row (M3, V19); NULL on historical rows. */
+    @Column(name = "taxonomy_version", length = 50)
+    private String taxonomyVersion;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -153,5 +158,22 @@ public class ClassificationResult {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getTaxonomyVersion() {
+        return taxonomyVersion;
+    }
+
+    public void setTaxonomyVersion(String taxonomyVersion) {
+        this.taxonomyVersion = taxonomyVersion;
+    }
+
+    /**
+     * M3 (ADR-003 §4): true only for a deterministic row (it has a taxonomy version) whose class is recoverable. A pre-M3,
+     * AI-classified row fails closed even when its class name matches a taxonomy class (e.g. INSUFFICIENT_FUNDS).
+     * Not a getter name, so JPA and Jackson ignore it.
+     */
+    public boolean deterministicAndRecoverable() {
+        return taxonomyVersion != null && com.mend.taxonomy.PaymentFailureClass.isRecoverable(failureClass);
     }
 }

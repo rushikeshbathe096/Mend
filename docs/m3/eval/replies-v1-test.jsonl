@@ -1,0 +1,40 @@
+{"id": "t001", "text": "Quit bugging me with these notifications.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t002", "text": "I want these messages to end.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t003", "text": "Please take me off this reminder service.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t004", "text": "Enough with the texts already.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t005", "text": "Don't message this number.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t006", "text": "I'd rather not hear from you again.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t007", "text": "Cease all communication with me.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t008", "text": "No further contact please.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t009", "text": "The bill is cleared on my end.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t010", "text": "I sent the money on Monday.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t011", "text": "Payment has gone through from my side.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t012", "text": "I completed the transaction yesterday evening.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t013", "text": "It's paid, see the receipt attached.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t014", "text": "My bank shows the debit, it's done.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t015", "text": "I settled up with you already.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t016", "text": "Funds were sent this morning.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t017", "text": "I don't recognise this charge at all.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t018", "text": "Someone used my card without permission.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t019", "text": "That price is not what we agreed.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t020", "text": "I cancelled before the renewal date, so this is a mistake.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t021", "text": "The order never arrived, I'm not paying for it.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t022", "text": "My bank is investigating this debit.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t023", "text": "I was charged for something I never ordered.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t024", "text": "This invoice is inflated.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t025", "text": "I'll get it sorted on 2026-11-15.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-11-15", "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t026", "text": "Can I pay in a couple of days?", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t027", "text": "I'm going to pay once my refund arrives.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t028", "text": "Expect the payment on 2026-12-01.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-12-01", "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t029", "text": "Will do it after the weekend.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t030", "text": "I plan to pay the full amount next Monday.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t031", "text": "Count on payment by end of the month.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t032", "text": "Payment coming on 2026-11-20.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-11-20", "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t033", "text": "What's my outstanding balance?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t034", "text": "Is this message legit?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t035", "text": "Can I talk to a human?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t036", "text": "Send details to my email instead.", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t037", "text": "Why did my payment fail?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t038", "text": "Good morning", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t039", "text": "How do I add a new card?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}
+{"id": "t040", "text": "What happens if I miss the date?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-test"}

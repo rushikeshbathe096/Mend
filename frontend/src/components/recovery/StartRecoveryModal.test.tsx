@@ -56,6 +56,7 @@ const mockStartRecoveryResponse = {
     externalReference: 'ref_razorpay_999',
     message: 'Payment recovered via provider',
   },
+  // M3: a pre-M3 backend sent agent decisions; the modal must not render them (field kept to prove that)
   agentDecisions: [
     {
       id: 'ad-1',
@@ -71,7 +72,7 @@ const mockStartRecoveryResponse = {
   ],
   complianceStatus: 'COMPLIANCE_ALLOWED',
   requiresHumanApproval: false,
-  message: 'Recovery executed successfully! Payment recovered via provider.',
+  message: 'Mock provider simulated a capture (SYNTHETIC, no real money moved).',
 };
 
 describe('StartRecoveryModal', () => {
@@ -133,11 +134,11 @@ describe('StartRecoveryModal', () => {
     // Verify Review step
     await waitFor(() => {
       expect(screen.getByText('Authoritative Recovery Pipeline Execution:')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Start AI Recovery/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Start Recovery$/i })).toBeInTheDocument();
     });
 
-    // Click Start AI Recovery
-    const startBtn = screen.getByRole('button', { name: /Start AI Recovery/i });
+    // Click Start Recovery
+    const startBtn = screen.getByRole('button', { name: /^Start Recovery$/i });
     fireEvent.click(startBtn);
 
     // Verify API call and outcome
@@ -147,9 +148,18 @@ describe('StartRecoveryModal', () => {
         { paymentId: 'pay_demo_test_123', customerIdHash: 'cust_hash_1' },
         { merchantId: 'm-456' }
       );
-      expect(screen.getByText('Payment Recovery Successful!')).toBeInTheDocument();
-      expect(screen.getByText(/Transient bank decline. Immediate retry authorized/i)).toBeInTheDocument();
+      // U2.3 review fix: a mock SUCCESS is never headed as recovered money, even with the campaign RECOVERED
+      expect(screen.getByText('Simulated Capture (mock provider)')).toBeInTheDocument();
+      expect(screen.queryByText('Payment Recovered')).not.toBeInTheDocument();
+      expect(screen.getByText(/SYNTHETIC, no real money moved/)).toBeInTheDocument();
       expect(onRecoveryComplete).toHaveBeenCalled();
+    });
+    // M3 behaviour change (ADR-003 §3): agent decisions and confidences are not shown
+    expect(screen.queryByText(/Transient bank decline/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/% Confidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/agent/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Simulated Capture (mock provider)')).toBeInTheDocument();
     });
   });
 });

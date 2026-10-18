@@ -3,7 +3,8 @@ package com.mend.controller;
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.enums.CampaignStatus;
-import com.mend.domain.repository.AgentDecisionRecordRepository;
+import com.mend.domain.repository.ComplianceDecisionRepository;
+import com.mend.domain.repository.ReviewQueueRepository;
 import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.dto.*;
@@ -34,7 +35,8 @@ public class CampaignController {
     private final RecoveryOrchestratorService recoveryOrchestratorService;
     private final ActionIntentService actionIntentService;
     private final ActionExecutionService actionExecutionService;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
+    private final ComplianceDecisionRepository complianceDecisionRepository;
+    private final ReviewQueueRepository reviewQueueRepository;
     private final CampaignRepository campaignRepository;
     private final ActionIntentRepository actionIntentRepository;
     private final AuditService auditService;
@@ -46,7 +48,8 @@ public class CampaignController {
             RecoveryOrchestratorService recoveryOrchestratorService,
             ActionIntentService actionIntentService,
             ActionExecutionService actionExecutionService,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
+            ComplianceDecisionRepository complianceDecisionRepository,
+            ReviewQueueRepository reviewQueueRepository,
             CampaignRepository campaignRepository,
             ActionIntentRepository actionIntentRepository,
             AuditService auditService,
@@ -56,7 +59,8 @@ public class CampaignController {
         this.recoveryOrchestratorService = recoveryOrchestratorService;
         this.actionIntentService = actionIntentService;
         this.actionExecutionService = actionExecutionService;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
+        this.complianceDecisionRepository = complianceDecisionRepository;
+        this.reviewQueueRepository = reviewQueueRepository;
         this.campaignRepository = campaignRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.auditService = auditService;
@@ -161,7 +165,7 @@ public class CampaignController {
                 "Manual recovery initiated for payment: " + campaign.getPaymentId()
         );
 
-        // 2. Execute 6-Agent Orchestration, Compliance, Strategy, and ActionIntent Creation
+        // 2. Deterministic orchestration: strategy, compliance, ActionIntent creation (no AI, ADR-003)
         ActionIntent actionIntent = recoveryOrchestratorService.orchestrateRecovery(effectiveMerchantId, campaign.getId());
 
         // 3. If an ActionIntent is created and claimable, claim it atomically (same primitive as the scheduler) and
@@ -187,18 +191,17 @@ public class CampaignController {
         CampaignDto campaignDto = CampaignDto.fromEntity(updatedCampaign);
         ActionIntentDto actionIntentDto = actionIntent != null ? ActionIntentDto.fromEntity(actionIntent) : null;
 
-        List<AgentDecisionRecordDto> agentDecisions = agentDecisionRecordRepository
-                .findByCampaignIdOrderByCreatedAtDesc(campaign.getId())
-                .stream()
-                .map(AgentDecisionRecordDto::fromEntity)
-                .collect(Collectors.toList());
-
-        boolean requiresHumanApproval = agentDecisions.stream().anyMatch(AgentDecisionRecordDto::isRequiresHumanApproval);
-        String complianceStatus = agentDecisions.isEmpty() ? "COMPLIANCE_ALLOWED" : agentDecisions.get(0).getComplianceStatus();
+        // M3: status from the stored compliance decision and the review queue (was: agent decision records)
+        boolean requiresHumanApproval = reviewQueueRepository
+                .findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaign.getId(), com.mend.domain.enums.ReviewQueueStatus.PENDING)
+                .isPresent();
+        String complianceStatus = complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId()).stream()
+                .findFirst().map(d -> d.getStatus().name()).orElse(null);
 
         String message = "Recovery orchestration initiated successfully.";
         if (executionResult != null && executionResult.isSuccess()) {
-            message = "Recovery executed successfully! Payment recovered via provider.";
+            // only a mock-mode synthetic capture reports SUCCESS (ActionExecutionService.toReport); a link is PENDING
+            message = "Mock provider simulated a capture (SYNTHETIC, no real money moved).";
         } else if (executionResult != null && executionResult.isFailure()) {
             message = "Recovery execution failed: " + executionResult.getMessage();
         } else if (requiresHumanApproval) {
@@ -211,7 +214,6 @@ public class CampaignController {
                 campaignDto,
                 actionIntentDto,
                 executionResult,
-                agentDecisions,
                 complianceStatus,
                 requiresHumanApproval,
                 message

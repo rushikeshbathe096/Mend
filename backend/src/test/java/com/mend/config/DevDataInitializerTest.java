@@ -26,7 +26,6 @@ public class DevDataInitializerTest {
                 .withBean(com.mend.domain.repository.RecoveryDecisionRepository.class, () -> mock(com.mend.domain.repository.RecoveryDecisionRepository.class))
                 .withBean(com.mend.domain.repository.ComplianceDecisionRepository.class, () -> mock(com.mend.domain.repository.ComplianceDecisionRepository.class))
                 .withBean(com.mend.domain.repository.ActionIntentRepository.class, () -> mock(com.mend.domain.repository.ActionIntentRepository.class))
-                .withBean(com.mend.domain.repository.AgentDecisionRecordRepository.class, () -> mock(com.mend.domain.repository.AgentDecisionRecordRepository.class))
                 .withBean(com.mend.domain.repository.ReviewQueueRepository.class, () -> mock(com.mend.domain.repository.ReviewQueueRepository.class))
                 .withBean(com.mend.domain.repository.AuditLogRepository.class, () -> mock(com.mend.domain.repository.AuditLogRepository.class))
                 .withBean(com.mend.security.PasswordHasher.class, () -> mock(com.mend.security.PasswordHasher.class))

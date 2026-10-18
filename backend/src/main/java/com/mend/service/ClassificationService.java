@@ -1,13 +1,13 @@
 package com.mend.service;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.ClassificationResultRepository;
 import com.mend.domain.repository.WebhookEventRepository;
-import com.mend.dto.ai.ClassificationRequestDto;
-import com.mend.dto.ai.ClassificationResponseDto;
+import com.mend.taxonomy.FailureClassification;
+import com.mend.taxonomy.FailureTaxonomy;
+import com.mend.taxonomy.ProviderFailure;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,24 +17,25 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.Optional;
 
+/**
+ * M3 U2.2 (ADR-003): classifies a failed payment with the deterministic {@link FailureTaxonomy} from the provider's
+ * documented error fields. No AI call, no confidence, no model version: the table version is recorded instead.
+ */
 @Service
 public class ClassificationService {
 
     private static final Logger log = LoggerFactory.getLogger(ClassificationService.class);
 
-    private final AiClassificationClient aiClassificationClient;
     private final ClassificationResultRepository classificationResultRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final CampaignLifecycleService campaignLifecycleService;
     private final AuditService auditService;
 
     public ClassificationService(
-            AiClassificationClient aiClassificationClient,
             ClassificationResultRepository classificationResultRepository,
             WebhookEventRepository webhookEventRepository,
             @Autowired(required = false) CampaignLifecycleService campaignLifecycleService,
             @Autowired(required = false) AuditService auditService) {
-        this.aiClassificationClient = aiClassificationClient;
         this.classificationResultRepository = classificationResultRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.campaignLifecycleService = campaignLifecycleService;
@@ -42,7 +43,7 @@ public class ClassificationService {
     }
 
     @Transactional
-    public ClassificationResult classifyAndPersist(WebhookEvent event, String failureCode, String failureReason) {
+    public ClassificationResult classifyAndPersist(WebhookEvent event, ProviderFailure failure) {
         // Task 10: Check Idempotency via Database Constraint / Query
         Optional<ClassificationResult> existing = classificationResultRepository.findByEventId(event.getId());
         if (existing.isPresent()) {
@@ -54,47 +55,25 @@ public class ClassificationService {
             return existingResult;
         }
 
-        ClassificationRequestDto request = ClassificationRequestDto.of(
-                event.getId(),
-                event.getEventType(),
-                failureCode,
-                failureReason,
-                event.getSource(),
-                event.getMerchantId()
-        );
-
-        ClassificationResponseDto response;
-        try {
-            response = aiClassificationClient.classify(request);
-        } catch (Exception e) {
-            log.warn("AI classification client call failed for eventId='{}': {}. Applying UNKNOWN fallback.", event.getId(), e.getMessage());
-            response = new ClassificationResponseDto(
-                    com.mend.domain.enums.FailureClass.UNKNOWN,
-                    new java.math.BigDecimal("0.30"),
-                    com.mend.domain.enums.RecommendedAction.REVIEW_REQUIRED,
-                    "AI classification service unavailable: " + e.getMessage(),
-                    "v1.0.0-fallback"
-            );
-        }
+        FailureClassification classification = FailureTaxonomy.classify(failure);
 
         ClassificationResult result = new ClassificationResult(
                 null,
                 event.getId(),
                 null,
-                response.classification().name(),
-                response.confidence(),
-                response.recommendedAction().name(),
-                response.reason(),
-                response.modelVersion()
+                classification.failureClass().name(),
+                null,
+                null,
+                reasoning(classification),
+                null
         );
+        result.setTaxonomyVersion(classification.tableVersion());
 
-        java.util.Map<String, Object> safeEvidence = response.evidence() != null 
-                ? new java.util.HashMap<>(response.evidence()) 
-                : new java.util.HashMap<>();
-        safeEvidence.putIfAbsent("eventId", event.getId());
-        safeEvidence.putIfAbsent("merchantId", event.getMerchantId());
-        safeEvidence.putIfAbsent("modelVersion", response.modelVersion());
-        result.setEvidence(safeEvidence);
+        java.util.Map<String, Object> evidence = new java.util.LinkedHashMap<>();
+        evidence.put("eventId", event.getId());
+        evidence.put("merchantId", event.getMerchantId());
+        evidence.putAll(classification.evidence(failure));
+        result.setEvidence(evidence);
 
         ClassificationResult savedResult = classificationResultRepository.save(result);
 
@@ -103,25 +82,17 @@ public class ClassificationService {
         event.setProcessedAt(Instant.now());
         webhookEventRepository.save(event);
 
-        log.info("Successfully classified and persisted eventId='{}' [classification='{}', confidence={}]",
-                event.getId(), response.classification(), response.confidence());
+        log.info("Classified eventId='{}' as {} (matched on {}, table {})",
+                event.getId(), classification.failureClass(), classification.matchedOn(), classification.tableVersion());
 
-        // Emit audit log
         if (auditService != null) {
-            java.util.Map<String, Object> evidence = new java.util.HashMap<>();
-            evidence.put("failureClass", response.classification().name());
-            evidence.put("confidence", response.confidence());
-            evidence.put("recommendedAction", response.recommendedAction().name());
-            evidence.put("modelVersion", response.modelVersion());
-            evidence.put("eventId", event.getId());
-
             auditService.logStructuredEvent(
                     event.getMerchantId(),
                     null,
-                    "AI_CLASSIFICATION_COMPLETED",
+                    "FAILURE_CLASSIFIED",
                     "SYSTEM",
                     null,
-                    "AI classification: " + response.classification() + " (Confidence: " + response.confidence() + ")",
+                    "Deterministic classification: " + classification.failureClass() + " (" + classification.matchedOn() + ")",
                     null,
                     evidence
             );
@@ -139,6 +110,14 @@ public class ClassificationService {
         }
 
         return savedResult;
+    }
+
+    private static String reasoning(FailureClassification c) {
+        return switch (c.matchedOn()) {
+            case REASON -> "Razorpay error_reason '" + c.matchedValue() + "' (" + c.documentation() + ")";
+            case SOURCE -> "No error_reason; Razorpay error_source '" + c.matchedValue() + "' (" + c.documentation() + ")";
+            case NONE -> "No documented Razorpay error_reason or error_source mapping: UNCLASSIFIED";
+        };
     }
 
     public Optional<ClassificationResult> getClassificationByEventId(java.util.UUID eventId) {

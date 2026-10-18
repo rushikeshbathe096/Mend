@@ -42,6 +42,7 @@ const pendingReview = {
   reason: 'High-value recovery requires merchant approval.',
   status: 'PENDING',
   createdAt: '2026-09-05T10:00:00Z',
+  // pre-M3 fields an old API row may still carry; the page must not render them (M3, ADR-003 §3)
   agentDecision: 'RETRY_PAYMENT',
   agentSelectedAction: 'RETRY_PAYMENT',
   agentConfidence: 0.9,
@@ -54,7 +55,7 @@ describe('RecoveryActionsPage', () => {
     jest.clearAllMocks();
   });
 
-  it('renders the approval queue with agent consensus evidence', async () => {
+  it('renders the approval queue with the failure class and strategy, never agent consensus', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
       if (url.startsWith('/reviews?status=PENDING')) {
         return Promise.resolve({ content: [pendingReview], page: 0, size: 50, totalElements: 1, totalPages: 1, last: true });
@@ -73,8 +74,14 @@ describe('RecoveryActionsPage', () => {
     await waitFor(() => {
       expect(screen.getByText('pay_high_risk_1')).toBeInTheDocument();
       expect(screen.getByText(/High-value recovery requires merchant approval/i)).toBeInTheDocument();
-      expect(screen.getByText('RETRY_PAYMENT')).toBeInTheDocument();
+      // M3 behaviour change: was the agent decision 'RETRY_PAYMENT' (and its 90% confidence)
+      expect(screen.getByText('AUTHENTICATION_FAILED')).toBeInTheDocument();
+      expect(screen.getByText('RETRY_IMMEDIATELY')).toBeInTheDocument();
     });
+    expect(screen.queryByText('RETRY_PAYMENT')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Confidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/exceeds the automated-retry threshold/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Agent/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Approve Recovery' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
   });

@@ -36,11 +36,11 @@ public class DemoScenarioDto {
     public static List<DemoScenarioDto> catalog() {
         return List.of(
                 new DemoScenarioDto("LOW_RISK_RETRY", "Low-Risk Automated Retry",
-                        "SIMULATED: A transient payment failure is classified as low risk, passes compliance, and is retried through the provider boundary to a recovered outcome.",
-                        List.of("Failed payment", "Classification", "LOW risk", "Recovery decision", "Strategy", "Compliance", "ActionIntent", "Provider execution", "Recovered")),
+                        "SIMULATED: an insufficient_funds failure is classified by the deterministic Razorpay taxonomy, passes compliance, and is retried through the provider boundary (mock provider) to a recovered outcome.",
+                        List.of("Failed payment", "Taxonomy class", "Strategy", "Compliance", "ActionIntent", "Provider execution", "Recovered")),
                 new DemoScenarioDto("HIGH_RISK_HUMAN_REVIEW", "High-Risk Human Review",
-                        "SIMULATED: A high-value failure is flagged by the risk agent, supervisor consensus requires merchant review, and the campaign waits in the approval queue for an Approve / Reject decision.",
-                        List.of("Failed payment", "HIGH risk", "Agent disagreement", "Supervisor consensus", "HUMAN_APPROVAL", "Merchant approval", "Compliance revalidation", "Execution", "Outcome")),
+                        "SIMULATED: a high-value failure is held for merchant review by the demo (a review item, not an AI decision); approving it revalidates compliance before execution.",
+                        List.of("Failed payment", "Taxonomy class", "Review item", "Merchant approval", "Compliance revalidation", "Execution", "Outcome")),
                 new DemoScenarioDto("CUSTOMER_ACTION", "Customer Action",
                         "SIMULATED: A card failure routes to a customer payment link; when the customer completes payment, the captured webhook reconciles the campaign to recovered.",
                         List.of("Card/payment failure", "CUSTOMER_ACTION_REQUIRED", "Payment link", "Customer action", "Captured webhook", "Reconciliation", "Recovered")),
@@ -50,9 +50,9 @@ public class DemoScenarioDto {
                 new DemoScenarioDto("DUPLICATE_EVENT", "Duplicate Event Interception",
                         "SIMULATED: The same webhook delivered twice is intercepted by strict deduplication: one business event, one recovery path.",
                         List.of("Webhook delivery", "Duplicate delivery", "Deduplication", "One business event")),
-                new DemoScenarioDto("AGENT_FAILURE", "Agent Failure Safe Fallback",
-                        "SIMULATED: An AI/MCP failure triggers the deterministic fallback, which makes a safe no-retry decision instead of an unsafe action.",
-                        List.of("AI/MCP failure", "Deterministic fallback", "Safe decision", "No unsafe action", "Campaign closed"))
+                new DemoScenarioDto("UNCLASSIFIED_FAILURE", "Unclassified Failure",
+                        "SIMULATED: a failure whose error_reason has no documented mapping is UNCLASSIFIED; it is never guessed and no payment action is taken.",
+                        List.of("Failed payment", "UNCLASSIFIED", "Ineligible", "No payment action", "Campaign closed"))
         );
     }
 }

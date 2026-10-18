@@ -43,7 +43,8 @@ export interface CampaignDto {
   subscriptionId?: string;
   currentState: string;
   failureClass?: string;
-  confidence?: number;
+  /** M3: set when the customer opted out of contact (compliance blocks CUSTOMER_OPTED_OUT). */
+  contactOptedOutAt?: string | null;
   strategy?: string;
   attemptCount: number;
   nextActionAt?: string;
@@ -70,7 +71,6 @@ export interface PaymentDetailDto {
   campaign: CampaignDto;
   attempts: CampaignAttemptDto[];
   actionIntents: ActionIntentDto[];
-  agentDecisions: AgentDecisionRecordDto[];
   complianceDecisions: ComplianceDecisionDto[];
   auditLogs: AuditLogDto[];
 }
@@ -111,7 +111,8 @@ export interface ClassificationResultDto {
   campaignId: string;
   eventId?: string;
   failureClass: string;
-  confidence: number;
+  /** Taxonomy table version of a deterministic row (M3); null/absent on a legacy pre-M3 row. */
+  taxonomyVersion?: string | null;
   strategyRecommendation?: string;
   reasoning?: string;
   evidence?: Record<string, unknown>;
@@ -127,7 +128,6 @@ export interface RecoveryDecisionDto {
   strategy: string;
   reason: string;
   priority: string;
-  confidence?: number;
   policyVersion: string;
   evaluatedAt: string;
 }
@@ -242,13 +242,6 @@ export interface AnalyticsOverviewDto {
   averageExecutionLatencyMs?: number;
 }
 
-export interface AiConfidenceMetrics {
-  averageConfidence?: number;
-  highConfidenceCount?: number;
-  mediumConfidenceCount?: number;
-  lowConfidenceCount?: number;
-}
-
 export interface ComplianceMetrics {
   totalEvaluated?: number;
   allowedCount?: number;
@@ -268,7 +261,6 @@ export interface AnalyticsRecoveryDto {
   recoveryRateByFailureClass?: Record<string, number>;
   actionTypeBreakdown?: Record<string, number>;
   providerOutcomes?: Record<string, number>;
-  aiConfidenceMetrics?: AiConfidenceMetrics;
   complianceMetrics?: ComplianceMetrics;
   retryMetrics?: RetryMetrics;
 }
@@ -295,25 +287,6 @@ export interface UpdateMerchantConfigRequest {
   enabledRecoveryActions?: string[];
 }
 
-export interface AgentDecisionRecordDto {
-  id: string;
-  campaignId: string;
-  merchantId: string;
-  paymentId?: string;
-  decision: string;
-  selectedAction?: string;
-  confidence?: number;
-  reasoning: string;
-  evidence?: string;
-  nextStep?: string;
-  stopReason?: string;
-  modelVersion?: string;
-  requiresHumanApproval: boolean;
-  complianceStatus?: string;
-  executionStatus?: string;
-  createdAt: string;
-}
-
 export interface ReviewItemDto {
   id: string;
   merchantId: string;
@@ -321,7 +294,6 @@ export interface ReviewItemDto {
   paymentId?: string;
   customerIdHash?: string;
   failureClass?: string;
-  confidence?: number;
   campaignState?: string;
   strategy?: string;
   attemptCount?: number;
@@ -333,13 +305,6 @@ export interface ReviewItemDto {
   createdAt: string;
   reviewedAt?: string;
   expiresAt?: string;
-  agentDecision?: string;
-  agentSelectedAction?: string;
-  agentConfidence?: number;
-  agentReasoning?: string;
-  agentEvidence?: string;
-  agentModelVersion?: string;
-  agentRequiresHumanApproval?: boolean;
 }
 
 export interface ReviewDecisionResponse {
@@ -417,16 +382,13 @@ export interface AnalyticsStrategyPerformanceDto {
   strategies: StrategyMetricDto[];
 }
 
+/** Only measured values (M3); null = not measured. */
 export interface OperationalHealthDto {
-  status?: string;
-  processingEvents?: number;
-  dlqCount?: number;
-  aiFallbackCount?: number;
-  providerFailures?: number;
-  complianceBlocks?: number;
-  activeCampaigns?: number;
-  message?: string;
-  components?: Record<string, unknown>;
+  status: 'UP' | 'UNKNOWN';
+  redisStreamLag: number | null;
+  dlqEventCount: number | null;
+  webhookProcessingLatencyMs: number | null;
+  timestamp: string;
 }
 
 export interface StartRecoveryRequest {
@@ -447,9 +409,33 @@ export interface StartRecoveryResponseDto {
   campaign: CampaignDto;
   actionIntent?: ActionIntentDto;
   executionResult?: PaymentExecutionResult;
-  agentDecisions: AgentDecisionRecordDto[];
-  complianceStatus: string;
+  /** Status of the latest stored compliance decision; null when none was evaluated. */
+  complianceStatus: string | null;
   requiresHumanApproval: boolean;
   message: string;
 }
 
+/** A model *suggestion* for a customer reply (M3). Only the deterministic policy acts on it; `effect` is what it did. */
+export interface ReplySuggestionDto {
+  valid: boolean;
+  intent: 'OPT_OUT' | 'ALREADY_PAID' | 'DISPUTE' | 'PROMISE_TO_PAY' | 'OTHER' | null;
+  promisedDate: string | null;
+  abstain: boolean | null;
+  validationError: string | null;
+  /** Exactly as the model provider reported it; null when it reported none. */
+  modelId: string | null;
+  promptVersion: string | null;
+  effect: string;
+  createdAt: string;
+}
+
+export interface CustomerReplyDto {
+  id: string;
+  campaignId: string;
+  text: string;
+  status: 'PENDING' | 'PARSED' | 'FAILED';
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  suggestion: ReplySuggestionDto | null;
+}

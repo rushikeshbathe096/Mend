@@ -2,45 +2,31 @@ package com.mend.dto;
 
 import java.time.Instant;
 
+/**
+ * Operational health (M3, ADR-003; invariant 3): only measured values. {@code status} is UP when the Redis stream
+ * metrics could be read and UNKNOWN otherwise; a value that is not measured yet is null (metrics registration is M5),
+ * never a placeholder number.
+ */
 public class OperationalHealthDto {
 
     private final String status;
-    private final long webhookProcessingLatencyMs;
-    private final long redisStreamLag;
-    private final long dlqEventCount;
-    private final long actionExecutionFailures;
-    private final long providerErrors;
-    private final String aiServiceAvailability;
-    private final double aiFallbackRate;
+    private final Long redisStreamLag;
+    private final Long dlqEventCount;
+    /** Not measured yet (M5 metrics): always null. */
+    private final Long webhookProcessingLatencyMs;
     private final Instant timestamp;
 
-    public OperationalHealthDto(
-            String status,
-            long webhookProcessingLatencyMs,
-            long redisStreamLag,
-            long dlqEventCount,
-            long actionExecutionFailures,
-            long providerErrors,
-            String aiServiceAvailability,
-            double aiFallbackRate) {
+    public OperationalHealthDto(String status, Long redisStreamLag, Long dlqEventCount) {
         this.status = status;
-        this.webhookProcessingLatencyMs = webhookProcessingLatencyMs;
         this.redisStreamLag = redisStreamLag;
         this.dlqEventCount = dlqEventCount;
-        this.actionExecutionFailures = actionExecutionFailures;
-        this.providerErrors = providerErrors;
-        this.aiServiceAvailability = aiServiceAvailability;
-        this.aiFallbackRate = aiFallbackRate;
+        this.webhookProcessingLatencyMs = null;
         this.timestamp = Instant.now();
     }
 
     public String getStatus() { return status; }
-    public long getWebhookProcessingLatencyMs() { return webhookProcessingLatencyMs; }
-    public long getRedisStreamLag() { return redisStreamLag; }
-    public long getDlqEventCount() { return dlqEventCount; }
-    public long getActionExecutionFailures() { return actionExecutionFailures; }
-    public long getProviderErrors() { return providerErrors; }
-    public String getAiServiceAvailability() { return aiServiceAvailability; }
-    public double getAiFallbackRate() { return aiFallbackRate; }
+    public Long getRedisStreamLag() { return redisStreamLag; }
+    public Long getDlqEventCount() { return dlqEventCount; }
+    public Long getWebhookProcessingLatencyMs() { return webhookProcessingLatencyMs; }
     public Instant getTimestamp() { return timestamp; }
 }

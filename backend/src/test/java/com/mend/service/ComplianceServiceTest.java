@@ -37,6 +37,9 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
     private ComplianceService complianceService;
 
     @Autowired
+    private com.mend.domain.repository.MerchantConfigRepository merchantConfigRepositoryM3;
+
+    @Autowired
     private RecoveryStrategyService recoveryStrategyService;
 
     @Autowired
@@ -104,11 +107,11 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
 
         // 3. Classification Result
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), campaign.getId(),
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
 
         // 4. Strategy Engine Evaluation
@@ -122,7 +125,9 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         assertEquals(ComplianceStatus.COMPLIANCE_ALLOWED, complianceDecision.getStatus());
         assertEquals(ComplianceReason.ALLOWED, complianceDecision.getReason());
         assertEquals(RecoveryStrategy.RETRY_LATER, complianceDecision.getStrategy());
-        assertEquals("v1.0", complianceDecision.getPolicyVersion());
+        // M3 behaviour change (ADR-003 §4): compliance policy v2.0 (taxonomy-class rule, no confidence rule); was v1.0
+        // M3 behaviour change: v2.1 adds the CUSTOMER_OPTED_OUT rule (ADR-003 §5)
+        assertEquals("v2.1", complianceDecision.getPolicyVersion());
 
         // 6. DB Verification
         List<ComplianceDecisionEntity> persistedDecisions = complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId());
@@ -135,7 +140,7 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("End-to-End Pipeline: Low Confidence Strategy -> Compliance Gate (Blocked)")
+    @DisplayName("End-to-End Pipeline: strategy not enabled by the merchant -> MANUAL_REVIEW -> Compliance Gate (Blocked)")
     void testEndToEndComplianceBlockedPipeline() {
         WebhookEvent event = new WebhookEvent(UUID.randomUUID(), "EVT-COMP-2", "payment.failed");
         event.setMerchantId(merchantId);
@@ -145,12 +150,17 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "Classified", "SYSTEM", null);
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
 
-        // Low confidence classification (0.60 < 0.80)
-        ClassificationResult classification = new ClassificationResult(
+        // M3 behaviour change (ADR-003 §4): was a low-confidence (0.60 < 0.80) INSUFFICIENT_FUNDS row; confidence is no
+        // longer consulted, so the deterministic way to the same MANUAL_REVIEW block is the merchant's enabled actions:
+        // INSUFFICIENT_FUNDS computes RETRY_LATER, which this merchant has not enabled.
+        MerchantConfig config = new MerchantConfig(UUID.randomUUID(), merchantId);
+        config.setEnabledRecoveryActions("CUSTOMER_ACTION_REQUIRED");
+        merchantConfigRepositoryM3.save(config);
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), campaign.getId(),
-                "INSUFFICIENT_FUNDS", new BigDecimal("0.60"),
-                "SCHEDULE_RETRY", "Low confidence", "v1.0.0"
-        );
+                "INSUFFICIENT_FUNDS", null,
+                null, "Razorpay error_reason 'insufficient_funds'", null
+        ));
         classificationResultRepository.save(classification);
 
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
@@ -263,10 +273,10 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, "CUST-DUP", null);
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED, "Classified", "SYSTEM", null);
         campaign = campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible", "SYSTEM", null);
-        classificationResultRepository.save(new ClassificationResult(
+        classificationResultRepository.save(com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), campaign.getId(),
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
-                "SCHEDULE_RETRY", "Soft failure", "v1.0.0"));
+                "SCHEDULE_RETRY", "Soft failure", "v1.0.0")));
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
 
         campaign.setAttemptCount(attemptCount);

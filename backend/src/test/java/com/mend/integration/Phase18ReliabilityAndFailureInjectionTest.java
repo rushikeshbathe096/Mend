@@ -31,6 +31,9 @@ import static org.junit.jupiter.api.Assertions.*;
 public class Phase18ReliabilityAndFailureInjectionTest extends AbstractIntegrationTest {
 
     @Autowired
+    private com.mend.domain.repository.ClassificationResultRepository classificationResultRepository;
+
+    @Autowired
     private MerchantRepository merchantRepository;
 
     @Autowired
@@ -74,6 +77,7 @@ public class Phase18ReliabilityAndFailureInjectionTest extends AbstractIntegrati
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
         campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);   // M3: deterministic row (ADR-003 §4)
 
         // First creation succeeds
         ActionIntent intent1 = actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId());
@@ -105,6 +109,7 @@ public class Phase18ReliabilityAndFailureInjectionTest extends AbstractIntegrati
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
         campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);   // M3: deterministic row (ADR-003 §4)
 
         assertThrows(TenantAccessDeniedException.class, () -> {
             actionIntentService.createActionIntentFromCompliance(otherMerchantId, campaign.getId());
@@ -123,6 +128,7 @@ public class Phase18ReliabilityAndFailureInjectionTest extends AbstractIntegrati
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
         campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);   // M3: deterministic row (ADR-003 §4)
 
         assertThrows(InvalidCampaignStateException.class, () -> {
             actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId());
@@ -141,6 +147,7 @@ public class Phase18ReliabilityAndFailureInjectionTest extends AbstractIntegrati
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
         campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);   // M3: deterministic row (ADR-003 §4)
 
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, campaign.getId());
         assertNotNull(intent);

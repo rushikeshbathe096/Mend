@@ -10,8 +10,8 @@ import java.util.UUID;
 
 /**
  * Merchant-facing representation of a human-approval review item.
- * Combines the review queue record with the authoritative campaign context and
- * the structured agent decision summary (never raw chain-of-thought).
+ * Combines the review queue record with the authoritative campaign context
+ * (M3: no agent fields, ADR-003).
  */
 public class ReviewItemDto {
 
@@ -21,7 +21,6 @@ public class ReviewItemDto {
     private String paymentId;
     private String customerIdHash;
     private String failureClass;
-    private BigDecimal confidence;
     private String campaignState;
     private String strategy;
     private Integer attemptCount;
@@ -35,19 +34,10 @@ public class ReviewItemDto {
     private Instant reviewedAt;
     private Instant expiresAt;
 
-    // Structured agent decision summary (evidence-based, not chain-of-thought)
-    private String agentDecision;
-    private String agentSelectedAction;
-    private BigDecimal agentConfidence;
-    private String agentReasoning;
-    private String agentEvidence;
-    private String agentModelVersion;
-    private boolean agentRequiresHumanApproval;
-
     public ReviewItemDto() {
     }
 
-    public static ReviewItemDto from(ReviewQueue review, Campaign campaign, AgentDecisionRecordDto agentDecision, BigDecimal amount) {
+    public static ReviewItemDto from(ReviewQueue review, Campaign campaign, BigDecimal amount) {
         ReviewItemDto dto = new ReviewItemDto();
         dto.id = review.getId();
         dto.merchantId = review.getMerchantId();
@@ -64,20 +54,9 @@ public class ReviewItemDto {
             dto.paymentId = campaign.getPaymentId();
             dto.customerIdHash = campaign.getCustomerIdHash();
             dto.failureClass = campaign.getFailureClass();
-            dto.confidence = campaign.getConfidence();
             dto.campaignState = campaign.getCurrentState() != null ? campaign.getCurrentState().name() : null;
             dto.strategy = campaign.getStrategy();
             dto.attemptCount = campaign.getAttemptCount();
-        }
-
-        if (agentDecision != null) {
-            dto.agentDecision = agentDecision.getDecision();
-            dto.agentSelectedAction = agentDecision.getSelectedAction();
-            dto.agentConfidence = agentDecision.getConfidence();
-            dto.agentReasoning = agentDecision.getReasoning();
-            dto.agentEvidence = agentDecision.getEvidence();
-            dto.agentModelVersion = agentDecision.getModelVersion();
-            dto.agentRequiresHumanApproval = agentDecision.isRequiresHumanApproval();
         }
 
         dto.amount = amount;
@@ -96,8 +75,6 @@ public class ReviewItemDto {
     public void setCustomerIdHash(String customerIdHash) { this.customerIdHash = customerIdHash; }
     public String getFailureClass() { return failureClass; }
     public void setFailureClass(String failureClass) { this.failureClass = failureClass; }
-    public BigDecimal getConfidence() { return confidence; }
-    public void setConfidence(BigDecimal confidence) { this.confidence = confidence; }
     public String getCampaignState() { return campaignState; }
     public void setCampaignState(String campaignState) { this.campaignState = campaignState; }
     public String getStrategy() { return strategy; }
@@ -120,18 +97,4 @@ public class ReviewItemDto {
     public void setReviewedAt(Instant reviewedAt) { this.reviewedAt = reviewedAt; }
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
-    public String getAgentDecision() { return agentDecision; }
-    public void setAgentDecision(String agentDecision) { this.agentDecision = agentDecision; }
-    public String getAgentSelectedAction() { return agentSelectedAction; }
-    public void setAgentSelectedAction(String agentSelectedAction) { this.agentSelectedAction = agentSelectedAction; }
-    public BigDecimal getAgentConfidence() { return agentConfidence; }
-    public void setAgentConfidence(BigDecimal agentConfidence) { this.agentConfidence = agentConfidence; }
-    public String getAgentReasoning() { return agentReasoning; }
-    public void setAgentReasoning(String agentReasoning) { this.agentReasoning = agentReasoning; }
-    public String getAgentEvidence() { return agentEvidence; }
-    public void setAgentEvidence(String agentEvidence) { this.agentEvidence = agentEvidence; }
-    public String getAgentModelVersion() { return agentModelVersion; }
-    public void setAgentModelVersion(String agentModelVersion) { this.agentModelVersion = agentModelVersion; }
-    public boolean isAgentRequiresHumanApproval() { return agentRequiresHumanApproval; }
-    public void setAgentRequiresHumanApproval(boolean agentRequiresHumanApproval) { this.agentRequiresHumanApproval = agentRequiresHumanApproval; }
 }

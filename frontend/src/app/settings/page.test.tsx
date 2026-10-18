@@ -97,5 +97,33 @@ describe('SettingsPage', () => {
       expect(screen.getByText(/Merchant recovery configuration saved successfully!/i)).toBeInTheDocument();
     });
   });
-});
 
+  // M3 U2.3 regression: the slider was a 0.1-1.0 "AI confidence"; the backend accepts only an integer 1-10
+  it('edits the escalation threshold as an integer from 1 to 10, not as an AI confidence', async () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      token: 'jwt-token',
+      currentMerchantId: 'm-456',
+      user: { memberships: [{ merchantId: 'm-456', roleName: 'MERCHANT_ADMIN' }] },
+      isLoading: false,
+    });
+    (api.get as jest.Mock).mockResolvedValue(mockConfig);
+    (api.put as jest.Mock).mockResolvedValue({ ...mockConfig, escalationThreshold: 7 });
+
+    render(<SettingsPage />);
+
+    const slider = await screen.findByRole('slider', { name: /Escalation Threshold/i });
+    expect(slider).toHaveAttribute('min', '1');
+    expect(slider).toHaveAttribute('max', '10');
+    expect(slider).toHaveAttribute('step', '1');
+    expect(screen.getByText(/Escalation Threshold \(2 of 10\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/confidence threshold/i)).not.toBeInTheDocument();
+
+    fireEvent.change(slider, { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Merchant Settings/i }));
+
+    await waitFor(() => {
+      expect(api.put).toHaveBeenCalledWith('/merchants/config', expect.objectContaining({ escalationThreshold: 7 }),
+        { merchantId: 'm-456' });
+    });
+  });
+});

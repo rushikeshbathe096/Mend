@@ -303,7 +303,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
 
         ClassificationResult classification = classificationResultRepository.findLatestByCampaignId(campaign.getId()).orElse(null);
         if (classification == null) {
-            classification = new ClassificationResult(null, savedEvent.getId(), campaign.getId(), "INSUFFICIENT_FUNDS", BigDecimal.valueOf(0.95), "RETRY_PAYMENT", "Balance issue", "v1.0.0");
+            classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(null, savedEvent.getId(), campaign.getId(), "INSUFFICIENT_FUNDS", BigDecimal.valueOf(0.95), "RETRY_PAYMENT", "Balance issue", "v1.0.0"));
         } else {
             classification.setFailureClass("INSUFFICIENT_FUNDS");
             classification.setConfidence(BigDecimal.valueOf(0.95));
@@ -315,6 +315,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         campaign.setConfidence(BigDecimal.valueOf(0.95));
         campaign.setFailureClass("INSUFFICIENT_FUNDS");
         campaign = campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);   // M3: deterministic row (ADR-003 §4)
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE, "Eligible for recovery", "SYSTEM", null);
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, campaign.getId());
 
@@ -444,7 +445,9 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         campaign.setConfidence(BigDecimal.valueOf(0.95));
         campaign.setCreatedAt(Instant.now());
         campaign.setUpdatedAt(Instant.now());
-        return campaignRepository.saveAndFlush(campaign);
+        Campaign saved = campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, saved);   // M3: deterministic row (ADR-003 §4)
+        return saved;
     }
 
     private record LinkFixture(Campaign campaign, ActionIntent intent) {

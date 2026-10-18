@@ -1,0 +1,60 @@
+{"id": "r001", "text": "Please stop messaging me.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r002", "text": "Unsubscribe me from these reminders.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r003", "text": "Don't contact me again about this.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r004", "text": "Stop sending me payment links, I'm not interested.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r005", "text": "Remove my number from your list.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r006", "text": "I do not want any more calls or texts.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r007", "text": "Kindly stop these WhatsApp messages.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r008", "text": "No more emails please.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r009", "text": "Leave me alone, stop texting.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r010", "text": "Opt me out of all reminders.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r011", "text": "Do not call me again.", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r012", "text": "STOP", "intent": "OPT_OUT", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r013", "text": "I already paid this yesterday.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r014", "text": "Payment done, please check.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r015", "text": "I paid via UPI this morning, here is the UTR.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r016", "text": "This was settled last week.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r017", "text": "Already paid through the link you sent.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r018", "text": "Money was debited from my account already.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r019", "text": "I made the payment on the 12th.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r020", "text": "Paid. Why am I still getting reminders?", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r021", "text": "The amount has been transferred.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r022", "text": "I cleared the dues at the branch.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r023", "text": "Check your records, I paid in full.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r024", "text": "Done, I paid it online an hour ago.", "intent": "ALREADY_PAID", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r025", "text": "I never signed up for this subscription.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r026", "text": "This charge is wrong, I cancelled months ago.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r027", "text": "I did not authorize this payment.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r028", "text": "Why are you charging me twice?", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r029", "text": "This is not my order, it's fraud.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r030", "text": "The amount is incorrect, I was promised a discount.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r031", "text": "I'm disputing this with my bank.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r032", "text": "I returned the product, I shouldn't pay.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r033", "text": "You billed me for a plan I never used.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r034", "text": "This is an unauthorized transaction.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r035", "text": "The service was never delivered, I won't pay.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r036", "text": "I raised a chargeback for this charge.", "intent": "DISPUTE", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r037", "text": "I'll pay on 2026-11-05.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-11-05", "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r038", "text": "Will pay after my salary comes in.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r039", "text": "I can pay this by Friday.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r040", "text": "Give me till the 2026-11-10, I'll clear it.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-11-10", "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r041", "text": "I'll pay tomorrow.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r042", "text": "Sure, I will make the payment next week.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r043", "text": "Paying on 2026-10-30 for sure.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-10-30", "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r044", "text": "I will retry the payment tonight.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r045", "text": "Let me pay at month end.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r046", "text": "I'll top up my account and pay on 2026-11-01.", "intent": "PROMISE_TO_PAY", "promised_date": "2026-11-01", "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r047", "text": "Will settle it this weekend.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r048", "text": "Ok I will pay soon.", "intent": "PROMISE_TO_PAY", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r049", "text": "What is this charge for?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r050", "text": "Can you send me the invoice?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r051", "text": "Who is this?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r052", "text": "My card expired, how do I update it?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r053", "text": "Can I change my plan?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r054", "text": "Thanks", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r055", "text": "Is there a late fee?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r056", "text": "Call me after 6 pm.", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r057", "text": "Which account is this for?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r058", "text": "I'm travelling, will check later.", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r059", "text": "Can you resend the link?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}
+{"id": "r060", "text": "Hello?", "intent": "OTHER", "promised_date": null, "label_source": "SYNTHETIC", "dataset": "replies-v1-dev"}

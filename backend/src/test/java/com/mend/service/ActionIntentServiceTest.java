@@ -33,6 +33,9 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplateU9;
 
     @Autowired
+    private com.mend.domain.repository.MerchantConfigRepository merchantConfigRepositoryM3;
+
+    @Autowired
     private ActionIntentService actionIntentService;
 
     @Autowired
@@ -98,11 +101,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
 
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
@@ -156,11 +159,16 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        // M3 behaviour change (ADR-003 §4): was a low-confidence (0.50) row; MANUAL_REVIEW now comes from the merchant's
+        // enabled actions (INSUFFICIENT_FUNDS computes RETRY_LATER, which this merchant has not enabled).
+        com.mend.domain.entity.MerchantConfig config = new com.mend.domain.entity.MerchantConfig(UUID.randomUUID(), merchantId);
+        config.setEnabledRecoveryActions("CUSTOMER_ACTION_REQUIRED");
+        merchantConfigRepositoryM3.save(config);
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
-                "INSUFFICIENT_FUNDS", new BigDecimal("0.50"),
-                "MANUAL_REVIEW", "Low confidence", "v1.0.0"
-        );
+                "INSUFFICIENT_FUNDS", null,
+                null, "Razorpay error_reason 'insufficient_funds'", null
+        ));
         classificationResultRepository.save(classification);
 
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
@@ -188,11 +196,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
 
@@ -238,11 +246,11 @@ public class ActionIntentServiceTest extends AbstractIntegrationTest {
 
         final UUID targetCampaignId = campaign.getId();
 
-        ClassificationResult classification = new ClassificationResult(
+        ClassificationResult classification = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(), event.getId(), targetCampaignId,
                 "INSUFFICIENT_FUNDS", new BigDecimal("0.95"),
                 "SCHEDULE_RETRY", "Soft failure", "v1.0.0"
-        );
+        ));
         classificationResultRepository.save(classification);
         recoveryStrategyService.evaluateAndPersistStrategy(merchantId, targetCampaignId);
 

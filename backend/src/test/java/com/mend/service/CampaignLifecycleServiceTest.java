@@ -101,7 +101,7 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
         event.setMerchantId(merchantId);
         event = webhookEventRepository.save(event);
 
-        ClassificationResult result = new ClassificationResult(
+        ClassificationResult result = com.mend.testsupport.TestClassifications.deterministic(new ClassificationResult(
                 UUID.randomUUID(),
                 event.getId(),
                 null,
@@ -110,14 +110,15 @@ public class CampaignLifecycleServiceTest extends AbstractIntegrationTest {
                 "SCHEDULE_RETRY",
                 "Standard insufficient funds failure",
                 "v1.0.0"
-        );
+        ));
 
         Campaign campaign = campaignLifecycleService.processClassificationResult(event, result);
 
         assertNotNull(campaign.getId());
         assertEquals(CampaignStatus.ACTION_PENDING, campaign.getCurrentState());
         assertEquals("INSUFFICIENT_FUNDS", campaign.getFailureClass());
-        assertEquals(new BigDecimal("0.95"), campaign.getConfidence());
+        // M3 behaviour change (ADR-003): classification confidence is no longer copied onto the campaign (was 0.95)
+        assertNull(campaign.getConfidence());
 
         // Verify Audit Logs
         List<AuditLog> auditLogs = auditService.getCampaignAuditLogs(campaign.getId());

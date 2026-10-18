@@ -52,7 +52,7 @@ const mockCampaignsData = {
       customerIdHash: 'cust_001',
       currentState: 'EXHAUSTED',
       failureClass: 'BANK_DECLINED',
-      confidence: 0.93,
+      confidence: 0.93, // legacy field a pre-M3 API row may still carry
       attemptCount: 3,
       createdAt: '2026-09-02T18:57:35Z',
       updatedAt: '2026-09-02T20:07:35Z',
@@ -143,6 +143,8 @@ describe('DashboardPage', () => {
       expect(screen.getByText('₹3,77,596.00')).toBeInTheDocument();
       expect(screen.getByText('76.32% Rate')).toBeInTheDocument();
       expect(screen.getByText('pay_demo_test_merchant_513ec372')).toBeInTheDocument();
+      // M3 U2.3 regression: a legacy confidence in the API row is never shown (was "93% Conf"; null rendered "0% Conf")
+      expect(screen.queryByText(/% Conf/)).not.toBeInTheDocument();
       expect(screen.getByText('intent_demo_1d24df2b', { exact: false })).toBeInTheDocument();
     });
   });

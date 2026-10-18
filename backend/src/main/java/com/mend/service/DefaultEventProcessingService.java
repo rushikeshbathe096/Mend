@@ -2,6 +2,7 @@ package com.mend.service;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import com.mend.taxonomy.ProviderFailure;
 import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.WebhookEventRepository;
@@ -93,10 +94,10 @@ public class DefaultEventProcessingService implements EventProcessingService {
                 return true;
             }
 
-            FailureDetails failureDetails = extractFailureDetails(event);
-            log.info("Classifying webhook event [eventId={}] via ClassificationService (code='{}', reason='{}')",
-                    event.getId(), failureDetails.failureCode(), failureDetails.failureReason());
-            classificationService.classifyAndPersist(event, failureDetails.failureCode(), failureDetails.failureReason());
+            ProviderFailure failure = extractProviderFailure(event);
+            log.info("Classifying webhook event [eventId={}] (error_code='{}', error_reason='{}', error_source='{}')",
+                    event.getId(), failure.code(), failure.reason(), failure.source());
+            classificationService.classifyAndPersist(event, failure);
         } else {
             if (event.getProcessingStatus() == WebhookEventStatus.PROCESSED) {
                 log.info("Webhook event [eventId={}] already PROCESSED in DB. Skipping duplicate processing.", event.getId());
@@ -111,50 +112,28 @@ public class DefaultEventProcessingService implements EventProcessingService {
         return true;
     }
 
-    private FailureDetails extractFailureDetails(WebhookEvent event) {
-        String failureCode = event.getErrorMessage();
-        String failureReason = event.getErrorMessage();
-
+    /**
+     * M3 U2.2: the documented error fields of the Razorpay payment entity ({@code payload.payment.entity}). Untrusted input
+     * (invariant 8): only read, never trusted beyond the taxonomy lookup. Anything missing stays null (unknown).
+     */
+    private ProviderFailure extractProviderFailure(WebhookEvent event) {
         if (event.getRawPayload() != null && !event.getRawPayload().isBlank()) {
             try {
-                JsonNode root = objectMapper.readTree(event.getRawPayload());
-                if (root.has("payload") && root.get("payload").has("payment") && root.get("payload").get("payment").has("entity")) {
-                    JsonNode entity = root.get("payload").get("payment").get("entity");
-                    if (entity.has("error_reason") && !entity.get("error_reason").isNull()) {
-                        failureCode = entity.get("error_reason").asText();
-                    } else if (entity.has("error_code") && !entity.get("error_code").isNull()) {
-                        failureCode = entity.get("error_code").asText();
-                    }
-                    if (entity.has("error_description") && !entity.get("error_description").isNull()) {
-                        failureReason = entity.get("error_description").asText();
-                    }
-                } else {
-                    if (failureCode == null || failureCode.isBlank()) {
-                        if (root.has("error_code")) failureCode = root.get("error_code").asText();
-                        else if (root.has("failure_code")) failureCode = root.get("failure_code").asText();
-                        else if (root.has("code")) failureCode = root.get("code").asText();
-                    }
-                    if (failureReason == null || failureReason.isBlank()) {
-                        if (root.has("error_description")) failureReason = root.get("error_description").asText();
-                        else if (root.has("failure_reason")) failureReason = root.get("failure_reason").asText();
-                        else if (root.has("reason")) failureReason = root.get("reason").asText();
-                    }
+                JsonNode entity = objectMapper.readTree(event.getRawPayload()).path("payload").path("payment").path("entity");
+                if (entity.isObject()) {
+                    return ProviderFailure.of(text(entity, "error_code"), text(entity, "error_reason"),
+                            text(entity, "error_source"));
                 }
             } catch (Exception e) {
                 log.debug("Could not parse rawPayload for failure details: {}", e.getMessage());
             }
         }
-
-        if (failureCode == null || failureCode.isBlank()) {
-            failureCode = event.getEventType() != null ? event.getEventType() : "UNKNOWN";
-        }
-        if (failureReason == null || failureReason.isBlank()) {
-            failureReason = "Payment failure event: " + failureCode;
-        }
-
-        return new FailureDetails(failureCode, failureReason);
+        return ProviderFailure.of(null, null, null);
     }
 
-    private record FailureDetails(String failureCode, String failureReason) {}
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value.asText();
+    }
 }
 

@@ -1,5 +1,10 @@
 package com.mend.config;
 
+import com.mend.taxonomy.FailureClassification;
+import com.mend.taxonomy.FailureTaxonomy;
+import com.mend.taxonomy.PaymentFailureClass;
+import com.mend.taxonomy.ProviderFailure;
+
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.*;
 import com.mend.domain.repository.*;
@@ -22,6 +27,13 @@ import java.util.*;
 @ConditionalOnProperty(name = "mend.dev.seed", havingValue = "true")
 public class DevDataInitializer implements ApplicationRunner {
 
+    /**
+     * Seeded strategy and compliance rows are chosen per customer segment, not produced by RecoveryStrategyEngine or
+     * ComplianceEngine, so they carry this label instead of a real policy version (invariant 3).
+     */
+    static final String SEED_POLICY_VERSION = "dev-seed";
+
+
     private static final Logger log = LoggerFactory.getLogger(DevDataInitializer.class);
 
     private final UserRepository userRepository;
@@ -35,7 +47,6 @@ public class DevDataInitializer implements ApplicationRunner {
     private final RecoveryDecisionRepository recoveryDecisionRepository;
     private final ComplianceDecisionRepository complianceDecisionRepository;
     private final ActionIntentRepository actionIntentRepository;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
     private final ReviewQueueRepository reviewQueueRepository;
     private final AuditLogRepository auditLogRepository;
     private final PasswordHasher passwordHasher;
@@ -52,7 +63,6 @@ public class DevDataInitializer implements ApplicationRunner {
             RecoveryDecisionRepository recoveryDecisionRepository,
             ComplianceDecisionRepository complianceDecisionRepository,
             ActionIntentRepository actionIntentRepository,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
             ReviewQueueRepository reviewQueueRepository,
             AuditLogRepository auditLogRepository,
             PasswordHasher passwordHasher) {
@@ -67,7 +77,6 @@ public class DevDataInitializer implements ApplicationRunner {
         this.recoveryDecisionRepository = recoveryDecisionRepository;
         this.complianceDecisionRepository = complianceDecisionRepository;
         this.actionIntentRepository = actionIntentRepository;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
         this.reviewQueueRepository = reviewQueueRepository;
         this.auditLogRepository = auditLogRepository;
         this.passwordHasher = passwordHasher;
@@ -220,62 +229,67 @@ public class DevDataInitializer implements ApplicationRunner {
         String paymentId = "pay_demo_" + merchant.getExternalReference() + "_" + UUID.randomUUID().toString().substring(0, 8);
         String externalEventId = paymentId;
 
-        // Determine Failure Class & Strategy based on Segment
-        String failureClass;
+        // Determine the simulated Razorpay failure & strategy based on segment; the class comes from FailureTaxonomy (M3)
+        String errorReason;
+        String errorSource;
         RecoveryStrategy strategy;
         CampaignStatus finalState;
         int attempts;
 
         switch (segment) {
             case RELIABLE:
-                failureClass = "NETWORK_TIMEOUT";
+                errorReason = "gateway_technical_error"; errorSource = "gateway";
                 strategy = RecoveryStrategy.RETRY_IMMEDIATELY;
                 finalState = CampaignStatus.RECOVERED;
                 attempts = 1;
                 break;
             case RECOVERABLE:
-                failureClass = "INSUFFICIENT_FUNDS";
+                errorReason = "insufficient_funds"; errorSource = "customer";
                 strategy = RecoveryStrategy.RETRY_IMMEDIATELY;
                 finalState = CampaignStatus.RECOVERED;
                 attempts = 1 + rand.nextInt(2);
                 break;
             case PAYMENT_FRICTION:
-                failureClass = "CARD_EXPIRED";
+                errorReason = "card_expired"; errorSource = "customer";
                 strategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
                 finalState = CampaignStatus.RECOVERED;
                 attempts = 1;
                 break;
             case HIGH_VALUE:
-                failureClass = rand.nextBoolean() ? "INSUFFICIENT_FUNDS" : "AUTHENTICATION_FAILED";
+                errorReason = rand.nextBoolean() ? "insufficient_funds" : "authentication_failed"; errorSource = "customer";
                 strategy = RecoveryStrategy.RETRY_IMMEDIATELY;
                 finalState = rand.nextBoolean() ? CampaignStatus.RECOVERED : CampaignStatus.ELIGIBLE;
                 attempts = finalState == CampaignStatus.RECOVERED ? 1 : 0;
                 break;
             case HIGH_RISK:
-                failureClass = "AUTHENTICATION_FAILED";
+                errorReason = "authentication_failed"; errorSource = "customer";
                 strategy = RecoveryStrategy.MANUAL_REVIEW;
                 finalState = CampaignStatus.ELIGIBLE;
                 attempts = 0;
                 break;
             case CHURN_RISK:
-                failureClass = rand.nextBoolean() ? "BANK_DECLINED" : "UNKNOWN";
-                strategy = RecoveryStrategy.RETRY_IMMEDIATELY;
+                errorReason = rand.nextBoolean() ? "card_declined" : "payment_failed"; errorSource = "customer";   // undocumented actor: UNCLASSIFIED
+                // M3: UNCLASSIFIED is ineligible, so no attempts were made (was 3 retries of a legacy UNKNOWN class)
+                strategy = RecoveryStrategy.MANUAL_REVIEW;
                 finalState = CampaignStatus.EXHAUSTED;
-                attempts = 3;
+                attempts = 0;
                 break;
             case RECENTLY_RECOVERED:
             default:
-                failureClass = "INSUFFICIENT_FUNDS";
+                errorReason = "insufficient_funds"; errorSource = "customer";
                 strategy = RecoveryStrategy.RETRY_IMMEDIATELY;
                 finalState = CampaignStatus.RECOVERED;
                 attempts = 1;
                 break;
         }
 
-        BigDecimal confidence = BigDecimal.valueOf(0.70 + (rand.nextDouble() * 0.28)).setScale(2, RoundingMode.HALF_UP);
+        ProviderFailure failure = new ProviderFailure("BAD_REQUEST_ERROR", errorReason, errorSource);
+        FailureClassification taxonomy = FailureTaxonomy.classify(failure);
+        String failureClass = taxonomy.failureClass().name();
+        boolean unclassified = taxonomy.failureClass() == PaymentFailureClass.UNCLASSIFIED;
 
         // 1. Save Failed Webhook Event
-        String failedPayload = buildWebhookPayload("payment.failed", paymentId, amount, "failed", failureClass.toLowerCase());
+        String failedPayload = buildWebhookPayload("payment.failed", paymentId, amount, "failed", errorReason, errorSource);
         WebhookEvent failedEvent = new WebhookEvent(UUID.randomUUID(), externalEventId, "payment.failed", "RAZORPAY", failedPayload);
         failedEvent.setMerchantId(merchant.getId());
         failedEvent.setReceivedAt(createdAt);
@@ -291,7 +305,6 @@ public class DevDataInitializer implements ApplicationRunner {
         campaign.setPaymentId(paymentId);
         campaign.setSubscriptionId("sub_demo_" + UUID.randomUUID().toString().substring(0, 8));
         campaign.setFailureClass(failureClass);
-        campaign.setConfidence(confidence);
         campaign.setStrategy(strategy.name());
         campaign.setCurrentState(finalState);
         campaign.setAttemptCount(attempts);
@@ -300,10 +313,13 @@ public class DevDataInitializer implements ApplicationRunner {
         campaignRepository.save(campaign);
 
         // 3. Classification Result
+        // M3: deterministic row (no confidence, no model); was a random 0.70-0.98 confidence and "gemini-1.5-pro"
         ClassificationResult classification = new ClassificationResult(
-                UUID.randomUUID(), failedEvent.getId(), campaign.getId(), failureClass, confidence,
-                strategy.name(), "AI analysis of failure context for " + customerName + " (" + failureClass + ")", "gemini-1.5-pro"
+                UUID.randomUUID(), failedEvent.getId(), campaign.getId(), failureClass, null,
+                null, "Razorpay error_reason '" + errorReason + "' (" + taxonomy.matchedOn() + ")", null
         );
+        classification.setTaxonomyVersion(taxonomy.tableVersion());
+        classification.setEvidence(taxonomy.evidence(failure));
         classification.setCreatedAt(createdAt.plusSeconds(5));
         classificationResultRepository.save(classification);
 
@@ -312,25 +328,26 @@ public class DevDataInitializer implements ApplicationRunner {
                 UUID.randomUUID(), campaign.getId(), merchant.getId(), classification.getId(),
                 strategy, "Strategy selected based on customer risk segment and failure class " + failureClass,
                 (segment == CustomerSegment.HIGH_RISK || segment == CustomerSegment.HIGH_VALUE) ? "HIGH" : "NORMAL",
-                confidence, "v1.2"
+                null, SEED_POLICY_VERSION
         );
         recoveryDecision.setEvaluatedAt(createdAt.plusSeconds(10));
         recoveryDecisionRepository.save(recoveryDecision);
 
         // 5. Compliance Decision Entity
-        ComplianceStatus compStatus = (segment == CustomerSegment.HIGH_RISK || (segment == CustomerSegment.HIGH_VALUE && amount.compareTo(new BigDecimal("50000")) > 0))
+        ComplianceStatus compStatus = (unclassified || segment == CustomerSegment.HIGH_RISK || (segment == CustomerSegment.HIGH_VALUE && amount.compareTo(new BigDecimal("50000")) > 0))
                 ? ComplianceStatus.COMPLIANCE_BLOCKED
                 : ComplianceStatus.COMPLIANCE_ALLOWED;
 
-        ComplianceReason compReason = compStatus == ComplianceStatus.COMPLIANCE_BLOCKED
-                ? ComplianceReason.MERCHANT_POLICY_BLOCKED
+        ComplianceReason compReason = unclassified ? ComplianceReason.UNKNOWN_CLASSIFICATION
+                : compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? ComplianceReason.MERCHANT_POLICY_BLOCKED
                 : ComplianceReason.ALLOWED;
 
         ComplianceDecisionEntity complianceDecision = new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), merchant.getId(), recoveryDecision.getId(),
                 strategy, compStatus, compReason,
-                compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? "Transaction amount ₹" + amount.toPlainString() + " requires merchant human approval" : "Compliance policy allowed execution",
-                "v1.2"
+                unclassified ? "Failure class UNCLASSIFIED has no documented recovery mapping"
+                        : compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? "Transaction amount ₹" + amount.toPlainString() + " requires merchant human approval" : "Compliance policy allowed execution",
+                SEED_POLICY_VERSION
         );
         complianceDecision.setEvaluatedAt(createdAt.plusSeconds(15));
         complianceDecisionRepository.save(complianceDecision);
@@ -351,16 +368,7 @@ public class DevDataInitializer implements ApplicationRunner {
             actionIntentRepository.save(intent);
         }
 
-        // 7. AI Agent Decision Records (Consensus Stack)
-        boolean reviewRequired = compStatus == ComplianceStatus.COMPLIANCE_BLOCKED || segment == CustomerSegment.HIGH_RISK;
-        saveAgentDecisionRecord(merchant.getId(), campaign.getId(), paymentId, "CLASSIFY_FAILURE", strategy.name(),
-                confidence, "Classification Agent identified failure root cause as " + failureClass, reviewRequired, createdAt.plusSeconds(6));
-
-        saveAgentDecisionRecord(merchant.getId(), campaign.getId(), paymentId, "RISK_EVALUATION", strategy.name(),
-                confidence, "Risk Agent evaluated customer profile " + customerHash + " segment as " + segment.name(), reviewRequired, createdAt.plusSeconds(8));
-
-        saveAgentDecisionRecord(merchant.getId(), campaign.getId(), paymentId, "STRATEGY_SELECTION", strategy.name(),
-                confidence, "Strategy Agent recommended recovery action " + strategy.name(), reviewRequired, createdAt.plusSeconds(12));
+        boolean reviewRequired = !unclassified && (compStatus == ComplianceStatus.COMPLIANCE_BLOCKED || segment == CustomerSegment.HIGH_RISK);
 
         // 8. Human Review Queue (If Review Required)
         if (reviewRequired) {
@@ -378,12 +386,12 @@ public class DevDataInitializer implements ApplicationRunner {
 
         // 9. Audit Log History
         saveAuditLog(merchant.getId(), campaign.getId(), "PAYMENT_FAILED", "SYSTEM", null, "Payment failure ingested for " + paymentId, createdAt);
-        saveAuditLog(merchant.getId(), campaign.getId(), "AI_DECISION_CREATED", "AGENT", null, "AI agent recommended strategy " + strategy.name(), createdAt.plusSeconds(8));
+        saveAuditLog(merchant.getId(), campaign.getId(), "FAILURE_CLASSIFIED", "SYSTEM", null, "Failure classified as " + failureClass, createdAt.plusSeconds(5));
         saveAuditLog(merchant.getId(), campaign.getId(), "POLICY_EVALUATED", "POLICY_ENGINE", null, "Compliance status evaluated as " + compStatus.name(), createdAt.plusSeconds(15));
 
         if (finalState == CampaignStatus.RECOVERED) {
             // Save Captured Webhook & Recovered Audit Log
-            String capPayload = buildWebhookPayload("payment.captured", paymentId, amount, "captured", null);
+            String capPayload = buildWebhookPayload("payment.captured", paymentId, amount, "captured", null, null);
             WebhookEvent capEvent = new WebhookEvent(UUID.randomUUID(), "evt_cap_" + UUID.randomUUID().toString().substring(0, 8), "payment.captured", "RAZORPAY", capPayload);
             capEvent.setMerchantId(merchant.getId());
             capEvent.setReceivedAt(updatedAt);
@@ -398,15 +406,6 @@ public class DevDataInitializer implements ApplicationRunner {
         }
     }
 
-    private void saveAgentDecisionRecord(UUID merchantId, UUID campaignId, String paymentId, String decision, String action, BigDecimal confidence, String reasoning, boolean review, Instant createdAt) {
-        AgentDecisionRecord rec = new AgentDecisionRecord(
-                UUID.randomUUID(), campaignId, merchantId, paymentId, decision, action, confidence, reasoning,
-                "Structured evidence record", "NEXT_STEP_EVALUATE", null, "gemini-1.5-pro", review, "ALLOWED", "COMPLETED"
-        );
-        rec.setCreatedAt(createdAt);
-        agentDecisionRecordRepository.save(rec);
-    }
-
     private void saveAuditLog(UUID merchantId, UUID campaignId, String eventType, String actorType, UUID actorId, String reason, Instant createdAt) {
         AuditLog logEntity = new AuditLog(UUID.randomUUID(), eventType);
         logEntity.setMerchantId(merchantId);
@@ -418,13 +417,14 @@ public class DevDataInitializer implements ApplicationRunner {
         auditLogRepository.save(logEntity);
     }
 
-    private String buildWebhookPayload(String eventType, String paymentId, BigDecimal amount, String status, String failureCode) {
+    private String buildWebhookPayload(String eventType, String paymentId, BigDecimal amount, String status, String errorReason, String errorSource) {
         long amountPaise = amount.movePointRight(2).longValueExact();
         return """
                 {"entity":"event","event":"%s","payload":{"payment":{"entity":{"id":"%s","amount":%d,"currency":"INR","status":"%s","method":"card"%s}}}}
                 """.formatted(
                 eventType, paymentId, amountPaise, status,
-                failureCode != null ? ",\"error_code\":\"" + failureCode + "\",\"error_description\":\"demo failure: " + failureCode + "\"" : ""
+                errorReason != null ? ",\"error_code\":\"BAD_REQUEST_ERROR\",\"error_reason\":\"" + errorReason
+                        + "\",\"error_source\":\"" + errorSource + "\",\"error_description\":\"demo failure\"" : ""
         );
     }
 

@@ -7,7 +7,6 @@ public class PaymentDetailDto {
     private CampaignDto campaign;
     private List<CampaignAttemptDto> attempts;
     private List<ActionIntentDto> actionIntents;
-    private List<AgentDecisionRecordDto> agentDecisions;
     private List<ComplianceDecisionDto> complianceDecisions;
     private List<AuditLogDto> auditLogs;
 
@@ -15,13 +14,12 @@ public class PaymentDetailDto {
 
     public PaymentDetailDto(PaymentSummaryDto paymentSummary, CampaignDto campaign,
                             List<CampaignAttemptDto> attempts, List<ActionIntentDto> actionIntents,
-                            List<AgentDecisionRecordDto> agentDecisions, List<ComplianceDecisionDto> complianceDecisions,
+                            List<ComplianceDecisionDto> complianceDecisions,
                             List<AuditLogDto> auditLogs) {
         this.paymentSummary = paymentSummary;
         this.campaign = campaign;
         this.attempts = attempts;
         this.actionIntents = actionIntents;
-        this.agentDecisions = agentDecisions;
         this.complianceDecisions = complianceDecisions;
         this.auditLogs = auditLogs;
     }
@@ -38,8 +36,6 @@ public class PaymentDetailDto {
     public List<ActionIntentDto> getActionIntents() { return actionIntents; }
     public void setActionIntents(List<ActionIntentDto> actionIntents) { this.actionIntents = actionIntents; }
 
-    public List<AgentDecisionRecordDto> getAgentDecisions() { return agentDecisions; }
-    public void setAgentDecisions(List<AgentDecisionRecordDto> agentDecisions) { this.agentDecisions = agentDecisions; }
 
     public List<ComplianceDecisionDto> getComplianceDecisions() { return complianceDecisions; }
     public void setComplianceDecisions(List<ComplianceDecisionDto> complianceDecisions) { this.complianceDecisions = complianceDecisions; }

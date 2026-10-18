@@ -10,5 +10,7 @@ public enum ComplianceReason {
     MERCHANT_POLICY_BLOCKED,
     DUPLICATE_ACTION,
     TENANT_MISMATCH,
-    MISSING_CONTEXT
+    MISSING_CONTEXT,
+    /** M3 U2.4: the customer opted out of contact (reply policy); fail closed until a merchant admin clears it. */
+    CUSTOMER_OPTED_OUT
 }

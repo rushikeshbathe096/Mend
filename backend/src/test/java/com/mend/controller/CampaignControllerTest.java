@@ -5,7 +5,8 @@ import com.mend.domain.entity.Campaign;
 import com.mend.domain.enums.ActionIntentStatus;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.repository.ActionIntentRepository;
-import com.mend.domain.repository.AgentDecisionRecordRepository;
+import com.mend.domain.repository.ComplianceDecisionRepository;
+import com.mend.domain.repository.ReviewQueueRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.dto.StartRecoveryRequest;
 import com.mend.dto.StartRecoveryResponseDto;
@@ -38,7 +39,9 @@ class CampaignControllerTest {
     @Mock
     private ActionExecutionService actionExecutionService;
     @Mock
-    private AgentDecisionRecordRepository agentDecisionRecordRepository;
+    private ComplianceDecisionRepository complianceDecisionRepository;
+    @Mock
+    private ReviewQueueRepository reviewQueueRepository;
     @Mock
     private CampaignRepository campaignRepository;
     @Mock
@@ -68,7 +71,8 @@ class CampaignControllerTest {
                 recoveryOrchestratorService,
                 actionIntentService,
                 actionExecutionService,
-                agentDecisionRecordRepository,
+                complianceDecisionRepository,
+                reviewQueueRepository,
                 campaignRepository,
                 actionIntentRepository,
                 auditService,
@@ -99,8 +103,6 @@ class CampaignControllerTest {
                 .thenReturn(intent);
         when(campaignRepository.findById(campaignId))
                 .thenReturn(Optional.of(campaign));
-        when(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaignId))
-                .thenReturn(Collections.emptyList());
 
         var responseEntity = campaignController.startRecovery(request, merchantId.toString(), authenticatedUser);
 
@@ -127,7 +129,6 @@ class CampaignControllerTest {
         when(campaignLifecycleService.getOrCreateCampaign(merchantId, "pay_test_456", null, null)).thenReturn(campaign);
         when(recoveryOrchestratorService.orchestrateRecovery(merchantId, campaignId)).thenReturn(intent);
         when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
-        when(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaignId)).thenReturn(Collections.emptyList());
         return intent;
     }
 
@@ -158,5 +159,54 @@ class CampaignControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         verify(actionExecutionService, org.mockito.Mockito.never()).executeActionIntent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any());
+    }
+
+    // M3 U2.3 regression: the start-recovery status comes from stored evidence (review queue, compliance decision), not
+    // from the deleted agent decision records
+    @Test
+    void startRecovery_pendingReviewAndBlockedDecisionComeFromStoredEvidence() {
+        UUID campaignId = UUID.randomUUID();
+        Campaign campaign = new Campaign();
+        campaign.setId(campaignId);
+        campaign.setMerchantId(merchantId);
+        campaign.setPaymentId("pay_test_789");
+        campaign.setCurrentState(CampaignStatus.ELIGIBLE);
+        when(campaignLifecycleService.getOrCreateCampaign(merchantId, "pay_test_789", null, null)).thenReturn(campaign);
+        when(recoveryOrchestratorService.orchestrateRecovery(merchantId, campaignId)).thenReturn(null);
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+        when(reviewQueueRepository.findFirstByCampaignIdAndStatusOrderByCreatedAtDesc(campaignId, com.mend.domain.enums.ReviewQueueStatus.PENDING))
+                .thenReturn(Optional.of(new com.mend.domain.entity.ReviewQueue(UUID.randomUUID(), campaignId, merchantId)));
+        com.mend.domain.entity.ComplianceDecisionEntity blocked = new com.mend.domain.entity.ComplianceDecisionEntity();
+        blocked.setStatus(com.mend.domain.enums.ComplianceStatus.COMPLIANCE_BLOCKED);
+        when(complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaignId)).thenReturn(List.of(blocked));
+
+        StartRecoveryResponseDto body = campaignController.startRecovery(
+                new StartRecoveryRequest("pay_test_789", null, null), merchantId.toString(), authenticatedUser).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.isRequiresHumanApproval()).isTrue();
+        assertThat(body.getComplianceStatus()).isEqualTo("COMPLIANCE_BLOCKED");
+        assertThat(body.getMessage()).contains("human approval");
+    }
+
+    @Test
+    void startRecovery_noDecisionReportsNoComplianceStatusAndNoApproval() {
+        UUID campaignId = UUID.randomUUID();
+        Campaign campaign = new Campaign();
+        campaign.setId(campaignId);
+        campaign.setMerchantId(merchantId);
+        campaign.setPaymentId("pay_test_790");
+        campaign.setCurrentState(CampaignStatus.EXHAUSTED);
+        when(campaignLifecycleService.getOrCreateCampaign(merchantId, "pay_test_790", null, null)).thenReturn(campaign);
+        when(recoveryOrchestratorService.orchestrateRecovery(merchantId, campaignId)).thenReturn(null);
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+
+        StartRecoveryResponseDto body = campaignController.startRecovery(
+                new StartRecoveryRequest("pay_test_790", null, null), merchantId.toString(), authenticatedUser).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.isRequiresHumanApproval()).isFalse();
+        // was "COMPLIANCE_ALLOWED" whenever no agent record existed: an unevaluated campaign is not "allowed"
+        assertThat(body.getComplianceStatus()).isNull();
     }
 }

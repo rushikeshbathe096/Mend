@@ -11,7 +11,6 @@ public class AnalyticsRecoveryDto {
     private Map<String, Double> recoveryRateByFailureClass = new HashMap<>();
     private Map<String, Long> actionTypeBreakdown = new HashMap<>();
     private Map<String, Long> providerOutcomes = new HashMap<>();
-    private Map<String, Object> aiConfidenceMetrics = new HashMap<>();
     private Map<String, Long> complianceMetrics = new HashMap<>();
     private Map<String, Object> retryMetrics = new HashMap<>();
 
@@ -85,13 +84,7 @@ public class AnalyticsRecoveryDto {
         this.providerOutcomes = providerOutcomes;
     }
 
-    public Map<String, Object> getAiConfidenceMetrics() {
-        return aiConfidenceMetrics;
-    }
 
-    public void setAiConfidenceMetrics(Map<String, Object> aiConfidenceMetrics) {
-        this.aiConfidenceMetrics = aiConfidenceMetrics;
-    }
 
     public Map<String, Long> getComplianceMetrics() {
         return complianceMetrics;

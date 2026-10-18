@@ -21,7 +21,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -231,14 +230,13 @@ public class CampaignLifecycleService {
 
         // Step 2: Transition CREATED -> CLASSIFIED
         campaign.setFailureClass(classificationResult.getFailureClass());
-        campaign.setConfidence(classificationResult.getConfidence());
         campaignRepository.save(campaign);
 
         campaign = transitionState(
                 campaign.getMerchantId(),
                 campaign.getId(),
                 CampaignStatus.CLASSIFIED,
-                "AI Classification attached: " + classificationResult.getFailureClass(),
+                "Failure classified: " + classificationResult.getFailureClass(),
                 "SYSTEM",
                 null
         );
@@ -261,9 +259,8 @@ public class CampaignLifecycleService {
                 campaign = campaignRepository.findById(campaign.getId()).orElse(campaign);
             }
         } else {
-            String ineligibilityReason = (classificationResult.getConfidence() != null && classificationResult.getConfidence().compareTo(new BigDecimal("0.50")) < 0)
-                    ? "Ineligible for recovery: Low AI classification confidence (" + classificationResult.getConfidence() + ")"
-                    : "Ineligible for recovery: Failure class '" + classificationResult.getFailureClass() + "' is non-recoverable";
+            String ineligibilityReason = "Ineligible for recovery: failure class '" + classificationResult.getFailureClass()
+                    + "' has no documented recovery mapping";
 
             campaign = transitionState(
                     campaign.getMerchantId(),
@@ -278,26 +275,15 @@ public class CampaignLifecycleService {
         return campaign;
     }
 
+    /**
+     * M3 U2.2 (ADR-003 §4): eligible iff the row is deterministic (taxonomy version) and its class is not UNCLASSIFIED.
+     * Legacy (pre-M3, AI-era) rows fail closed, also when their class name matches a taxonomy class. No confidence.
+     */
     public boolean evaluateEligibility(ClassificationResult classificationResult) {
         if (classificationResult == null) {
             return false;
         }
-
-        String failureClass = classificationResult.getFailureClass();
-        BigDecimal confidence = classificationResult.getConfidence();
-
-        // Rules:
-        // 1. Failure class 'UNKNOWN' is ineligible
-        if ("UNKNOWN".equalsIgnoreCase(failureClass)) {
-            return false;
-        }
-
-        // 2. Confidence must be >= 0.50
-        if (confidence == null || confidence.compareTo(new BigDecimal("0.50")) < 0) {
-            return false;
-        }
-
-        return true;
+        return classificationResult.deterministicAndRecoverable();
     }
 
     @Transactional(readOnly = true)

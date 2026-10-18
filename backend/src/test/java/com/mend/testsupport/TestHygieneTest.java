@@ -24,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class TestHygieneTest extends AbstractIntegrationTest {
 
-    /** M3-owned (AI path): their cleanup is left to M3 (docs/audit/bug-registry.md BR-06b). */
-    private static final Set<String> M3_OWNED = Set.of("ClassificationServiceTest.java", "AiRecoveryAgentIntegrationTest.java");
+    /** Was the two M3-owned AI-path classes (registry BR-06b); both rewritten in M3 U2.2, so no exception remains. */
+    private static final Set<String> M3_OWNED = Set.of();
 
     private static final Pattern TABLE_WIPE = Pattern.compile(
             "\\b\\w+(Repository|RepositoryU9)\\s*\\.\\s*deleteAll(InBatch)?\\s*\\(\\s*\\)|(?i)\\bTRUNCATE\\s+(TABLE\\s+)?\\w");

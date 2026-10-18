@@ -1,20 +1,15 @@
 package com.mend.integration;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.config.RazorpayWebhookProperties;
 import com.mend.config.RedisStreamProperties;
 import com.mend.consumer.RedisWebhookEventConsumer;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.WebhookEvent;
-import com.mend.domain.enums.FailureClass;
-import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.ClassificationResultRepository;
 import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
-import com.mend.dto.ai.ClassificationRequestDto;
-import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
 import com.mend.security.RazorpaySignatureVerifier;
 import com.mend.service.OutboxPublisherService;
@@ -74,9 +69,6 @@ public class Phase6EndToEndIntegrationTest {
     @Autowired
     private OutboxPublisherService outboxPublisherService;
 
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
-
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
@@ -100,16 +92,7 @@ public class Phase6EndToEndIntegrationTest {
         } catch (Exception ignored) {
         }
 
-        // Configure default mock AI response
-        when(aiClassificationClient.classify(any(ClassificationRequestDto.class))).thenReturn(
-                new ClassificationResponseDto(
-                        FailureClass.INSUFFICIENT_FUNDS,
-                        new BigDecimal("0.95"),
-                        RecommendedAction.RETRY_LATER,
-                        "Low account balance detected; schedule retry",
-                        "v1.0.0-rule-based"
-                )
-        );
+        // M3 U2.2: the payment path never calls the AI client (verified in the test); no stub needed.
     }
 
     @Test
@@ -179,16 +162,13 @@ public class Phase6EndToEndIntegrationTest {
 
         assertThat(classificationResult.getEventId()).isEqualTo(dbEvent.getId());
         assertThat(classificationResult.getFailureClass()).isEqualTo("INSUFFICIENT_FUNDS");
-        assertThat(classificationResult.getConfidence()).isEqualByComparingTo(new BigDecimal("0.95"));
-        assertThat(classificationResult.getStrategyRecommendation()).isEqualTo("RETRY_LATER");
-        assertThat(classificationResult.getReasoning()).isEqualTo("Low account balance detected; schedule retry");
-        assertThat(classificationResult.getModelVersion()).isEqualTo("v1.0.0-rule-based");
-
-        // Verify AI Client was invoked with extracted failure code
-        verify(aiClassificationClient, times(1)).classify(argThat(req ->
-                "insufficient_funds".equals(req.failureCode()) &&
-                "Payment failed due to insufficient funds".equals(req.failureReason())
-        ));
+        // M3 U2.2 behaviour change (ADR-003): deterministic taxonomy from the payload's error_reason; no confidence, no
+        // strategy recommendation, no model version, and no AI call (was: a mocked AI response 0.95 / RETRY_LATER / v1.0.0-rule-based)
+        assertThat(classificationResult.getConfidence()).isNull();
+        assertThat(classificationResult.getStrategyRecommendation()).isNull();
+        assertThat(classificationResult.getReasoning()).contains("insufficient_funds");
+        assertThat(classificationResult.getModelVersion()).isNull();
+        assertThat(classificationResult.getTaxonomyVersion()).isEqualTo(com.mend.taxonomy.FailureTaxonomy.TABLE_VERSION);
 
         // 7. Test Duplicate Delivery Idempotency: Re-processing should not re-classify
         int secondPollCount = redisWebhookEventConsumer.pollAndProcessMessages();

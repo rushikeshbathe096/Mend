@@ -1,7 +1,10 @@
 package com.mend.controller;
 
 import com.mend.domain.entity.ActionIntent;
-import com.mend.domain.entity.AgentDecisionRecord;
+import com.mend.domain.entity.ClassificationResult;
+import com.mend.taxonomy.FailureClassification;
+import com.mend.taxonomy.FailureTaxonomy;
+import com.mend.taxonomy.ProviderFailure;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.ReviewQueue;
 import com.mend.domain.entity.WebhookEvent;
@@ -10,7 +13,6 @@ import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.ReviewQueueStatus;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.ActionIntentRepository;
-import com.mend.domain.repository.AgentDecisionRecordRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.DemoScenarioDto;
@@ -40,7 +42,7 @@ import java.util.UUID;
  * Deterministic demonstration engine for the Mend merchant console.
  *
  * Every scenario drives the SAME production services used by real recovery
- * workflows (campaign lifecycle state machine, agent decision records,
+ * workflows (campaign lifecycle state machine,
  * compliance-gated ActionIntent creation, provider execution boundary and
  * payment reconciliation). Demo rows are clearly isolated from merchant data:
  * payment references use the reserved {@code pay_demo_*} / {@code cust_demo_*}
@@ -50,7 +52,7 @@ import java.util.UUID;
  * or fabricates metrics: each scenario returns the authoritative campaign/review
  * identifiers produced by the real pipeline.
  * <p>
- * Pre-M3 hygiene: the inputs are fabricated (webhooks, classifications, agent decisions, the customer's payment, timeouts),
+ * Pre-M3 hygiene: the inputs are fabricated (webhooks, the customer's payment, timeouts),
  * so every such step is labelled {@value #SIMULATED} in the narration, the stored reasons and the response. The controller
  * exists only when {@code mend.demo.enabled=true} (default false; true in the dev profile).
  */
@@ -71,7 +73,7 @@ public class DemoController {
     private final HumanApprovalService humanApprovalService;
     private final PaymentReconciliationService paymentReconciliationService;
     private final CampaignRepository campaignRepository;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
+    private final com.mend.domain.repository.ClassificationResultRepository classificationResultRepository;
     private final ActionIntentRepository actionIntentRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final AuditService auditService;
@@ -87,7 +89,7 @@ public class DemoController {
             HumanApprovalService humanApprovalService,
             PaymentReconciliationService paymentReconciliationService,
             CampaignRepository campaignRepository,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
+            com.mend.domain.repository.ClassificationResultRepository classificationResultRepository,
             ActionIntentRepository actionIntentRepository,
             WebhookEventRepository webhookEventRepository,
             AuditService auditService,
@@ -100,7 +102,7 @@ public class DemoController {
         this.humanApprovalService = humanApprovalService;
         this.paymentReconciliationService = paymentReconciliationService;
         this.campaignRepository = campaignRepository;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
+        this.classificationResultRepository = classificationResultRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.auditService = auditService;
@@ -197,9 +199,9 @@ public class DemoController {
                 case "CUSTOMER_ACTION" -> runCustomerAction(merchantId, response, steps);
                 case "PROVIDER_AMBIGUITY" -> runProviderAmbiguity(merchantId, response, steps);
                 case "DUPLICATE_EVENT" -> runDuplicateEvent(merchantId, response, steps);
-                case "AGENT_FAILURE" -> runAgentFailure(merchantId, response, steps);
+                case "UNCLASSIFIED_FAILURE" -> runUnclassifiedFailure(merchantId, response, steps);
                 default -> throw new InvalidRequestException("Unknown demo scenario: " + scenario
-                        + " (expected LOW_RISK_RETRY, HIGH_RISK_HUMAN_REVIEW, CUSTOMER_ACTION, PROVIDER_AMBIGUITY, DUPLICATE_EVENT or AGENT_FAILURE)");
+                        + " (expected LOW_RISK_RETRY, HIGH_RISK_HUMAN_REVIEW, CUSTOMER_ACTION, PROVIDER_AMBIGUITY, DUPLICATE_EVENT or UNCLASSIFIED_FAILURE)");
             }
         } catch (Exception e) {
             log.error("Error executing demo scenario '{}' for merchant '{}': {}", scenario, merchantId, e.getMessage(), e);
@@ -218,13 +220,10 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runLowRiskRetry(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("4999.00");
-        Setup setup = prepareCampaign(merchantId, "low_risk_retry", "INSUFFICIENT_FUNDS", "0.95",
+        Setup setup = prepareCampaign(merchantId, "low_risk_retry", "insufficient_funds", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
-                false, "Transient failure detected with high classification confidence; automated retry is safe.", "AUTO_APPROVED");
-
-        steps.add(simulated("six-agent consensus (fixed demo values, no AI call): LOW risk, proposed action RETRY_PAYMENT (confidence 95%)."));
+        steps.add(simulated("demo preset strategy RETRY_IMMEDIATELY: a fixed demo value (the strategy table gives RETRY_LATER for INSUFFICIENT_FUNDS); no AI."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(), "Action intent " + intent.getId() + " created after compliance approval");
         steps.add("Compliance engine ALLOWED; ActionIntent " + intent.getId() + " created for attempt #" + intent.getAttemptNumber() + ".");
@@ -244,14 +243,10 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runHighRiskHumanReview(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("72000.00");
-        Setup setup = prepareCampaign(merchantId, "high_risk_review", "AUTHENTICATION_FAILED", "0.90",
+        Setup setup = prepareCampaign(merchantId, "high_risk_review", "authentication_failed", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
-                true, "High-value transaction (₹72,000) exceeds the merchant automated-retry threshold and the customer has prior dispute history; merchant confirmation required before execution.", "REVIEW_REQUIRED");
-
-        steps.add(simulated("risk agent flagged HIGH risk (fixed demo values, no AI call); supervisor consensus REVIEW_REQUIRED with proposed action RETRY_PAYMENT."));
-        steps.add(simulated("agent gate: executable strategy held for merchant approval - no ActionIntent created yet."));
+        steps.add(simulated("the demo holds this high-value recovery for merchant approval (a review item, not an AI decision); no ActionIntent created yet."));
 
         ReviewQueue review = humanApprovalService.createReview(
                 merchantId, setup.campaignId(),
@@ -276,13 +271,10 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runCustomerAction(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("12999.00");
-        Setup setup = prepareCampaign(merchantId, "customer_action", "CARD_EXPIRED", "0.98",
+        Setup setup = prepareCampaign(merchantId, "customer_action", "card_expired", "customer",
                 "CUSTOMER_ACTION_REQUIRED", amount, response, steps);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "REQUEST_CUSTOMER_ACTION", "CUSTOMER_ACTION_REQUIRED",
-                false, "Card expired; a customer action (card update / payment link) is required instead of an automated retry.", "AUTHORIZED");
-
-        steps.add(simulated("Customer Engagement agent recommended a payment-update link (fixed demo values, no AI call)."));
+        steps.add(simulated("strategy CUSTOMER_ACTION_REQUIRED for INSTRUMENT_INVALID (deterministic table): a payment-update link."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
                 simulated("payment link requested for customer action (intent " + intent.getId() + ")"));
@@ -312,11 +304,8 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runProviderAmbiguity(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("2999.00");
-        Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "NETWORK_TIMEOUT", "0.92",
+        Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "gateway_technical_error", "gateway",
                 "RETRY_IMMEDIATELY", amount, response, steps);
-
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
-                false, "Provider connection timed out during execution; the authoritative outcome is unknown until reconciled.", "AMBIGUOUS");
 
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
@@ -359,7 +348,7 @@ public class DemoController {
         String paymentId = demoRef("pay_demo_duplicate_event");
         String externalEventId = "evt_demo_duplicate_" + UUID.randomUUID();
         WebhookEvent original = buildWebhookEvent(merchantId, externalEventId, "payment.failed", paymentId,
-                new BigDecimal("8999.00"), "failed", "bank timeout");
+                new BigDecimal("8999.00"), "failed", "bank_technical_error", "gateway", null);
 
         webhookEventRepository.saveAndFlush(original);
         steps.add(simulated("webhook delivery: a fabricated event was persisted (external_event_id=" + externalEventId + ")."));
@@ -384,26 +373,21 @@ public class DemoController {
     }
 
     // ------------------------------------------------------------------
-    // SCENARIO 6 — AGENT FAILURE (deterministic safe fallback)
+    // SCENARIO 6 — UNCLASSIFIED FAILURE (no documented mapping: never guessed, no action)
     // ------------------------------------------------------------------
-    private void runAgentFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
+    private void runUnclassifiedFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("3499.00");
-        Setup setup = prepareCampaign(merchantId, "agent_failure", "UNKNOWN", "0.40", null, amount, response, steps, false);
+        Setup setup = prepareCampaign(merchantId, "unclassified_failure", "payment_failed", "customer", null, amount, response, steps, false);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "MANUAL_REVIEW", "FALLBACK_STRATEGY",
-                false, "AI/MCP execution unavailable; deterministic heuristic fallback applied. Low confidence (40%) and unknown failure class mean no automated action is safe.", "SAFE_FALLBACK");
-
-        steps.add(simulated("AI service timeout (no AI call was made); heuristic fallback decision: no automated retry."));
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXHAUSTED,
-                simulated("deterministic fallback: UNKNOWN classification at 40% confidence is not eligible for automated recovery"),
-                "SYSTEM", null);
-        steps.add("Campaign set to EXHAUSTED by the demo's " + simulated("fallback decision") + " - no payment action was taken.");
+                "Ineligible for recovery: failure class 'UNCLASSIFIED' has no documented recovery mapping", "SYSTEM", null);
+        steps.add("UNCLASSIFIED is ineligible (as in the real pipeline): campaign EXHAUSTED, no payment action was taken.");
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
         response.setFinalCampaignState(updated.getCurrentState());
         response.setAmount(amount);
-        response.setMessage("Scenario AGENT_FAILURE completed: safe deterministic fallback left campaign "
+        response.setMessage("Scenario UNCLASSIFIED_FAILURE completed: the undocumented failure left campaign "
                 + updated.getId() + " in " + updated.getCurrentState() + ".");
     }
 
@@ -413,17 +397,17 @@ public class DemoController {
 
     private record Setup(UUID campaignId, String paymentId) { }
 
-    private Setup prepareCampaign(UUID merchantId, String slug, String failureClass, String confidence,
+    private Setup prepareCampaign(UUID merchantId, String slug, String errorReason, String errorSource,
                                   String strategy, BigDecimal amount, DemoTriggerResponse response, List<String> steps) {
-        return prepareCampaign(merchantId, slug, failureClass, confidence, strategy, amount, response, steps, true);
+        return prepareCampaign(merchantId, slug, errorReason, errorSource, strategy, amount, response, steps, true);
     }
 
     /**
      * @param moveToEligible when false the campaign stays CLASSIFIED (used by the
-     *                       agent-failure scenario, mirroring production, where ineligible
+     *                       unclassified-failure scenario, mirroring production, where ineligible
      *                       classifications never become ELIGIBLE).
      */
-    private Setup prepareCampaign(UUID merchantId, String slug, String failureClass, String confidence,
+    private Setup prepareCampaign(UUID merchantId, String slug, String errorReason, String errorSource,
                                   String strategy, BigDecimal amount, DemoTriggerResponse response,
                                   List<String> steps, boolean moveToEligible) {
         String paymentId = demoRef("pay_demo_" + slug);
@@ -433,22 +417,32 @@ public class DemoController {
         // Consistent with the ingestion pipeline, the campaign payment identity equals the
         // webhook's external event id.
         WebhookEvent event = buildWebhookEvent(merchantId, paymentId, "payment.failed", paymentId,
-                amount, "failed", failureClass.toLowerCase());
+                amount, "failed", errorReason, errorSource, null);
         webhookEventRepository.saveAndFlush(event);
         steps.add(simulated("failed-payment webhook (fabricated, not from Razorpay) persisted for " + paymentId + " (₹"
                 + amount.toPlainString() + ")."));
 
+        // M3 (ADR-003): the simulated failure is classified by the real deterministic taxonomy from its error fields;
+        // no confidence, no model.
+        ProviderFailure failure = ProviderFailure.of("BAD_REQUEST_ERROR", errorReason, errorSource);
+        FailureClassification classification = FailureTaxonomy.classify(failure);
+        String failureClass = classification.failureClass().name();
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, customerIdHash, null);
         campaign.setFailureClass(failureClass);
-        campaign.setConfidence(new BigDecimal(confidence));
         if (strategy != null) {
             campaign.setStrategy(strategy);
         }
         campaignRepository.saveAndFlush(campaign);
+        ClassificationResult row = new ClassificationResult(UUID.randomUUID(), event.getId(), campaign.getId(), failureClass,
+                null, null, simulated("Razorpay error_reason '" + errorReason + "' on a fabricated webhook"), null);
+        row.setTaxonomyVersion(classification.tableVersion());
+        row.setEvidence(classification.evidence(failure));
+        classificationResultRepository.saveAndFlush(row);
 
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED,
-                simulated("classification attached: " + failureClass + " (confidence " + confidence + ")"), "SYSTEM", null);
-        steps.add(simulated("classification " + failureClass + " (confidence " + confidence + ", fixed demo values, no AI call)."));
+                simulated("classification attached: " + failureClass + " (error_reason " + errorReason + ")"), "SYSTEM", null);
+        steps.add(simulated("deterministic classification " + failureClass + " from error_reason '" + errorReason
+                + "' (taxonomy " + classification.tableVersion() + ", no AI call)."));
 
         if (moveToEligible) {
             campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.ELIGIBLE,
@@ -460,29 +454,6 @@ public class DemoController {
         response.setCustomerIdHash(customerIdHash);
         response.setCampaignId(campaign.getId());
         return new Setup(campaign.getId(), paymentId);
-    }
-
-    private void recordAgentDecision(UUID merchantId, UUID campaignId, String paymentId,
-                                     String decision, String selectedAction, boolean humanReview,
-                                     String reason, String executionStatus) {
-        AgentDecisionRecord record = new AgentDecisionRecord();
-        record.setId(UUID.randomUUID());
-        record.setMerchantId(merchantId);
-        record.setCampaignId(campaignId);
-        record.setPaymentId(paymentId);
-        record.setDecision(decision);
-        record.setSelectedAction(selectedAction);
-        record.setConfidence(BigDecimal.valueOf(0.90));
-        record.setReasoning(simulated(reason));
-        record.setEvidence(simulated("fixed demo agent summary; no agent or AI call was made"));
-        record.setRequiresHumanApproval(humanReview);
-        record.setComplianceStatus("ALLOWED");
-        record.setExecutionStatus(executionStatus);
-        record.setCreatedAt(Instant.now());
-        agentDecisionRecordRepository.saveAndFlush(record);
-
-        auditService.logEvent(merchantId, campaignId, "AGENT_DECISION_MADE", "AGENT", null,
-                simulated("Decision=" + decision + ", Reason: " + reason));
     }
 
     private void transitionToActionPending(UUID merchantId, UUID campaignId, String reason) {
@@ -507,7 +478,7 @@ public class DemoController {
                                           DemoTriggerResponse response, List<String> steps) {
         String recoveryPaymentId = demoRef("pay_demo_recovery");
         WebhookEvent captured = buildWebhookEvent(merchantId, eventId, "payment.captured", recoveryPaymentId,
-                amount, "captured", null, intentId);
+                amount, "captured", null, null, intentId);
         webhookEventRepository.saveAndFlush(captured);
 
         var result = paymentReconciliationService.reconcileWebhookEvent(captured);
@@ -520,18 +491,15 @@ public class DemoController {
     }
 
     private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
-                                           String paymentId, BigDecimal amount, String status, String failureCode) {
-        return buildWebhookEvent(merchantId, externalEventId, eventType, paymentId, amount, status, failureCode, null);
-    }
-
-    private WebhookEvent buildWebhookEvent(UUID merchantId, String externalEventId, String eventType,
-                                           String paymentId, BigDecimal amount, String status, String failureCode, UUID mendIntentId) {
+                                           String paymentId, BigDecimal amount, String status, String errorReason,
+                                           String errorSource, UUID mendIntentId) {
         String payload = """
                 {"entity":"event","event":"%s","payload":{"payment":{"entity":{"id":"%s","amount":%d,"currency":"INR","status":"%s","method":"card"%s%s}}}}
                 """.formatted(
                 eventType, paymentId,
                 amount.movePointRight(2).longValueExact(), status,
-                failureCode != null ? ",\"error_code\":\"" + failureCode + "\",\"error_description\":\"demo failure: " + failureCode + "\"" : "",
+                errorReason != null ? ",\"error_code\":\"BAD_REQUEST_ERROR\",\"error_reason\":\"" + errorReason
+                        + "\",\"error_source\":\"" + errorSource + "\",\"error_description\":\"demo failure: " + errorReason + "\"" : "",
                 mendIntentId != null ? ",\"notes\":{\"mend_intent_id\":\"" + mendIntentId + "\"}" : ""
         );
 

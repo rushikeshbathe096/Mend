@@ -25,7 +25,7 @@ public class ComplianceEngineTest {
 
     @BeforeEach
     void setUp() {
-        engine = new ComplianceEngine(new BigDecimal("0.80"));
+        engine = new ComplianceEngine();
         merchantId = UUID.randomUUID();
         campaignId = UUID.randomUUID();
     }
@@ -39,17 +39,29 @@ public class ComplianceEngineTest {
         return campaign;
     }
 
+    /**
+     * A deterministic (taxonomy) classification row. The {@code confidence} argument is kept for the pre-M3 call sites; a
+     * deterministic row ignores it (M3 behaviour change, ADR-003 §4).
+     */
     private ClassificationResult createClassification(String failureClass, BigDecimal confidence) {
-        return new ClassificationResult(
+        ClassificationResult result = new ClassificationResult(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 campaignId,
                 failureClass,
                 confidence,
-                "RECOMMENDATION",
+                null,
                 "Reasoning",
-                "v1.0.0"
+                null
         );
+        result.setTaxonomyVersion(com.mend.taxonomy.FailureTaxonomy.TABLE_VERSION);
+        return result;
+    }
+
+    /** A pre-M3, AI-classified row: no taxonomy version, an AI confidence and model version. */
+    private ClassificationResult legacyClassification(String failureClass, BigDecimal confidence) {
+        return new ClassificationResult(UUID.randomUUID(), UUID.randomUUID(), campaignId, failureClass, confidence,
+                "RECOMMENDATION", "Reasoning", "v1.0.0");
     }
 
     @Test
@@ -70,8 +82,10 @@ public class ComplianceEngineTest {
     @Test
     @DisplayName("2. Valid RETRY_IMMEDIATELY -> COMPLIANCE_ALLOWED")
     void testValidRetryImmediatelyAllowed() {
-        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "NETWORK_FAILURE", new BigDecimal("0.95"));
-        ClassificationResult classification = createClassification("NETWORK_FAILURE", new BigDecimal("0.95"));
+        // M3 behaviour change (ADR-003 §4): NETWORK_FAILURE is a pre-M3 (AI-era) class and now fails closed; its taxonomy
+        // equivalent GATEWAY_ERROR is the documented transient class (was NETWORK_FAILURE / 0.95).
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "GATEWAY_ERROR", null);
+        ClassificationResult classification = createClassification("GATEWAY_ERROR", null);
         ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_IMMEDIATELY, classification, null, UUID.randomUUID(), false);
 
         ComplianceDecision decision = engine.evaluate(context);
@@ -96,16 +110,34 @@ public class ComplianceEngineTest {
     }
 
     @Test
-    @DisplayName("4. Low confidence -> COMPLIANCE_BLOCKED (LOW_CONFIDENCE)")
-    void testLowConfidenceBlocked() {
-        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "INSUFFICIENT_FUNDS", new BigDecimal("0.70"));
-        ClassificationResult classification = createClassification("INSUFFICIENT_FUNDS", new BigDecimal("0.70"));
-        ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_LATER, classification, null, UUID.randomUUID(), false);
+    @DisplayName("4. Confidence is never consulted: a documented class with a low (AI-era) or no confidence -> ALLOWED")
+    void testConfidenceNotConsulted() {
+        // M3 behaviour change (ADR-003 §4): the 0.80 LOW_CONFIDENCE gate is removed with the fabricated confidence; the
+        // block on undocumented classes (test 5, 5b) replaces it. Was: 0.70 -> BLOCKED (LOW_CONFIDENCE).
+        for (BigDecimal confidence : new BigDecimal[]{new BigDecimal("0.70"), null}) {
+            Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "INSUFFICIENT_FUNDS", confidence);
+            ClassificationResult classification = createClassification("INSUFFICIENT_FUNDS", confidence);
+            ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_LATER, classification, null, UUID.randomUUID(), false);
+
+            ComplianceDecision decision = engine.evaluate(context);
+
+            assertTrue(decision.isAllowed(), "confidence " + confidence);
+            assertNotEquals(ComplianceReason.LOW_CONFIDENCE, decision.getReason());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"UNCLASSIFIED", "BANK_DECLINED", "NETWORK_FAILURE", "CARD_EXPIRED", "AUTHENTICATION_FAILED"})
+    @DisplayName("5b. UNCLASSIFIED and every pre-M3 class -> COMPLIANCE_BLOCKED (UNKNOWN_CLASSIFICATION), whatever the confidence")
+    void testUndocumentedClassBlocked(String failureClass) {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, new BigDecimal("0.99"));
+        ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_LATER,
+                createClassification(failureClass, new BigDecimal("0.99")), null, UUID.randomUUID(), false);
 
         ComplianceDecision decision = engine.evaluate(context);
 
         assertTrue(decision.isBlocked());
-        assertEquals(ComplianceReason.LOW_CONFIDENCE, decision.getReason());
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decision.getReason());
     }
 
     @Test
@@ -203,5 +235,34 @@ public class ComplianceEngineTest {
         ComplianceDecision decisionManual = engine.evaluate(new ComplianceContext(merchantId, campaign, RecoveryStrategy.MANUAL_REVIEW, classification, null, UUID.randomUUID(), false));
         assertTrue(decisionManual.isBlocked());
         assertEquals(ComplianceReason.STRATEGY_NOT_SUPPORTED, decisionManual.getReason());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"INSUFFICIENT_FUNDS", "LIMIT_EXCEEDED"})
+    @DisplayName("U2.2 review fix: a pre-M3 AI row whose class name matches a taxonomy class is still blocked (fail closed)")
+    void testLegacyRowWithTaxonomyNameBlocked(String failureClass) {
+        for (BigDecimal confidence : new BigDecimal[]{new BigDecimal("0.55"), new BigDecimal("0.95")}) {
+            Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, confidence);
+            ComplianceContext context = new ComplianceContext(merchantId, campaign, RecoveryStrategy.RETRY_LATER,
+                    legacyClassification(failureClass, confidence), null, UUID.randomUUID(), false);
+
+            ComplianceDecision decision = engine.evaluate(context);
+
+            assertTrue(decision.isBlocked(), failureClass + " @ " + confidence);
+            assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decision.getReason());
+        }
+        // and with no classification row at all, the campaign's own class never authorizes
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, failureClass, null);
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, engine.evaluate(new ComplianceContext(merchantId, campaign,
+                RecoveryStrategy.RETRY_LATER, null, null, UUID.randomUUID(), false)).getReason());
+    }
+
+    @Test
+    @DisplayName("U2.2 review fix: a legacy class is blocked before the strategy checks (no unapprovable MANUAL_REVIEW review)")
+    void testLegacyClassBlockedBeforeStrategyRules() {
+        Campaign campaign = createCampaign(CampaignStatus.ELIGIBLE, 0, "BANK_DECLINED", new BigDecimal("0.95"));
+        ComplianceDecision decision = engine.evaluate(new ComplianceContext(merchantId, campaign, RecoveryStrategy.MANUAL_REVIEW,
+                legacyClassification("BANK_DECLINED", new BigDecimal("0.95")), null, UUID.randomUUID(), false));
+        assertEquals(ComplianceReason.UNKNOWN_CLASSIFICATION, decision.getReason());
     }
 }

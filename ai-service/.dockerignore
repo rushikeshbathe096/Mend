@@ -1,0 +1,8 @@
+# M3 U2.6: the image needs main.py, reply_parser.py and requirements.txt only
+.venv/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+test_*.py
+eval/
+agent/

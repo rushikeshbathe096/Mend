@@ -193,8 +193,8 @@ public class AnalyticsObservabilityIntegrationTest extends AbstractIntegrationTe
 
         assertTrue(dto.getFailureClassBreakdown().containsKey("INSUFFICIENT_FUNDS"));
         assertTrue(dto.getFailureClassBreakdown().containsKey("BANK_TECHNICAL_ERROR"));
-        assertNotNull(dto.getAiConfidenceMetrics());
-        assertTrue(dto.getAiConfidenceMetrics().containsKey("averageConfidence"));
+        // M3 behaviour change: AI confidence metrics removed (ADR-003 §3); the response must not carry them
+        assertFalse(tools.jackson.databind.json.JsonMapper.builder().build().<tools.jackson.databind.JsonNode>valueToTree(dto).has("aiConfidenceMetrics"));
         assertNotNull(dto.getComplianceMetrics());
         assertEquals(1L, dto.getComplianceMetrics().get("blockedCount"));
         assertEquals(1L, dto.getComplianceMetrics().get("allowedCount"));

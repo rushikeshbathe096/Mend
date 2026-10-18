@@ -1,16 +1,15 @@
 package com.mend.strategy;
 
 import com.mend.domain.entity.Campaign;
+import com.mend.taxonomy.PaymentFailureClass;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.MerchantConfig;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.RecoveryStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -19,15 +18,10 @@ public class RecoveryStrategyEngine {
 
     private static final Logger log = LoggerFactory.getLogger(RecoveryStrategyEngine.class);
 
-    public static final String POLICY_VERSION = "v1.0";
+    /** v2.0 (M3 U2.2): rules keyed by the deterministic taxonomy class; no confidence rule (ADR-003 §4). */
+    public static final String POLICY_VERSION = "v2.0";
     public static final int DEFAULT_MAX_ATTEMPTS = 3;
 
-    private final BigDecimal minConfidenceThreshold;
-
-    public RecoveryStrategyEngine(
-            @Value("${mend.recovery.strategy.min-confidence:0.80}") BigDecimal minConfidenceThreshold) {
-        this.minConfidenceThreshold = minConfidenceThreshold;
-    }
 
     public RecoveryDecision evaluate(RecoveryContext context) {
         if (context == null || context.getCampaign() == null) {
@@ -51,7 +45,7 @@ public class RecoveryStrategyEngine {
                     RecoveryStrategy.NO_ACTION,
                     "Campaign is in terminal state: " + state,
                     "LOW",
-                    campaign.getConfidence(),
+                    null,
                     POLICY_VERSION,
                     Instant.now()
             );
@@ -64,7 +58,7 @@ public class RecoveryStrategyEngine {
                     RecoveryStrategy.MANUAL_REVIEW,
                     "Campaign state '" + state + "' is not ready for strategy evaluation",
                     "LOW",
-                    campaign.getConfidence(),
+                    null,
                     POLICY_VERSION,
                     Instant.now()
             );
@@ -84,105 +78,42 @@ public class RecoveryStrategyEngine {
                     RecoveryStrategy.NO_ACTION,
                     "Maximum recovery attempts reached (" + currentAttemptCount + "/" + maxAttempts + ")",
                     "LOW",
-                    campaign.getConfidence(),
+                    null,
                     POLICY_VERSION,
                     Instant.now()
             );
         }
 
-        // Rule 3: Validate AI Confidence Threshold (Task 5 & Task 13)
-        BigDecimal confidence = classification != null ? classification.getConfidence() : campaign.getConfidence();
-        if (confidence == null || confidence.compareTo(minConfidenceThreshold) < 0) {
-            log.info("Campaign '{}' AI confidence ({}) below minimum threshold ({}). Recommending MANUAL_REVIEW.",
-                    campaignId, confidence, minConfidenceThreshold);
-            return new RecoveryDecision(
-                    campaignId, merchantId, classificationId,
-                    RecoveryStrategy.MANUAL_REVIEW,
-                    "AI classification confidence (" + (confidence != null ? confidence : "null") +
-                            ") is below minimum threshold (" + minConfidenceThreshold + ")",
-                    "NORMAL",
-                    confidence,
-                    POLICY_VERSION,
-                    Instant.now()
-            );
-        }
-
-        // Rule 4: Deterministic Decision Rules Matrix based on Failure Class & Attempt History (Task 4)
+        // Rule 3 (M3 U2.2, ADR-003 §4): strategy by deterministic taxonomy class. Each class keeps its pre-M3 equivalent's
+        // rule; a legacy (pre-M3) or UNCLASSIFIED class gets MANUAL_REVIEW (and is blocked by compliance anyway).
+        // Only a deterministic row (taxonomy version) decides; a pre-M3 row or a missing classification is UNCLASSIFIED.
         String failureClassStr = classification != null ? classification.getFailureClass() : campaign.getFailureClass();
-        if (failureClassStr == null) {
-            failureClassStr = "UNKNOWN";
-        }
+        PaymentFailureClass failureClass = classification != null && classification.getTaxonomyVersion() != null
+                ? PaymentFailureClass.fromStored(failureClassStr) : null;
 
-        RecoveryStrategy computedStrategy;
-        String reason;
-        String priority;
-
-        switch (failureClassStr.toUpperCase()) {
-            case "INSUFFICIENT_FUNDS":
-                if (currentAttemptCount == 0) {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Soft failure due to insufficient funds; schedule initial retry";
-                    priority = "NORMAL";
-                } else if (currentAttemptCount == 1) {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Second attempt for insufficient funds; schedule retry";
-                    priority = "NORMAL";
-                } else {
-                    computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                    reason = "Multiple insufficient funds failures; customer intervention required";
-                    priority = "HIGH";
-                }
-                break;
-
-            case "BANK_DECLINED":
-                if (currentAttemptCount == 0) {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Bank decline soft failure; schedule delayed retry";
-                    priority = "NORMAL";
-                } else {
-                    computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                    reason = "Persistent bank decline; customer action required";
-                    priority = "HIGH";
-                }
-                break;
-
-            case "NETWORK_FAILURE":
-                if (currentAttemptCount == 0) {
-                    computedStrategy = RecoveryStrategy.RETRY_IMMEDIATELY;
-                    reason = "Transient network failure; retry immediately";
-                    priority = "HIGH";
-                } else {
-                    computedStrategy = RecoveryStrategy.RETRY_LATER;
-                    reason = "Repeated network failure; schedule retry later";
-                    priority = "NORMAL";
-                }
-                break;
-
-            case "CARD_EXPIRED":
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Payment method expired; customer update required";
-                priority = "HIGH";
-                break;
-
-            case "AUTHENTICATION_FAILED":
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Authentication or 3DS failure; customer action required";
-                priority = "HIGH";
-                break;
-
-            case "LIMIT_EXCEEDED":
-                computedStrategy = RecoveryStrategy.CUSTOMER_ACTION_REQUIRED;
-                reason = "Card limit exceeded; customer action required";
-                priority = "HIGH";
-                break;
-
-            case "UNKNOWN":
-            default:
-                computedStrategy = RecoveryStrategy.MANUAL_REVIEW;
-                reason = "Unrecognized or unknown failure classification: '" + failureClassStr + "'";
-                priority = "LOW";
-                break;
-        }
+        // A switch expression, so the compiler checks that every taxonomy class has a rule.
+        StrategyRule rule = switch (failureClass == null ? PaymentFailureClass.UNCLASSIFIED : failureClass) {
+            case INSUFFICIENT_FUNDS -> currentAttemptCount == 0
+                    ? new StrategyRule(RecoveryStrategy.RETRY_LATER, "Soft failure due to insufficient funds; schedule initial retry", "NORMAL")
+                    : currentAttemptCount == 1
+                    ? new StrategyRule(RecoveryStrategy.RETRY_LATER, "Second attempt for insufficient funds; schedule retry", "NORMAL")
+                    : new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Multiple insufficient funds failures; customer intervention required", "HIGH");
+            case BANK_TECHNICAL, GATEWAY_ERROR -> currentAttemptCount == 0
+                    ? new StrategyRule(RecoveryStrategy.RETRY_IMMEDIATELY, "Transient bank/gateway failure; retry immediately", "HIGH")
+                    : new StrategyRule(RecoveryStrategy.RETRY_LATER, "Repeated bank/gateway failure; schedule retry later", "NORMAL");
+            case LIMIT_EXCEEDED -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Payment limit exceeded; customer action required", "HIGH");
+            case AUTHENTICATION_FAILURE -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Authentication or 3DS failure; customer action required", "HIGH");
+            case INSTRUMENT_INVALID -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                    "Payment instrument expired, blocked or inactive; customer update required", "HIGH");
+            case CUSTOMER_DECLINED -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                    "Customer cancelled or did not complete the payment; send a payment link", "NORMAL");
+            case MANDATE_INVALID -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Mandate could not be set up; customer action required", "HIGH");
+            case UNCLASSIFIED -> new StrategyRule(RecoveryStrategy.MANUAL_REVIEW,
+                    "No documented failure classification ('" + failureClassStr + "')", "LOW");
+        };
+        RecoveryStrategy computedStrategy = rule.strategy();
+        String reason = rule.reason();
+        String priority = rule.priority();
 
         // Rule 5: Respect Merchant Configuration Restrictions (Task 7)
         if (merchantConfig != null && merchantConfig.getEnabledRecoveryActions() != null && !merchantConfig.getEnabledRecoveryActions().isBlank()) {
@@ -198,7 +129,7 @@ public class RecoveryStrategyEngine {
 
         return new RecoveryDecision(
                 campaignId, merchantId, classificationId,
-                computedStrategy, reason, priority, confidence, POLICY_VERSION, Instant.now()
+                computedStrategy, reason, priority, null, POLICY_VERSION, Instant.now()
         );
     }
 
@@ -208,9 +139,12 @@ public class RecoveryStrategyEngine {
                 RecoveryStrategy.MANUAL_REVIEW,
                 "Safety Default: " + reason,
                 "LOW",
-                BigDecimal.ZERO,
+                null,
                 POLICY_VERSION,
                 Instant.now()
         );
+    }
+
+    private record StrategyRule(RecoveryStrategy strategy, String reason, String priority) {
     }
 }
