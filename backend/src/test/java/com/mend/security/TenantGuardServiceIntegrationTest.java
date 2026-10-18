@@ -52,6 +52,7 @@ class TenantGuardServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired private HumanApprovalService humanApprovalService;
     @Autowired private com.mend.service.CustomerReplyService customerReplyService;
     @Autowired private WebhookQueryService webhookQueryService;
+    @Autowired private com.mend.service.ExperimentReportService experimentReportService;
     @Autowired private MerchantRepository merchantRepository;
 
     private UUID merchantId;
@@ -113,6 +114,9 @@ class TenantGuardServiceIntegrationTest extends AbstractIntegrationTest {
                 new GuardedCall("HumanApprovalService.getReviewSummary", u -> humanApprovalService.getReviewSummary(m, u)),
                 new GuardedCall("HumanApprovalService.approveReview", u -> humanApprovalService.approveReview(m, any, "ok", u)),
                 new GuardedCall("HumanApprovalService.rejectReview", u -> humanApprovalService.rejectReview(m, any, "no", u)),
+                // M4 U4.8: resolve-without-collecting and the experiment view are user-facing and tenant-guarded
+                new GuardedCall("HumanApprovalService.resolveWithoutCollecting", u -> humanApprovalService.resolveWithoutCollecting(m, any, "no", u)),
+                new GuardedCall("ExperimentReportService.forMerchant", u -> experimentReportService.forMerchant(m, u)),
                 new GuardedCall("WebhookQueryService.getWebhooks",
                         u -> webhookQueryService.getWebhooks(m, null, 0, 5, "receivedAt", "desc", u)),
                 new GuardedCall("WebhookQueryService.getWebhook", u -> webhookQueryService.getWebhook(m, any, u)),
