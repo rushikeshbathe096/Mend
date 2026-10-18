@@ -368,3 +368,45 @@ Verify: ai-service `90 passed`.
 Verify: `scripts/ci/backend.sh` → `[INFO] Tests run: 941, Failures: 0, Errors: 0, Skipped: 0`, BUILD SUCCESS
 (frontend 62 / ai-service 90 / migrations unchanged since their U2.7 runs).
 Next: merge `m3/honest-intelligence` into local main (`--no-ff`), tag `m3-complete`. Not pushed.
+
+## M3 follow-ups (branch m3/followups from main @ 9db90a0)
+Baseline (= tag m3-complete): backend 941/0/0/0, frontend 62, ai-service 90.
+
+### 1. fix: all database sessions run in UTC (`f0834a0`)
+- Root cause: pgjdbc sets the session TimeZone from the JVM default at connect (Asia/Kolkata here), so `DEFAULT
+  CURRENT_TIMESTAMP` on TIMESTAMP-without-tz columns wrote local wall-clock while Hibernate writes UTC: +5 h 30 min.
+- Fix: `spring.datasource.hikari.connection-init-sql`, `spring.flyway.init-sqls` (= `SET TIME ZONE 'UTC'`) and
+  `spring.jpa.properties.hibernate.jdbc.time_zone=UTC`. No column type changed, no data rewritten.
+- Columns now consistent (TIMESTAMP without tz + DB default), 21: V1 roles/users/merchants/merchant_users/campaigns/
+  campaign_attempts/action_intents/classification_results/review_queue/merchant_config/audit_logs `created_at`,
+  users/merchants/campaigns/merchant_config `updated_at`, webhook_events `received_at`; V9 agent_decision_records
+  `created_at`; V20 customer_replies `next_attempt_at`/`created_at`/`updated_at`, reply_suggestions `created_at`.
+  TIMESTAMPTZ columns (V6–V8, V11, V12) were already zone-independent.
+- Tests: SessionTimeZoneIntegrationTest (3; JVM and DB defaults forced to Asia/Kolkata, pool evicted). Revert proof:
+  `sessionZoneIsUtc:94 <Asia/Kolkata>`, `dbDefaultedReplyIsDueImmediately:103 expected <1> but was <0>`,
+  `dbDefaultTimestampMatchesJavaNow:115 skew PT5H29M59.99S`. Backend 944/0/0/0.
+
+### 2. feat: unmapped declines get a payment link, never a retry (`39d450f`), owner decision B
+- Strategy v2.1: UNCLASSIFIED → CUSTOMER_ACTION_REQUIRED; legacy/missing rows → MANUAL_REVIEW (fail closed, no longer via
+  the UNCLASSIFIED rule). Compliance v2.2 rule 3c: RETRY_* for UNCLASSIFIED → RETRY_NOT_ALLOWED_UNCLASSIFIED. Legacy
+  rows still UNKNOWN_CLASSIFICATION. Demo, dev seed, landing copy, README follow. ADR-003 §4 amended (dated).
+- Tests: 7 unmapped reasons → link intent; strategy override to RETRY blocked; engine tests; 7 assertions changed with
+  M3 behaviour-change comments; Phase19_5/Phase20 fixtures put the reason in `error_reason` (documented shape).
+- DECISION F-a: those two fixtures put "insufficient_funds" in `error_code`. Under decision B, that UNCLASSIFIED failure
+  got a link intent at once and pre-empted the retry the test forces. Fixed to Razorpay's documented shape.
+- Revert proofs: table → MANUAL_REVIEW: `unmappedDeclinesGetALinkOnly…:290 expected <ACTION_PENDING> but was <ELIGIBLE>`;
+  rule 3c off: `testUnclassifiedRetryBlocked:278`, `retryForcedOntoUnclassifiedIsBlocked:323`. Backend 955/0/0/0.
+
+### 3. fix: legacy pre-M3 decisions cannot dispatch (`2fafb3e`)
+- Pre-dispatch gate: the stored ALLOWED decision must be policy v2.0 or later (regex `^v(\d+)\.(\d+)$`, major ≥ 2), else
+  LEGACY_DECISION. The claim ends FAILED (audited). In the same transaction the campaign goes ACTION_PENDING → ELIGIBLE
+  and a LEGACY_DECISION review opens. No row is rewritten.
+- DECISION F-b: 15 M2-era fixtures stamped generic ALLOWED decisions "v1.0.0" / "v1" / "v1.0" / "scheduler-tx-v1"; they
+  now use `TestCompliance.CURRENT_POLICY` (documented behaviour change). Pre-M3 decisions are tested explicitly in
+  LegacyDecisionDispatchTest.
+- Revert proof (gate off): `legacyDecisionFailsClosedAndRoutesToReview:92 nothing thrown`,
+  `schedulerDoesNotDispatchLegacyDecision:114 expected <FAILED> but was <READY>`. Backend 970/0/0/0.
+
+### 4. docs
+ADR-003 Consequences (legacy-intent gap closed, decision B, UTC), M3-summary follow-ups line, AGENTS.md milestone line,
+this file.

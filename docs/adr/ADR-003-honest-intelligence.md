@@ -110,8 +110,16 @@ confidence is not. Async parsing keeps AI useful without putting it between a fa
   matches a taxonomy class (`INSUFFICIENT_FUNDS`, `LIMIT_EXCEEDED`), and so does a campaign with no classification row.
 - Compliance checks the class before the strategy rules, so a legacy campaign is blocked (`UNKNOWN_CLASSIFICATION`) and is
   never routed to a review it could not pass.
-- Intents created before M3 are not re-classified: the pre-dispatch check re-reads the stored compliance decision
-  (invariant 7) and does not re-run the class rule. Such READY/SCHEDULED intents can still dispatch as authorized then.
+- Intents created before M3 are not re-classified. The pre-dispatch check re-reads the stored compliance decision
+  (invariant 7). *Closed by the M3 follow-up (2026-10-18):* a decision not made under policy v2.0 or later (v1.x, or an
+  unknown version) cannot authorize a dispatch. The executor fails closed with `LEGACY_DECISION`. The campaign returns to
+  ELIGIBLE with a `LEGACY_DECISION` review, and approving it re-evaluates compliance under the current policy. No
+  historical row is rewritten.
+- Under owner decision B (2026-10-18, §4), an UNCLASSIFIED failure is recovered only by a payment link. A retry or debit
+  for it is impossible by two independent rules: the strategy table and compliance rule 3c.
+- All database sessions run in UTC (Hikari `connection-init-sql`, Flyway `init-sqls`, Hibernate `jdbc.time_zone`).
+  TIMESTAMP-without-time-zone defaults therefore agree with the UTC Instants Java writes. Before this, a local JVM zone
+  (seen: Asia/Kolkata) put DB-defaulted values 5 h 30 min ahead. Rows defaulted that way earlier are not rewritten.
 - Reply-raised reviews (`CUSTOMER_DISPUTE`, `CUSTOMER_SAYS_PAID`) use the existing approval queue. Approving one resumes
   collection, and the review text says so. A separate review kind for "resolve, do not collect" is M4-owned.
 - The UI loses the "AI Agent Decisions" tab; review items lose agent fields (historical rows remain in the database).
