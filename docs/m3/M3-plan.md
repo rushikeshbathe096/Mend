@@ -81,14 +81,14 @@ action; no fabricated confidence, model versions, scores or fallbacks; one AI ta
 
 - [x] 1. The payment flow makes zero ai-service calls (proof test with ai-service unreachable). — U2.2 Evidence: `31a1949`, `ecf1d83` (AiOffHotPathTest).
 - [x] 2. No AI output can create, stop, hold or approve an action intent. — U2.2/U2.3 Evidence: `31a1949`, `1c2363f`, `3f6209d` (ReplyParsingIntegrationTest: no POST, no SAFE_RETRY, no RECOVERED).
-- [x] 3. No hardcoded confidence, invented model version, synthetic fallback or risk score remains in backend, ai-service or frontend (grep evidence). — U2.3/U2.6 Evidence: `1c2363f`, `f005c62`, `3aedd1d`, `53ec57d`; grep at U2.7: only legacy entity columns, the LOW_CONFIDENCE enum value for history, and comments.
+- [x] 3. No hardcoded confidence, invented model version, synthetic fallback or risk score remains in backend, ai-service or frontend (grep evidence). — U2.3/U2.6 Evidence: `1c2363f`, `f005c62`, `3aedd1d`, `53ec57d`; grep at U2.7: only legacy entity columns, the LOW_CONFIDENCE enum value for history, comments, and `reply_parser.DEFAULT_MODEL` (the requested model name; the recorded id is the provider's `modelVersion`).
 - [x] 4. Failure taxonomy is deterministic, table-driven, cites the Razorpay docs per mapping, undocumented → UNCLASSIFIED. — U2.1 Evidence: `314bf9e`, `0014eed`.
 - [x] 5. Historical rows kept; no V1–V18 edit; new migrations never rewrite data. — U2.2–U2.4 Evidence: V19–V21 schema-only; `FreshDatabaseMigrationTest` applies 21, validate OK.
 - [x] 6. Exactly one AI task (reply parsing), asynchronous, schema-validated, invalid recorded as invalid. — U2.4 Evidence: `8fe7e0c`, `3f6209d`, `3ff511f`.
 - [x] 7. Deterministic reply policy; LLM output never triggers a financial action; ALREADY_PAID never marks recovered. — U2.4 Evidence: `3f6209d`, `3ff511f`.
 - [x] 8. Model id/version from the provider response; no key → "model unavailable", no output. — U2.4/U2.6 Evidence: `8fe7e0c`, `be25b4b` (test_parse_reply, HttpReplyParserClientTest).
-- [x] 9. Replies are PII: tenant-scoped API (TenantGuard), minimal storage, retention noted. — U2.4 Evidence: `3f6209d` (TenantGuard table +4, no text in logs/audit; retention in ADR-003).
+- [x] 9. Replies are PII: tenant-scoped API (TenantGuard), minimal storage, retention noted. — U2.4 Evidence: `3f6209d` (TenantGuard table +4; no text in audit (ReplyParsingIntegrationTest) or logs (log-capture test `replyTextIsNeverLogged`); retention in ADR-003).
 - [x] 10. Eval dataset versioned + labelled SYNTHETIC; baseline metrics recorded; model metrics only if run. — U2.5 Evidence: `2bc479d`, `e2c72c1` (model TBD: no key).
 - [x] 11. ai-service reduced to parse_reply + health; unused deps removed; pytest green. — U2.6 Evidence: `53ec57d`, `be25b4b` (90 passed, fresh venv).
-- [x] 12. Test counts never drop; backend 0/0/0; frontend lint 0 errors, tests, build; ai-service pytest. — all Evidence: 813→940 / 53→62 / 51→90 (`docs/m3/m3-final-test-run-summary.txt`).
+- [x] 12. Test counts never drop; backend 0/0/0; frontend lint 0 errors, tests, build; ai-service pytest. — all Evidence: 813→941 / 53→62 / 51→90 (`docs/m3/m3-final-test-run-summary.txt`).
 - [x] 13. ADR-003 Accepted with evidence; M3-summary.md; AGENTS.md milestone updated. — U2.7 Evidence: this close-out commit.

@@ -356,3 +356,15 @@ Verify: ai-service `90 passed`.
 - `docs/m3/M3-summary.md` (12 lines), ADR-003 **Accepted** with an evidence table, §50 checklist 13/13 ticked with commits,
   AGENTS.md milestone → "M3 complete — next: M4 (needs design pack)".
 - DECISION U2.7-a: the M3 invariants 16–18 from the design doc are added to AGENTS.md (as M2 did for 11–15).
+
+#### U2.7 review (fresh subagent): no blocker/major. Dispositions
+- FIXED MINOR 1: AGENTS.md scope/baseline lines no longer contradict M3 (marked historical, current scope until M4).
+- FIXED MINOR 2: ADR-003 evidence row 2 also cites `1c2363f`.
+- FIXED MINOR 3 by test, not wording: `ReplyParsingIntegrationTest.replyTextIsNeverLogged` (log capture over parse, failure
+  and record-failure paths). Revert proof: logging the text →
+  `replyTextIsNeverLogged:371 reply text found in the log output ==> expected: <false> but was: <true>`.
+- FIXED NIT 4 (grep note names DEFAULT_MODEL), NIT 5 (8 classes + UNCLASSIFIED), NIT 6 (same wording as RESULTS.md).
+- NOTED NIT 7: "counts never dropped" rests on the per-unit entries in this file.
+Verify: `scripts/ci/backend.sh` → `[INFO] Tests run: 941, Failures: 0, Errors: 0, Skipped: 0`, BUILD SUCCESS
+(frontend 62 / ai-service 90 / migrations unchanged since their U2.7 runs).
+Next: merge `m3/honest-intelligence` into local main (`--no-ff`), tag `m3-complete`. Not pushed.

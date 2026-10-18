@@ -353,6 +353,25 @@ class ReplyParsingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    @DisplayName("The reply text (PII) never reaches the application log: parse, failure and record-failure paths")
+    void replyTextIsNeverLogged(org.springframework.boot.test.system.CapturedOutput output) {
+        Campaign campaign = campaign(CampaignStatus.EXECUTING);
+        String marker = "pii-marker-" + UUID.randomUUID();
+        when(parser.parse(anyString())).thenReturn(parsed("{\"intent\":\"DISPUTE\",\"promised_date\":null,\"abstain\":false}"));
+        replyService.submit(merchantId, campaign.getId(), "my card is 4111 " + marker, admin);
+        job.runOnce();
+        when(parser.parse(anyString())).thenReturn(new ReplyParseOutcome.Failed("AI_SERVICE_UNREACHABLE"));
+        replyService.submit(merchantId, campaign.getId(), "second " + marker, admin);
+        job.runOnce();
+        doThrow(new IllegalStateException("simulated")).when(policySpy).apply(any(), any());
+        when(parser.parse(anyString())).thenReturn(parsed("{\"intent\":\"OTHER\",\"promised_date\":null,\"abstain\":false}"));
+        replyService.submit(merchantId, campaign.getId(), "third " + marker, admin);
+        job.runOnce();
+        assertFalse(output.getAll().contains(marker), "reply text found in the log output");
+    }
+
+    @Test
     @DisplayName("A stale result (the row was re-claimed meanwhile) writes no suggestion")
     void staleResultIsDropped() {
         Campaign campaign = campaign(CampaignStatus.EXECUTING);
