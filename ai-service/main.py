@@ -6,11 +6,11 @@ validates every suggestion and a deterministic policy owns all effects.
 import hmac
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 import reply_parser
 
@@ -49,9 +49,19 @@ def health_check():
                           prompt_version=reply_parser.PROMPT_VERSION)
 
 
+class LabelledExample(BaseModel):
+    """M4 U4.7: one retrieved labelled example (SYNTHETIC or consented, never a customer reply), sent only when the backend's
+    retrieval flag is on."""
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(..., min_length=1, max_length=2000)
+    intent: Literal["OPT_OUT", "ALREADY_PAID", "DISPUTE", "PROMISE_TO_PAY", "OTHER"]
+    promised_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
 class ParseReplyRequest(BaseModel):
     """A customer reply (PII: never logged). The backend caps the text at 2000 characters; so does this endpoint."""
     text: str = Field(..., min_length=1, max_length=2000)
+    examples: Optional[list[LabelledExample]] = Field(default=None, max_length=reply_parser.MAX_EXAMPLES)
 
     @field_validator("text")
     @classmethod
@@ -66,7 +76,11 @@ def parse_reply_endpoint(request: ParseReplyRequest, x_mend_internal_token: Opti
     """M3 (ADR-003 §5): the model's suggestion, passed through unvalidated; the backend validates it strictly."""
     require_internal_auth(x_mend_internal_token)
     try:
-        result = reply_parser.parse_reply(request.text)
+        if request.examples:
+            # M4 U4.7: retrieved labelled examples only when the backend's (default-off) retrieval flag sent them
+            result = reply_parser.parse_reply(request.text, examples=[e.model_dump() for e in request.examples])
+        else:
+            result = reply_parser.parse_reply(request.text)
     except reply_parser.ModelUnavailable:
         return JSONResponse(status_code=503, content={"error": "model_unavailable"})
     except reply_parser.ModelError as e:
