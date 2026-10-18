@@ -1,6 +1,11 @@
 package com.mend.service;
 
 import com.mend.compliance.ComplianceDecision;
+import com.mend.compliance.ComplianceEngine;
+import com.mend.domain.entity.ClassificationResult;
+import com.mend.domain.repository.ClassificationResultRepository;
+import com.mend.domain.repository.HoldoutAssignmentRepository;
+import com.mend.strategy.RecoveryStrategyEngine;
 import com.mend.domain.entity.DecisionLogEntry;
 import com.mend.domain.entity.DecisionLogEntry.Point;
 import com.mend.domain.entity.HoldoutAssignment;
@@ -38,46 +43,78 @@ public class DecisionLogService {
     private static final List<String> DISPATCH_ALTERNATIVES = List.of(BLOCKED, DISPATCHED, EXPIRED);
 
     private final DecisionLogRepository repository;
+    private final HoldoutAssignmentRepository assignmentRepository;
+    private final ClassificationResultRepository classificationResultRepository;
 
-    public DecisionLogService(DecisionLogRepository repository) {
+    public DecisionLogService(DecisionLogRepository repository, HoldoutAssignmentRepository assignmentRepository,
+                              ClassificationResultRepository classificationResultRepository) {
         this.repository = repository;
+        this.assignmentRepository = assignmentRepository;
+        this.classificationResultRepository = classificationResultRepository;
+    }
+
+    /**
+     * U4.2 review: every row carries the versions in force when the decision was taken. Taxonomy: the version of the
+     * campaign's latest classification (null for a legacy row); strategy and compliance: the deterministic engines'
+     * versions (the code that decides); assignment: the campaign's stored hash version (null = UNASSIGNED, pre-M4).
+     */
+    private record Versions(String taxonomy, String strategy, String compliance, String assignment) {
+    }
+
+    private Versions inForce(UUID campaignId) {
+        String taxonomy = classificationResultRepository.findLatestByCampaignId(campaignId)
+                .map(ClassificationResult::getTaxonomyVersion).orElse(null);
+        String assignment = assignmentRepository.findById(campaignId).map(HoldoutAssignment::getHashVersion).orElse(null);
+        return new Versions(taxonomy, RecoveryStrategyEngine.POLICY_VERSION, ComplianceEngine.POLICY_VERSION, assignment);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public DecisionLogEntry assignment(HoldoutAssignment a) {
         List<String> alternatives = a.getHoldoutRateBp() > 0
                 ? List.of(Arm.CONTROL.name(), Arm.TREATMENT.name()) : List.of(Arm.TREATMENT.name());
+        Versions v = inForce(a.getCampaignId());
         return save(new DecisionLogEntry(a.getMerchantId(), a.getCampaignId(), null, Point.ASSIGNMENT, a.getArm().name(), a.getSource(),
                 alternatives, HoldoutAssigner.propensityBp(a.getArm(), a.getHoldoutRateBp()), a.getCampaignId(),
-                null, null, null, a.getHashVersion(), Instant.now()));
+                v.taxonomy(), v.strategy(), v.compliance(), a.getHashVersion(), Instant.now()));
     }
 
     /** {@code decisionId}: the persisted recovery_decisions row; {@code taxonomyVersion}: of the classification it used. */
     @Transactional(propagation = Propagation.MANDATORY)
     public DecisionLogEntry strategy(RecoveryDecision decision, UUID decisionId, String taxonomyVersion, MerchantConfig config) {
+        Versions v = inForce(decision.getCampaignId());
         return save(new DecisionLogEntry(decision.getMerchantId(), decision.getCampaignId(), null, Point.STRATEGY,
                 decision.getStrategy().name(), null, strategyAlternatives(decision.getStrategy(), config), DETERMINISTIC_BP, decisionId,
-                taxonomyVersion, decision.getPolicyVersion(), null, null, Instant.now()));
+                taxonomyVersion, decision.getPolicyVersion(), v.compliance(), v.assignment(), Instant.now()));
     }
 
-    /** {@code decisionId}: the persisted compliance_decisions row. */
+    /**
+     * {@code decisionId}: the persisted compliance_decisions row. {@code strategyVersion}: the version of the recovery decision
+     * evaluated, or null when a human-approved override strategy was evaluated instead (OD-1; no policy chose it).
+     */
     @Transactional(propagation = Propagation.MANDATORY)
     public DecisionLogEntry compliance(ComplianceDecision decision, UUID decisionId, String taxonomyVersion, String strategyVersion) {
         String chosen = decision.isBlocked() ? BLOCKED : "ALLOWED";
+        Versions v = inForce(decision.getCampaignId());
         return save(new DecisionLogEntry(decision.getMerchantId(), decision.getCampaignId(), null, Point.COMPLIANCE, chosen,
                 decision.getReason() != null ? decision.getReason().name() : null, List.of("ALLOWED", BLOCKED), DETERMINISTIC_BP,
-                decisionId, taxonomyVersion, strategyVersion, decision.getPolicyVersion(), null, Instant.now()));
+                decisionId, taxonomyVersion, strategyVersion, decision.getPolicyVersion(), v.assignment(), Instant.now()));
     }
 
-    /** {@code outcome}: DISPATCHED, BLOCKED or EXPIRED; {@code reasonCode}: the block / expiry code, ids and codes only. */
+    /**
+     * {@code outcome}: DISPATCHED, BLOCKED or EXPIRED; {@code reasonCode}: the block / expiry code, ids and codes only;
+     * {@code complianceVersion}: of the stored decision that authorized (or failed to authorize) the dispatch, when known,
+     * else the engine's. One intent can have several DISPATCH rows: a deferred intent is dispatched again (M2).
+     */
     @Transactional(propagation = Propagation.MANDATORY)
     public DecisionLogEntry dispatch(UUID merchantId, UUID campaignId, UUID intentId, String outcome, String reasonCode,
                                      String complianceVersion) {
         if (!DISPATCH_ALTERNATIVES.contains(outcome)) {
             throw new IllegalArgumentException("unknown dispatch outcome " + outcome);
         }
+        Versions v = inForce(campaignId);
         return save(new DecisionLogEntry(merchantId, campaignId, intentId, Point.DISPATCH, outcome, reasonCode, DISPATCH_ALTERNATIVES,
-                DETERMINISTIC_BP, intentId, null, null, complianceVersion, null, Instant.now()));
+                DETERMINISTIC_BP, intentId, v.taxonomy(), v.strategy(), complianceVersion != null ? complianceVersion : v.compliance(),
+                v.assignment(), Instant.now()));
     }
 
     /**

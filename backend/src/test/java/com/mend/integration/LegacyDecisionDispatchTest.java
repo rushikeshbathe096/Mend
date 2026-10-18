@@ -23,6 +23,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -112,6 +113,24 @@ class LegacyDecisionDispatchTest extends AbstractIntegrationTest {
                 + "AND reason LIKE '%LEGACY_DECISION%'", Long.class, intent.getCampaignId()));
         assertEquals(decisionBefore, jdbc.queryForMap("SELECT status, reason, policy_version, detail_message FROM compliance_decisions WHERE id = ?",
                 intent.getComplianceDecisionId()), "the historical decision is not rewritten");
+    }
+
+    @Test
+    @DisplayName("M4 U4.2: the LEGACY_DECISION block is logged as one DISPATCH BLOCKED row with the legacy policy version")
+    void legacyDecisionBlockIsLogged() {
+        ActionIntent intent = preM3Intent("v1.0");
+        ActionIntent claimed = claimService.claimSpecificIntent(intent.getId(), "legacy-worker").orElseThrow();
+        assertThrows(ComplianceBlockedException.class,
+                () -> executionService.executeActionIntent(claimed.getId(), "legacy-worker", claimed.getClaimToken()));
+
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT chosen, reason_code, compliance_version, assignment_version, intent_id "
+                + "FROM decision_log WHERE campaign_id = ? AND decision_point = 'DISPATCH'", intent.getCampaignId());
+        assertEquals(1, rows.size());
+        assertEquals("BLOCKED", rows.get(0).get("chosen"));
+        assertEquals("LEGACY_DECISION", rows.get(0).get("reason_code"));
+        assertEquals("v1.0", rows.get(0).get("compliance_version"));
+        assertNull(rows.get(0).get("assignment_version"), "a pre-M4 campaign is UNASSIGNED");
+        assertEquals(intent.getId(), rows.get(0).get("intent_id"));
     }
 
     @Test

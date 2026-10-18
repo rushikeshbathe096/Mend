@@ -52,6 +52,8 @@ class DecisionLogIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private ActionIntentClaimService claims;
     @Autowired private ActionExecutionService executor;
+    @Autowired private HumanApprovalService humanApprovalService;
+    @Autowired private UserRepository users;
     @Autowired private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @MockitoSpyBean private PaymentProvider provider;
@@ -138,6 +140,10 @@ class DecisionLogIntegrationTest {
         assertEquals(10_000, assignment.getPropensityBp());
         assertEquals(HoldoutAssigner.HASH_VERSION, assignment.getAssignmentVersion());
         assertEquals("HASH", assignment.getReasonCode());
+        // U4.2 review: every row carries the versions in force
+        assertEquals(FailureTaxonomy.TABLE_VERSION, assignment.getTaxonomyVersion());
+        assertEquals(RecoveryStrategyEngine.POLICY_VERSION, assignment.getStrategyVersion());
+        assertEquals(ComplianceEngine.POLICY_VERSION, assignment.getComplianceVersion());
 
         DecisionLogEntry strategy = single(rows(campaign, Point.STRATEGY));
         assertEquals("CUSTOMER_ACTION_REQUIRED", strategy.getChosen());
@@ -159,6 +165,12 @@ class DecisionLogIntegrationTest {
         assertEquals("DISPATCHED", dispatch.getChosen());
         assertEquals(onlyIntent(campaign).getId(), dispatch.getIntentId());
         assertEquals(ComplianceEngine.POLICY_VERSION, dispatch.getComplianceVersion());
+        assertEquals(FailureTaxonomy.TABLE_VERSION, dispatch.getTaxonomyVersion());
+        assertEquals(RecoveryStrategyEngine.POLICY_VERSION, dispatch.getStrategyVersion());
+        assertEquals(HoldoutAssigner.HASH_VERSION, dispatch.getAssignmentVersion());
+        assertEquals(HoldoutAssigner.HASH_VERSION, strategy.getAssignmentVersion());
+        assertEquals(ComplianceEngine.POLICY_VERSION, strategy.getComplianceVersion());
+        assertEquals(HoldoutAssigner.HASH_VERSION, compliance.getAssignmentVersion());
         assertEquals(4, decisionLog.findByCampaignIdOrderByDecidedAtAscIdAsc(campaign.getId()).size());
     }
 
@@ -258,10 +270,56 @@ class DecisionLogIntegrationTest {
         }
 
         ActionIntent after = intents.findById(intent.getId()).orElseThrow();
-        assertNotEquals(ActionIntentStatus.EXECUTING, after.getStatus());
+        assertEquals(ActionIntentStatus.CLAIMED, after.getStatus(), "the fence rolled back: still CLAIMED, released later by its lease");
         assertNull(after.getDispatchedAt());
         assertTrue(rows(campaign, Point.DISPATCH).isEmpty());
         verify(provider, never()).createPaymentLink(any(), any());
+    }
+
+    @Test
+    @DisplayName("Sweeper expiry of an unclaimed intent: one DISPATCH EXPIRED row (INTENT_EXPIRED_UNCLAIMED)")
+    void sweeperExpiryIsLogged() {
+        Campaign campaign = failPayment(paymentIdIn(Arm.TREATMENT, 0), "card_expired");
+        ActionIntent intent = onlyIntent(campaign);
+        jdbc.update("UPDATE action_intents SET expires_at = now() - interval '1 minute' WHERE id = ?", intent.getId());
+        claims.processExpiredIntents();
+
+        DecisionLogEntry dispatch = single(rows(campaign, Point.DISPATCH));
+        assertEquals("EXPIRED", dispatch.getChosen());
+        assertEquals("INTENT_EXPIRED_UNCLAIMED", dispatch.getReasonCode());
+    }
+
+    @Test
+    @DisplayName("OD-1 approval with the override strategy: a second COMPLIANCE row with its own source and no policy strategy version")
+    void approvalOverrideWritesItsOwnComplianceRow() {
+        // insufficient_funds -> RETRY_LATER, which this merchant has not enabled -> MANUAL_REVIEW; the override (a link) is enabled
+        config(0, "CUSTOMER_ACTION_REQUIRED");
+        Campaign campaign = failPayment(paymentIdIn(Arm.TREATMENT, 0), "insufficient_funds");
+        UUID reviewId = jdbc.queryForObject("SELECT id FROM review_queue WHERE campaign_id = ? AND status = 'PENDING'", UUID.class, campaign.getId());
+        User reviewer = users.save(new User(UUID.randomUUID(), "m4-reviewer-" + UUID.randomUUID() + "@example.com", "hash", "Reviewer"));
+        humanApprovalService.approveReview(merchantId, reviewId, "ok", new com.mend.security.AuthenticatedUser(reviewer.getId(),
+                reviewer.getEmail(), "Reviewer", "ACTIVE",
+                List.of(new com.mend.security.AuthenticatedUser.MerchantMembershipInfo(merchantId, "M4", UUID.randomUUID(), "MERCHANT_ADMIN"))));
+        users.deleteById(reviewer.getId());
+
+        List<DecisionLogEntry> compliance = rows(campaign, Point.COMPLIANCE);
+        assertEquals(2, compliance.size());
+        assertNotEquals(compliance.get(0).getSourceId(), compliance.get(1).getSourceId());
+        DecisionLogEntry override = compliance.stream().filter(r -> r.getStrategyVersion() == null).findFirst().orElseThrow();
+        assertEquals("ALLOWED", override.getChosen());
+        assertEquals(1, compliance.stream().filter(r -> RecoveryStrategyEngine.POLICY_VERSION.equals(r.getStrategyVersion())).count());
+    }
+
+    @Test
+    @DisplayName("A failed STRATEGY log insert rolls the whole decision back: no recovery decision, no intent, no campaign")
+    void failedStrategyLogRollsBackTheDecision() {
+        transactionTemplate.executeWithoutResult(tx -> doThrow(new IllegalStateException("decision log unavailable"))
+                .when(decisionLogService).strategy(any(), any(), any(), any()));
+        String payId = paymentIdIn(Arm.TREATMENT, 0);
+        assertThrows(RuntimeException.class, () -> failPayment(payId, "card_expired"));
+        assertTrue(campaigns.findByMerchantIdAndPaymentId(merchantId, "payment.failed_" + payId).isEmpty());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_decisions WHERE merchant_id = ?", Integer.class, merchantId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM decision_log WHERE merchant_id = ?", Integer.class, merchantId));
     }
 
     @Test

@@ -46,7 +46,11 @@ deterministic, so logs alone cannot support a counterfactual. Design: `docs/m4/M
    - `DISPATCH`: DISPATCHED, BLOCKED (compliance, legacy decision or opt-out at the pre-dispatch check) or EXPIRED;
      propensity 10 000 bp.
 
-   Every row carries the taxonomy, strategy, compliance and assignment versions. UPDATE, DELETE and TRUNCATE are
+   Every row carries the versions in force: taxonomy (of the campaign's latest classification), strategy and compliance
+   (the deterministic engines'; a DISPATCH row carries the version of the stored decision that authorized it; a
+   COMPLIANCE row for a human-approved override strategy has no strategy version) and assignment (null = UNASSIGNED).
+   One intent can have several DISPATCH rows (a deferred intent is dispatched again), so only ASSIGNMENT and
+   STRATEGY / COMPLIANCE (per persisted decision) are unique. The expiry sweeper and the demo's recorded dispatch log too. UPDATE, DELETE and TRUNCATE are
    rejected by trigger. Probabilities are integers in basis points, so there is no floating point in stored data.
 5. **Snapshots, not live tables.**
    - `eval_snapshots` stores id, schema version, created_at, window, as_of, filters, row count, sha256 and status

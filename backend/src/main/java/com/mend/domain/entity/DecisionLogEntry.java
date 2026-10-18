@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import org.springframework.data.domain.Persistable;
 
 import java.time.Instant;
 import java.util.List;
@@ -16,7 +17,7 @@ import java.util.UUID;
 @Entity
 @Immutable
 @Table(name = "decision_log")
-public class DecisionLogEntry {
+public class DecisionLogEntry implements Persistable<UUID> {
 
     public enum Point { ASSIGNMENT, STRATEGY, COMPLIANCE, DISPATCH }
 
@@ -91,7 +92,13 @@ public class DecisionLogEntry {
         this.decidedAt = decidedAt;
     }
 
+    @Override
     public UUID getId() { return id; }
+
+    /** Always a new row (append-only): Spring Data persists it without a merge SELECT (U4.2 review). */
+    @Override
+    @Transient
+    public boolean isNew() { return true; }
     public UUID getMerchantId() { return merchantId; }
     public UUID getCampaignId() { return campaignId; }
     public UUID getIntentId() { return intentId; }

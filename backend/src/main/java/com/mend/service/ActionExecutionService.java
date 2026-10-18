@@ -121,7 +121,8 @@ public class ActionExecutionService {
                     actionIntentRepository.findById(intentId).ifPresent(i -> {
                         auditService.logEvent(i.getMerchantId(), i.getCampaignId(),
                                 "ACTION_COMPLIANCE_BLOCKED", "SYSTEM", null, "ActionIntent " + intentId + " blocked before dispatch: " + e.getMessage());
-                        // M4 U4.2: the dispatch decision (blocked), in the transaction that applied it (invariant 21)
+                        // M4 U4.2: the dispatch decision (blocked), in the transaction that applied it (invariant 21). If this
+                        // insert fails, the abandon rolls back too and the claim lapses to READY later: fail closed, no dispatch.
                         decisionLogService.dispatch(i.getMerchantId(), i.getCampaignId(), intentId, DecisionLogService.BLOCKED,
                                 blockCode(e), e instanceof LegacyDecisionException legacy ? legacy.policyVersion : null);
                     });

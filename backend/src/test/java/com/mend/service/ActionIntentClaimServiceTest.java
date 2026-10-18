@@ -32,7 +32,7 @@ public class ActionIntentClaimServiceTest {
     void setUp() {
         repository = Mockito.mock(ActionIntentRepository.class);
         auditService = Mockito.mock(AuditService.class);
-        claimService = new ActionIntentClaimService(repository, new ActionIntentTransitions(repository, Mockito.mock(com.mend.provider.ProviderCapabilities.class)), auditService, 50, 5);
+        claimService = new ActionIntentClaimService(repository, new ActionIntentTransitions(repository, Mockito.mock(com.mend.provider.ProviderCapabilities.class)), auditService, 50, 5, Mockito.mock(com.mend.service.DecisionLogService.class));
     }
 
     @Test

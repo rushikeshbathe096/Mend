@@ -159,7 +159,7 @@ public class ComplianceService {
         // M4 U4.2: the decision and its versions, in this transaction (invariant 21)
         decisionLogService.compliance(decision, entity.getId(),
                 classificationResult != null ? classificationResult.getTaxonomyVersion() : null,
-                recoveryDecisionEntity != null ? recoveryDecisionEntity.getPolicyVersion() : null);
+                strategyOverride == null && recoveryDecisionEntity != null ? recoveryDecisionEntity.getPolicyVersion() : null);
 
         // Emits Audit Log
         String auditEventType = decision.getStatus() == ComplianceStatus.COMPLIANCE_ALLOWED

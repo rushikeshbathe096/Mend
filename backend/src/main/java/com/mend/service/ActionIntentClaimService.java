@@ -27,6 +27,7 @@ public class ActionIntentClaimService {
     private final ActionIntentRepository actionIntentRepository;
     private final ActionIntentTransitions transitions;
     private final AuditService auditService;
+    private final DecisionLogService decisionLogService;
     private final int batchSize;
     private final Duration leaseDuration;
 
@@ -35,7 +36,9 @@ public class ActionIntentClaimService {
             ActionIntentTransitions transitions,
             AuditService auditService,
             @org.springframework.beans.factory.annotation.Value("${mend.scheduler.batch-size:50}") int batchSize,
-            @org.springframework.beans.factory.annotation.Value("${mend.scheduler.lease-duration-minutes:5}") int leaseDurationMinutes) {
+            @org.springframework.beans.factory.annotation.Value("${mend.scheduler.lease-duration-minutes:5}") int leaseDurationMinutes,
+            DecisionLogService decisionLogService) {
+        this.decisionLogService = decisionLogService;
         this.actionIntentRepository = actionIntentRepository;
         this.transitions = transitions;
         this.auditService = auditService;
@@ -151,6 +154,10 @@ public class ActionIntentClaimService {
                     null,
                     "Action Intent " + intent.getId() + " marked EXPIRED (past execution window)"
             );
+
+            // M4 U4.2 review: the sweeper's expiry is a dispatch decision too (never dispatched)
+            decisionLogService.dispatch(intent.getMerchantId(), intent.getCampaignId(), intent.getId(), DecisionLogService.EXPIRED,
+                    "INTENT_EXPIRED_UNCLAIMED", null);
 
             log.info("Action Intent '{}' marked EXPIRED (scheduledAt: {}, expiresAt: {})",
                     intent.getId(), intent.getScheduledAt(), intent.getExpiresAt());

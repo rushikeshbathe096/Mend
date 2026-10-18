@@ -81,6 +81,8 @@ public class DemoController {
     private final com.mend.service.ActionIntentTransitions actionIntentTransitions;
     /** {@code mock}: provider calls are SIMULATED; {@code razorpay}: they reach Razorpay (test mode) and are labelled so. */
     private final String providerMode;
+    private final com.mend.service.DecisionLogService decisionLogService;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     public DemoController(
             CampaignLifecycleService campaignLifecycleService,
@@ -95,7 +97,11 @@ public class DemoController {
             AuditService auditService,
             com.mend.service.ActionIntentClaimService actionIntentClaimService,
             com.mend.service.ActionIntentTransitions actionIntentTransitions,
-            @org.springframework.beans.factory.annotation.Value("${mend.payment.provider:mock}") String providerMode) {
+            @org.springframework.beans.factory.annotation.Value("${mend.payment.provider:mock}") String providerMode,
+            com.mend.service.DecisionLogService decisionLogService,
+            org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.decisionLogService = decisionLogService;
+        this.transactionTemplate = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
         this.campaignLifecycleService = campaignLifecycleService;
         this.actionIntentService = actionIntentService;
         this.actionExecutionService = actionExecutionService;
@@ -317,9 +323,14 @@ public class DemoController {
         // outcome (NEEDS_RECONCILIATION). Demo-only: NO provider call is made here, which is why this skips the executor's
         // compliance re-check; never copy this pattern into a path that calls the provider (invariants 7 and 12).
         Instant now = Instant.now();
-        if (!actionIntentTransitions.dispatch(claimed.getId(), claimed.getClaimToken(), now)) {
-            throw new IllegalStateException("Demo dispatch was not applied for intent " + claimed.getId());
-        }
+        // M4 U4.2 review: the recorded dispatch gets its decision-log row in the same transaction (reason DEMO_SIMULATED)
+        transactionTemplate.executeWithoutResult(tx -> {
+            if (!actionIntentTransitions.dispatch(claimed.getId(), claimed.getClaimToken(), now)) {
+                throw new IllegalStateException("Demo dispatch was not applied for intent " + claimed.getId());
+            }
+            decisionLogService.dispatch(merchantId, setup.campaignId(), claimed.getId(), com.mend.service.DecisionLogService.DISPATCHED,
+                    "DEMO_SIMULATED", null);
+        });
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXECUTING,
                 simulated("provider execution with ambiguous outcome (no provider request made); awaiting reconciliation"), "SYSTEM", null);
         if (!actionIntentTransitions.finalizeFromExecuting(claimed.getId(), claimed.getClaimToken(), ActionIntentStatus.NEEDS_RECONCILIATION,

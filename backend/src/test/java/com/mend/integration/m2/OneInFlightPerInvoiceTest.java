@@ -35,6 +35,7 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
     @Autowired private CampaignLifecycleService campaignLifecycleService;
     @Autowired private ActionIntentService actionIntentService;
     @Autowired private ActionIntentClaimService claimService;
+    @Autowired private com.mend.service.DecisionLogService decisionLogService;
     @Autowired private ActionIntentTransitions transitions;
     @Autowired private ActionIntentRepository intents;
     @Autowired private CampaignRepository campaigns;
@@ -229,7 +230,7 @@ class OneInFlightPerInvoiceTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("Blocked intents do not fill the claim batch: a free intent is still claimed behind more blocked ones than the batch size")
     void blockedIntentsDoNotStarveTheBatch() {
-        ActionIntentClaimService smallBatch = new ActionIntentClaimService(intents, transitions, auditService, 2, 5);
+        ActionIntentClaimService smallBatch = new ActionIntentClaimService(intents, transitions, auditService, 2, 5, decisionLogService);
         // Shared database: keep other classes' READY rows out of this small batch.
         jdbc.update("UPDATE action_intents SET scheduled_at = now() + interval '30 days' WHERE status = 'READY' AND merchant_id <> ?", merchantId);
         for (int i = 0; i < 3; i++) {
