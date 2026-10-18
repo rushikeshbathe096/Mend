@@ -92,9 +92,17 @@
         "invalid_output_rate": 0.0,
         "abstention_rate": 0.0,
         "promised_date_exact_match": {
-          "hits": 12,
-          "total": 12
+          "dated": {
+            "hits": 4,
+            "total": 4
+          },
+          "undated": {
+            "hits": 8,
+            "total": 8
+          }
         },
+        "scored_rows": 60,
+        "provider_errors": 0,
         "model_ids_reported": []
       },
       "model": {
@@ -193,9 +201,17 @@
         "invalid_output_rate": 0.0,
         "abstention_rate": 0.0,
         "promised_date_exact_match": {
-          "hits": 0,
-          "total": 8
+          "dated": {
+            "hits": 0,
+            "total": 3
+          },
+          "undated": {
+            "hits": 0,
+            "total": 5
+          }
         },
+        "scored_rows": 40,
+        "provider_errors": 0,
         "model_ids_reported": []
       },
       "model": {

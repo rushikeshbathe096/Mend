@@ -10,11 +10,14 @@ Systems:
 - the model (reply_parser, prompt version reply_parser.PROMPT_VERSION): only when GEMINI_API_KEY is set. Without a key the
   model section says "TBD" with the reason; no number is ever written for a model that did not run.
 
-Metrics: per-class precision/recall/F1, macro F1, confusion matrix, invalid-output rate, abstention rate, and exact match
-of promised_date on PROMISE_TO_PAY rows. An abstained or invalid prediction counts as a miss for its gold class.
+Metrics: per-class precision/recall/F1, macro F1 (mean of the rounded per-class F1s), confusion matrix, invalid-output
+rate, abstention rate, and exact match of promised_date on PROMISE_TO_PAY rows (dated and undated golds apart). An
+abstained or invalid prediction counts as a miss for its gold class. A class that is never predicted has precision 0.0.
+Provider failures (transport, 5xx, timeout) are counted as provider_errors and left out of every metric.
 The dataset is SYNTHETIC (see docs/m3/eval/LABEL-GUIDE.md): results describe this dataset, not production.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -48,6 +51,10 @@ KEYWORD_RULES = [
 
 def load(path: Path) -> list[dict]:
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    if not rows:
+        raise ValueError(f"{path} has no rows")
+    if len({row.get("dataset") for row in rows}) != 1:
+        raise ValueError(f"{path} mixes dataset versions")
     for row in rows:
         if row.get("label_source") != "SYNTHETIC":
             raise ValueError(f"row {row.get('id')} is not labelled SYNTHETIC")
@@ -66,25 +73,39 @@ def keyword_baseline(text: str) -> dict:
 
 
 def valid(suggestion) -> bool:
-    """The backend's schema (ReplySuggestionValidator), restated: exact fields, enum intent, boolean abstain, ISO date."""
-    if not isinstance(suggestion, dict) or set(suggestion) - {"intent", "promised_date", "abstain"}:
+    """The backend's schema (ReplySuggestionValidator), restated: exactly the three fields, all present; enum intent;
+    boolean abstain; promised_date null or a real ISO calendar date (ASCII digits), only with PROMISE_TO_PAY."""
+    if not isinstance(suggestion, dict) or set(suggestion) != {"intent", "promised_date", "abstain"}:
         return False
-    if suggestion.get("intent") not in INTENTS or not isinstance(suggestion.get("abstain"), bool):
+    if suggestion["intent"] not in INTENTS or not isinstance(suggestion["abstain"], bool):
         return False
-    date = suggestion.get("promised_date")
-    if date is not None and (not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date)
-                             or suggestion["intent"] != "PROMISE_TO_PAY"):
+    date = suggestion["promised_date"]
+    if date is None:
+        return True
+    if not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date, re.ASCII):
         return False
-    return True
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        return False
+    return suggestion["intent"] == "PROMISE_TO_PAY"
 
 
 def evaluate(rows: list[dict], predict: Callable[[str], Optional[dict]]) -> dict:
     labels = INTENTS + ["ABSTAIN", "INVALID"]
     confusion = {gold: {pred: 0 for pred in labels} for gold in INTENTS}
-    invalid = abstained = date_total = date_hits = 0
+    invalid = abstained = provider_errors = 0
+    dated = {"hits": 0, "total": 0}
+    undated = {"hits": 0, "total": 0}
     model_ids = set()
+    scored = 0
     for row in rows:
         result = predict(row["text"])
+        if isinstance(result, dict) and result.get("provider_error"):
+            # a transport/5xx failure says nothing about the model's output: counted apart, not scored
+            provider_errors += 1
+            continue
+        scored += 1
         suggestion = result.get("suggestion") if isinstance(result, dict) and "suggestion" in result else result
         if isinstance(result, dict) and result.get("model_id"):
             model_ids.add(result["model_id"])
@@ -98,8 +119,9 @@ def evaluate(rows: list[dict], predict: Callable[[str], Optional[dict]]) -> dict
             predicted = suggestion["intent"]
         confusion[row["intent"]][predicted] += 1
         if row["intent"] == "PROMISE_TO_PAY":
-            date_total += 1
-            date_hits += int(predicted == "PROMISE_TO_PAY" and suggestion.get("promised_date") == row["promised_date"])
+            bucket = dated if row["promised_date"] else undated
+            bucket["total"] += 1
+            bucket["hits"] += int(predicted == "PROMISE_TO_PAY" and suggestion.get("promised_date") == row["promised_date"])
     per_class = {}
     for intent in INTENTS:
         tp = confusion[intent][intent]
@@ -110,14 +132,17 @@ def evaluate(rows: list[dict], predict: Callable[[str], Optional[dict]]) -> dict
         f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
         per_class[intent] = {"precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f1, 4),
                              "support": sum(confusion[intent].values())}
-    n = len(rows)
+    n = max(scored, 1)
     return {
         "per_class": per_class,
         "macro_f1": round(sum(c["f1"] for c in per_class.values()) / len(INTENTS), 4),
         "confusion_matrix": confusion,
         "invalid_output_rate": round(invalid / n, 4),
         "abstention_rate": round(abstained / n, 4),
-        "promised_date_exact_match": {"hits": date_hits, "total": date_total},
+        # PROMISE_TO_PAY rows only; dated = the gold names an ISO date, undated = the gold date is null
+        "promised_date_exact_match": {"dated": dated, "undated": undated},
+        "scored_rows": scored,
+        "provider_errors": provider_errors,
         "model_ids_reported": sorted(model_ids),
     }
 
@@ -126,7 +151,7 @@ def model_predict(text: str) -> dict:
     try:
         result = reply_parser.parse_reply(text)
     except reply_parser.ModelError as e:
-        return {"suggestion": None, "model_id": None, "error": str(e)}
+        return {"provider_error": str(e)}
     return {"suggestion": result.suggestion, "model_id": result.model_id}
 
 

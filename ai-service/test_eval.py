@@ -32,9 +32,14 @@ def test_model_is_tbd_without_a_key_and_carries_no_numbers():
     assert not any(key in model for key in ("macro_f1", "per_class", "confusion_matrix"))
 
 
-def test_recorded_results_match_a_fresh_run():
+def test_recorded_baseline_matches_a_fresh_run():
+    # the model section is compared only by its absence of numbers here: a run with a key records real model numbers,
+    # which a key-less test run must not overwrite or contradict
     recorded = json.loads(run_eval.DEFAULT_OUT.read_text())
-    assert recorded == json.loads(json.dumps(run_eval.run()))
+    fresh = json.loads(json.dumps(run_eval.run()))
+    for name, split in fresh["splits"].items():
+        assert recorded["splits"][name]["dataset_sha256"] == split["dataset_sha256"]
+        assert recorded["splits"][name]["baseline"] == split["baseline"]
 
 
 def test_non_synthetic_rows_are_refused(tmp_path):
@@ -52,6 +57,9 @@ def test_non_synthetic_rows_are_refused(tmp_path):
     ({"intent": "REFUND", "abstain": False}, False),
     ({"intent": "OPT_OUT", "abstain": "no"}, False),
     ({"intent": "OPT_OUT", "promised_date": "2026-11-02", "abstain": False}, False),
+    ({"intent": "OPT_OUT", "abstain": False}, False),                                    # only promised_date missing
+    ({"intent": "PROMISE_TO_PAY", "promised_date": "2026-02-30", "abstain": False}, False),  # impossible date
+    ({"intent": "PROMISE_TO_PAY", "promised_date": "２０２６-11-02", "abstain": False}, False),  # non-ASCII digits
     (None, False),
 ])
 def test_validity_matches_the_backend_schema(suggestion, ok):
@@ -104,4 +112,37 @@ def test_keyword_baseline_rules(text, intent):
 def test_keyword_baseline_takes_only_an_exact_iso_date():
     assert run_eval.keyword_baseline("I will pay on 2026-11-02")["promised_date"] == "2026-11-02"
     assert run_eval.keyword_baseline("I will pay tomorrow")["promised_date"] is None
+
+
+def test_model_path_records_numbers_and_ids_and_keeps_provider_errors_apart(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
+    answers = iter([reply_parser_result("OPT_OUT"), run_eval.reply_parser.ModelError("provider_status_500")])
+
+    def fake_parse(text):
+        answer = next(answers, None) or reply_parser_result("OTHER")
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    monkeypatch.setattr(run_eval.reply_parser, "parse_reply", fake_parse)
+    split = run_eval.run_split(run_eval.SPLITS["test"], run_model=True)
+    assert split["model"]["provider_errors"] == 1
+    assert split["model"]["scored_rows"] == split["rows"] - 1
+    assert split["model"]["model_ids_reported"] == ["gemini-x-001"]
+    assert "macro_f1" in split["model"]
+
+
+def reply_parser_result(intent):
+    return run_eval.reply_parser.ParseResult({"intent": intent, "promised_date": None, "abstain": False}, None, "gemini-x-001")
+
+
+def test_mixed_dataset_versions_and_empty_files_are_refused(tmp_path):
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("")
+    with pytest.raises(ValueError):
+        run_eval.load(empty)
+    mixed = tmp_path / "mixed.jsonl"
+    mixed.write_text("\n".join(json.dumps({"id": str(i), "text": "hi", "intent": "OTHER", "promised_date": None,
+                                           "label_source": "SYNTHETIC", "dataset": f"v{i}"}) for i in range(2)) + "\n")
+    with pytest.raises(ValueError):
+        run_eval.load(mixed)
 
