@@ -30,17 +30,14 @@ import java.util.stream.Stream;
 public class CustomerController {
 
     private final CampaignRepository campaignRepository;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
     private final AuditLogRepository auditLogRepository;
     private final com.mend.service.WebhookAmountResolver webhookAmountResolver;
 
     public CustomerController(
             CampaignRepository campaignRepository,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
             AuditLogRepository auditLogRepository,
             com.mend.service.WebhookAmountResolver webhookAmountResolver) {
         this.campaignRepository = campaignRepository;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
         this.auditLogRepository = auditLogRepository;
         this.webhookAmountResolver = webhookAmountResolver;
     }

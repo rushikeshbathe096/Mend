@@ -8,7 +8,6 @@ public class StartRecoveryResponseDto {
     private CampaignDto campaign;
     private ActionIntentDto actionIntent;
     private PaymentExecutionResult executionResult;
-    private List<AgentDecisionRecordDto> agentDecisions;
     private String complianceStatus;
     private boolean requiresHumanApproval;
     private String message;
@@ -20,14 +19,12 @@ public class StartRecoveryResponseDto {
             CampaignDto campaign,
             ActionIntentDto actionIntent,
             PaymentExecutionResult executionResult,
-            List<AgentDecisionRecordDto> agentDecisions,
             String complianceStatus,
             boolean requiresHumanApproval,
             String message) {
         this.campaign = campaign;
         this.actionIntent = actionIntent;
         this.executionResult = executionResult;
-        this.agentDecisions = agentDecisions;
         this.complianceStatus = complianceStatus;
         this.requiresHumanApproval = requiresHumanApproval;
         this.message = message;
@@ -42,8 +39,6 @@ public class StartRecoveryResponseDto {
     public PaymentExecutionResult getExecutionResult() { return executionResult; }
     public void setExecutionResult(PaymentExecutionResult executionResult) { this.executionResult = executionResult; }
 
-    public List<AgentDecisionRecordDto> getAgentDecisions() { return agentDecisions; }
-    public void setAgentDecisions(List<AgentDecisionRecordDto> agentDecisions) { this.agentDecisions = agentDecisions; }
 
     public String getComplianceStatus() { return complianceStatus; }
     public void setComplianceStatus(String complianceStatus) { this.complianceStatus = complianceStatus; }

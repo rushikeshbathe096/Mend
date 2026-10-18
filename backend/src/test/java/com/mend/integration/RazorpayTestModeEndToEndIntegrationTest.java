@@ -13,14 +13,9 @@ import com.mend.service.WebhookAmountResolver;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mend.client.AiClassificationClient;
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.*;
 import com.mend.domain.repository.*;
-import com.mend.dto.ai.AgentOrchestrationRequestDto;
-import com.mend.dto.ai.AgentOrchestrationResponseDto;
-import com.mend.dto.ai.ClassificationRequestDto;
-import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.dto.payment.PaymentExecutionResult;
 import com.mend.dto.payment.PaymentExecutionStatus;
 import com.mend.scheduler.ActionScheduler;
@@ -106,13 +101,7 @@ public class RazorpayTestModeEndToEndIntegrationTest {
     private ComplianceDecisionRepository complianceDecisionRepository;
 
     @Autowired
-    private AgentDecisionRecordRepository agentDecisionRecordRepository;
-
-    @Autowired
     private AuditLogRepository auditLogRepository;
-
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
 
     @MockitoBean
     private RazorpaySignatureVerifier razorpaySignatureVerifier;
@@ -212,7 +201,7 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         assertThat(actionIntent.getActionType()).isEqualTo(ActionType.RETRY_PAYMENT.name());
 
         // M3 U2.2 behaviour change (ADR-003): no agent decision is made or recorded (was: an AUTHORIZED agent record)
-        assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_decision_records WHERE campaign_id = ?", Long.class, campaign.getId())).isZero();
 
         // Step E: Scheduler Execution
         actionScheduler.pollAndExecuteDueActions();
@@ -257,7 +246,7 @@ public class RazorpayTestModeEndToEndIntegrationTest {
 
         // M3 U2.2 behaviour change: the shift RETRY_PAYMENT -> REQUEST_CUSTOMER_ACTION comes from the deterministic strategy
         // table (attempt count), not from an agent; still no agent record (was: two agent records)
-        assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_decision_records WHERE campaign_id = ?", Long.class, campaign.getId())).isZero();
 
         // Step I: Customer Pays -> Final Terminal State Transition (RECOVERED)
         campaignLifecycleService.transitionState(
@@ -283,7 +272,7 @@ public class RazorpayTestModeEndToEndIntegrationTest {
         Campaign campaign = new Campaign(UUID.randomUUID(), testMerchant.getId());
         campaign.setPaymentId("pay_compliance_blocked");
         campaign.setCustomerIdHash("cust_hash_1");
-        campaign.setFailureClass(FailureClass.BANK_DECLINED.name());
+        campaign.setFailureClass("BANK_DECLINED");   // a pre-M3 (legacy) class name
         campaign.setStrategy(RecoveryStrategy.RETRY_LATER.name());
         campaign.setCurrentState(CampaignStatus.ELIGIBLE);
         campaign.setAttemptCount(1);
@@ -299,7 +288,7 @@ public class RazorpayTestModeEndToEndIntegrationTest {
                     assertThat(d.getStatus()).isEqualTo(ComplianceStatus.COMPLIANCE_BLOCKED);
                     assertThat(d.getReason()).isEqualTo(ComplianceReason.UNKNOWN_CLASSIFICATION);   // legacy class fails closed
                 });
-        assertThat(agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_decision_records WHERE campaign_id = ?", Long.class, campaign.getId())).isZero();
 
         // Verify campaign remains in safe state
         Campaign safeCampaign = campaignRepository.findById(campaign.getId()).orElseThrow();

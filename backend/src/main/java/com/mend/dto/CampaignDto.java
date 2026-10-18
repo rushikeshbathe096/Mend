@@ -3,7 +3,6 @@ package com.mend.dto;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.enums.CampaignStatus;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -15,7 +14,6 @@ public class CampaignDto {
     private String customerIdHash;
     private CampaignStatus currentState;
     private String failureClass;
-    private BigDecimal confidence;
     private String strategy;
     private Integer attemptCount;
     private Instant nextActionAt;
@@ -35,7 +33,6 @@ public class CampaignDto {
         dto.setCustomerIdHash(campaign.getCustomerIdHash());
         dto.setCurrentState(campaign.getCurrentState());
         dto.setFailureClass(campaign.getFailureClass());
-        dto.setConfidence(campaign.getConfidence());
         dto.setStrategy(campaign.getStrategy());
         dto.setAttemptCount(campaign.getAttemptCount());
         dto.setNextActionAt(campaign.getNextActionAt());
@@ -100,13 +97,7 @@ public class CampaignDto {
         this.failureClass = failureClass;
     }
 
-    public BigDecimal getConfidence() {
-        return confidence;
-    }
 
-    public void setConfidence(BigDecimal confidence) {
-        this.confidence = confidence;
-    }
 
     public String getStrategy() {
         return strategy;

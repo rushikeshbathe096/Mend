@@ -262,34 +262,7 @@ public class AnalyticsQueryService {
         recoveryDto.setActionTypeBreakdown(actionTypeBreakdown);
         recoveryDto.setProviderOutcomes(providerOutcomes);
 
-        // AI Confidence Metrics
-        Map<String, Object> aiMetrics = new HashMap<>();
-        double totalConfidenceSum = 0.0;
-        long confidenceCount = 0;
-        long highCount = 0;
-        long medCount = 0;
-        long lowCount = 0;
-
-        for (Campaign campaign : campaigns) {
-            if (campaign.getConfidence() != null) {
-                double conf = campaign.getConfidence().doubleValue();
-                totalConfidenceSum += conf;
-                confidenceCount++;
-                if (conf >= 0.80) {
-                    highCount++;
-                } else if (conf >= 0.50) {
-                    medCount++;
-                } else {
-                    lowCount++;
-                }
-            }
-        }
-        double avgConfidence = confidenceCount > 0 ? totalConfidenceSum / confidenceCount : 0.0;
-        aiMetrics.put("averageConfidence", roundTwoDecimals(avgConfidence));
-        aiMetrics.put("highConfidenceCount", highCount);
-        aiMetrics.put("mediumConfidenceCount", medCount);
-        aiMetrics.put("lowConfidenceCount", lowCount);
-        recoveryDto.setAiConfidenceMetrics(aiMetrics);
+        // M3 (ADR-003): no AI confidence metrics; classes are deterministic and carry no confidence.
 
         // Compliance Metrics
         Map<String, Long> complianceMetrics = new HashMap<>();

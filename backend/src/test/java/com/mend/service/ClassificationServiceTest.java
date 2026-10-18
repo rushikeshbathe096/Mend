@@ -1,6 +1,5 @@
 package com.mend.service;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.WebhookEvent;
@@ -40,9 +39,6 @@ class ClassificationServiceTest {
     @Autowired private MerchantRepository merchantRepository;
     @Autowired private JdbcTemplate jdbc;
 
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
-
     private UUID merchantId;
 
     @BeforeEach
@@ -53,7 +49,6 @@ class ClassificationServiceTest {
 
     @AfterEach
     void tearDown() {
-        verifyNoInteractions(aiClassificationClient);
         TestRows.deleteMerchant(jdbc, merchantId);
     }
 

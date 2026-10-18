@@ -1,7 +1,6 @@
 package com.mend.controller;
 
 import com.mend.domain.entity.ActionIntent;
-import com.mend.domain.entity.AgentDecisionRecord;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.taxonomy.FailureClassification;
 import com.mend.taxonomy.FailureTaxonomy;
@@ -14,7 +13,6 @@ import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.ReviewQueueStatus;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.repository.ActionIntentRepository;
-import com.mend.domain.repository.AgentDecisionRecordRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.DemoScenarioDto;
@@ -44,7 +42,7 @@ import java.util.UUID;
  * Deterministic demonstration engine for the Mend merchant console.
  *
  * Every scenario drives the SAME production services used by real recovery
- * workflows (campaign lifecycle state machine, agent decision records,
+ * workflows (campaign lifecycle state machine,
  * compliance-gated ActionIntent creation, provider execution boundary and
  * payment reconciliation). Demo rows are clearly isolated from merchant data:
  * payment references use the reserved {@code pay_demo_*} / {@code cust_demo_*}
@@ -54,7 +52,7 @@ import java.util.UUID;
  * or fabricates metrics: each scenario returns the authoritative campaign/review
  * identifiers produced by the real pipeline.
  * <p>
- * Pre-M3 hygiene: the inputs are fabricated (webhooks, classifications, agent decisions, the customer's payment, timeouts),
+ * Pre-M3 hygiene: the inputs are fabricated (webhooks, the customer's payment, timeouts),
  * so every such step is labelled {@value #SIMULATED} in the narration, the stored reasons and the response. The controller
  * exists only when {@code mend.demo.enabled=true} (default false; true in the dev profile).
  */
@@ -75,7 +73,6 @@ public class DemoController {
     private final HumanApprovalService humanApprovalService;
     private final PaymentReconciliationService paymentReconciliationService;
     private final CampaignRepository campaignRepository;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
     private final com.mend.domain.repository.ClassificationResultRepository classificationResultRepository;
     private final ActionIntentRepository actionIntentRepository;
     private final WebhookEventRepository webhookEventRepository;
@@ -92,7 +89,6 @@ public class DemoController {
             HumanApprovalService humanApprovalService,
             PaymentReconciliationService paymentReconciliationService,
             CampaignRepository campaignRepository,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
             com.mend.domain.repository.ClassificationResultRepository classificationResultRepository,
             ActionIntentRepository actionIntentRepository,
             WebhookEventRepository webhookEventRepository,
@@ -106,7 +102,6 @@ public class DemoController {
         this.humanApprovalService = humanApprovalService;
         this.paymentReconciliationService = paymentReconciliationService;
         this.campaignRepository = campaignRepository;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
         this.classificationResultRepository = classificationResultRepository;
         this.actionIntentRepository = actionIntentRepository;
         this.webhookEventRepository = webhookEventRepository;
@@ -204,9 +199,9 @@ public class DemoController {
                 case "CUSTOMER_ACTION" -> runCustomerAction(merchantId, response, steps);
                 case "PROVIDER_AMBIGUITY" -> runProviderAmbiguity(merchantId, response, steps);
                 case "DUPLICATE_EVENT" -> runDuplicateEvent(merchantId, response, steps);
-                case "AGENT_FAILURE" -> runAgentFailure(merchantId, response, steps);
+                case "UNCLASSIFIED_FAILURE" -> runUnclassifiedFailure(merchantId, response, steps);
                 default -> throw new InvalidRequestException("Unknown demo scenario: " + scenario
-                        + " (expected LOW_RISK_RETRY, HIGH_RISK_HUMAN_REVIEW, CUSTOMER_ACTION, PROVIDER_AMBIGUITY, DUPLICATE_EVENT or AGENT_FAILURE)");
+                        + " (expected LOW_RISK_RETRY, HIGH_RISK_HUMAN_REVIEW, CUSTOMER_ACTION, PROVIDER_AMBIGUITY, DUPLICATE_EVENT or UNCLASSIFIED_FAILURE)");
             }
         } catch (Exception e) {
             log.error("Error executing demo scenario '{}' for merchant '{}': {}", scenario, merchantId, e.getMessage(), e);
@@ -228,10 +223,7 @@ public class DemoController {
         Setup setup = prepareCampaign(merchantId, "low_risk_retry", "insufficient_funds", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
-                false, "Transient failure detected with high classification confidence; automated retry is safe.", "AUTO_APPROVED");
-
-        steps.add(simulated("six-agent consensus (fixed demo values, no AI call): LOW risk, proposed action RETRY_PAYMENT (confidence 95%)."));
+        steps.add(simulated("demo preset strategy RETRY_IMMEDIATELY (deterministic; no AI)."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(), "Action intent " + intent.getId() + " created after compliance approval");
         steps.add("Compliance engine ALLOWED; ActionIntent " + intent.getId() + " created for attempt #" + intent.getAttemptNumber() + ".");
@@ -254,11 +246,7 @@ public class DemoController {
         Setup setup = prepareCampaign(merchantId, "high_risk_review", "authentication_failed", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
-                true, "High-value transaction (₹72,000) exceeds the merchant automated-retry threshold and the customer has prior dispute history; merchant confirmation required before execution.", "REVIEW_REQUIRED");
-
-        steps.add(simulated("risk agent flagged HIGH risk (fixed demo values, no AI call); supervisor consensus REVIEW_REQUIRED with proposed action RETRY_PAYMENT."));
-        steps.add(simulated("agent gate: executable strategy held for merchant approval - no ActionIntent created yet."));
+        steps.add(simulated("the demo holds this high-value recovery for merchant approval (a review item, not an AI decision); no ActionIntent created yet."));
 
         ReviewQueue review = humanApprovalService.createReview(
                 merchantId, setup.campaignId(),
@@ -286,10 +274,7 @@ public class DemoController {
         Setup setup = prepareCampaign(merchantId, "customer_action", "card_expired", "customer",
                 "CUSTOMER_ACTION_REQUIRED", amount, response, steps);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "REQUEST_CUSTOMER_ACTION", "CUSTOMER_ACTION_REQUIRED",
-                false, "Card expired; a customer action (card update / payment link) is required instead of an automated retry.", "AUTHORIZED");
-
-        steps.add(simulated("Customer Engagement agent recommended a payment-update link (fixed demo values, no AI call)."));
+        steps.add(simulated("strategy CUSTOMER_ACTION_REQUIRED for INSTRUMENT_INVALID (deterministic table): a payment-update link."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
                 simulated("payment link requested for customer action (intent " + intent.getId() + ")"));
@@ -321,9 +306,6 @@ public class DemoController {
         BigDecimal amount = new BigDecimal("2999.00");
         Setup setup = prepareCampaign(merchantId, "provider_ambiguity", "gateway_technical_error", "gateway",
                 "RETRY_IMMEDIATELY", amount, response, steps);
-
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "RETRY_PAYMENT", "RETRY_IMMEDIATELY",
-                false, "Provider connection timed out during execution; the authoritative outcome is unknown until reconciled.", "AMBIGUOUS");
 
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(),
@@ -391,26 +373,21 @@ public class DemoController {
     }
 
     // ------------------------------------------------------------------
-    // SCENARIO 6 — AGENT FAILURE (deterministic safe fallback)
+    // SCENARIO 6 — UNCLASSIFIED FAILURE (no documented mapping: never guessed, no action)
     // ------------------------------------------------------------------
-    private void runAgentFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
+    private void runUnclassifiedFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("3499.00");
-        Setup setup = prepareCampaign(merchantId, "agent_failure", "payment_failed", "customer", null, amount, response, steps, false);
+        Setup setup = prepareCampaign(merchantId, "unclassified_failure", "payment_failed", "customer", null, amount, response, steps, false);
 
-        recordAgentDecision(merchantId, setup.campaignId(), setup.paymentId(), "MANUAL_REVIEW", "FALLBACK_STRATEGY",
-                false, "AI/MCP execution unavailable; deterministic heuristic fallback applied. Low confidence (40%) and unknown failure class mean no automated action is safe.", "SAFE_FALLBACK");
-
-        steps.add(simulated("AI service timeout (no AI call was made); heuristic fallback decision: no automated retry."));
         campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXHAUSTED,
-                simulated("deterministic fallback: UNKNOWN classification at 40% confidence is not eligible for automated recovery"),
-                "SYSTEM", null);
-        steps.add("Campaign set to EXHAUSTED by the demo's " + simulated("fallback decision") + " - no payment action was taken.");
+                "Ineligible for recovery: failure class 'UNCLASSIFIED' has no documented recovery mapping", "SYSTEM", null);
+        steps.add("UNCLASSIFIED is ineligible (as in the real pipeline): campaign EXHAUSTED, no payment action was taken.");
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
         response.setFinalCampaignState(updated.getCurrentState());
         response.setAmount(amount);
-        response.setMessage("Scenario AGENT_FAILURE completed: safe deterministic fallback left campaign "
+        response.setMessage("Scenario UNCLASSIFIED_FAILURE completed: the undocumented failure left campaign "
                 + updated.getId() + " in " + updated.getCurrentState() + ".");
     }
 
@@ -427,7 +404,7 @@ public class DemoController {
 
     /**
      * @param moveToEligible when false the campaign stays CLASSIFIED (used by the
-     *                       agent-failure scenario, mirroring production, where ineligible
+     *                       unclassified-failure scenario, mirroring production, where ineligible
      *                       classifications never become ELIGIBLE).
      */
     private Setup prepareCampaign(UUID merchantId, String slug, String errorReason, String errorSource,
@@ -475,29 +452,6 @@ public class DemoController {
         response.setCustomerIdHash(customerIdHash);
         response.setCampaignId(campaign.getId());
         return new Setup(campaign.getId(), paymentId);
-    }
-
-    private void recordAgentDecision(UUID merchantId, UUID campaignId, String paymentId,
-                                     String decision, String selectedAction, boolean humanReview,
-                                     String reason, String executionStatus) {
-        AgentDecisionRecord record = new AgentDecisionRecord();
-        record.setId(UUID.randomUUID());
-        record.setMerchantId(merchantId);
-        record.setCampaignId(campaignId);
-        record.setPaymentId(paymentId);
-        record.setDecision(decision);
-        record.setSelectedAction(selectedAction);
-        record.setConfidence(BigDecimal.valueOf(0.90));
-        record.setReasoning(simulated(reason));
-        record.setEvidence(simulated("fixed demo agent summary; no agent or AI call was made"));
-        record.setRequiresHumanApproval(humanReview);
-        record.setComplianceStatus("ALLOWED");
-        record.setExecutionStatus(executionStatus);
-        record.setCreatedAt(Instant.now());
-        agentDecisionRecordRepository.saveAndFlush(record);
-
-        auditService.logEvent(merchantId, campaignId, "AGENT_DECISION_MADE", "AGENT", null,
-                simulated("Decision=" + decision + ", Reason: " + reason));
     }
 
     private void transitionToActionPending(UUID merchantId, UUID campaignId, String reason) {

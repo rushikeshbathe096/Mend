@@ -28,7 +28,6 @@ public class PaymentController {
     private final CampaignRepository campaignRepository;
     private final CampaignAttemptRepository campaignAttemptRepository;
     private final ActionIntentRepository actionIntentRepository;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
     private final ComplianceDecisionRepository complianceDecisionRepository;
     private final AuditLogRepository auditLogRepository;
     private final com.mend.service.WebhookAmountResolver webhookAmountResolver;
@@ -37,14 +36,12 @@ public class PaymentController {
             CampaignRepository campaignRepository,
             CampaignAttemptRepository campaignAttemptRepository,
             ActionIntentRepository actionIntentRepository,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
             ComplianceDecisionRepository complianceDecisionRepository,
             AuditLogRepository auditLogRepository,
             com.mend.service.WebhookAmountResolver webhookAmountResolver) {
         this.campaignRepository = campaignRepository;
         this.campaignAttemptRepository = campaignAttemptRepository;
         this.actionIntentRepository = actionIntentRepository;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
         this.complianceDecisionRepository = complianceDecisionRepository;
         this.auditLogRepository = auditLogRepository;
         this.webhookAmountResolver = webhookAmountResolver;
@@ -109,11 +106,6 @@ public class PaymentController {
                 .map(ActionIntentDto::fromEntity)
                 .collect(Collectors.toList());
 
-        List<AgentDecisionRecordDto> agentDecisions = agentDecisionRecordRepository.findByCampaignIdOrderByCreatedAtDesc(campaign.getId())
-                .stream()
-                .map(AgentDecisionRecordDto::fromEntity)
-                .collect(Collectors.toList());
-
         List<ComplianceDecisionDto> complianceDecisions = complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId())
                 .stream()
                 .map(ComplianceDecisionDto::fromEntity)
@@ -125,7 +117,7 @@ public class PaymentController {
                 .collect(Collectors.toList());
 
         PaymentDetailDto detail = new PaymentDetailDto(
-                summary, campaignDto, attempts, actionIntents, agentDecisions, complianceDecisions, auditLogs
+                summary, campaignDto, attempts, actionIntents, complianceDecisions, auditLogs
         );
 
         return ResponseEntity.ok(detail);

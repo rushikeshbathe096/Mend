@@ -1,20 +1,15 @@
 package com.mend.integration;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.config.RazorpayWebhookProperties;
 import com.mend.config.RedisStreamProperties;
 import com.mend.consumer.RedisWebhookEventConsumer;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.WebhookEvent;
-import com.mend.domain.enums.FailureClass;
-import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.ClassificationResultRepository;
 import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
-import com.mend.dto.ai.ClassificationRequestDto;
-import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
 import com.mend.security.RazorpaySignatureVerifier;
 import com.mend.service.OutboxPublisherService;
@@ -73,9 +68,6 @@ public class Phase6EndToEndIntegrationTest {
 
     @Autowired
     private OutboxPublisherService outboxPublisherService;
-
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
 
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -177,7 +169,6 @@ public class Phase6EndToEndIntegrationTest {
         assertThat(classificationResult.getReasoning()).contains("insufficient_funds");
         assertThat(classificationResult.getModelVersion()).isNull();
         assertThat(classificationResult.getTaxonomyVersion()).isEqualTo(com.mend.taxonomy.FailureTaxonomy.TABLE_VERSION);
-        verifyNoInteractions(aiClassificationClient);
 
         // 7. Test Duplicate Delivery Idempotency: Re-processing should not re-classify
         int secondPollCount = redisWebhookEventConsumer.pollAndProcessMessages();

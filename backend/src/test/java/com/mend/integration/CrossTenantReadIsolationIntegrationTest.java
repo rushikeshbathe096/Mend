@@ -1,13 +1,11 @@
 package com.mend.integration;
 
-import com.mend.domain.entity.AgentDecisionRecord;
 import com.mend.domain.entity.AuditLog;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.Merchant;
 import com.mend.domain.entity.MerchantUser;
 import com.mend.domain.entity.Role;
 import com.mend.domain.entity.User;
-import com.mend.domain.repository.AgentDecisionRecordRepository;
 import com.mend.domain.repository.AuditLogRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.MerchantRepository;
@@ -35,7 +33,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Pre-M1 regression tests: an authenticated user of merchant A must not be able to read
- * merchant B's agent decisions or audit trail through id- or query-parameter-scoped endpoints.
+ * merchant B's campaign, payment detail or audit trail through id- or query-parameter-scoped endpoints.
+ * M3 (ADR-003): the agent-decision endpoints are deleted; their two cases now cover the endpoints that show a
+ * campaign's decisions instead (payment detail, campaign read).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -63,9 +63,6 @@ public class CrossTenantReadIsolationIntegrationTest {
     private CampaignRepository campaignRepository;
 
     @Autowired
-    private AgentDecisionRecordRepository agentDecisionRecordRepository;
-
-    @Autowired
     private AuditLogRepository auditLogRepository;
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
@@ -75,6 +72,7 @@ public class CrossTenantReadIsolationIntegrationTest {
     private String tokenA;
     private String tokenB;
     private UUID campaignBId;
+    private String paymentIdB;
     private String reasoningMarkerB;
 
     @BeforeEach
@@ -89,12 +87,9 @@ public class CrossTenantReadIsolationIntegrationTest {
         Campaign campaignB = new Campaign(UUID.randomUUID(), merchantBId);
         campaignB.setPaymentId("pay_isolation_" + UUID.randomUUID().toString().substring(0, 8));
         campaignBId = campaignRepository.save(campaignB).getId();
+        paymentIdB = campaignB.getPaymentId();
 
         reasoningMarkerB = "merchant-b-private-" + UUID.randomUUID();
-        agentDecisionRecordRepository.save(new AgentDecisionRecord(
-                UUID.randomUUID(), campaignBId, merchantBId, campaignB.getPaymentId(),
-                "STRATEGY_SELECTION", "RETRY_IMMEDIATELY", new BigDecimal("0.5000"),
-                reasoningMarkerB, null, null, null, null, false, null, null));
 
         AuditLog auditB = new AuditLog(UUID.randomUUID(), "PAYMENT_FAILED");
         auditB.setMerchantId(merchantBId);
@@ -105,27 +100,34 @@ public class CrossTenantReadIsolationIntegrationTest {
     }
 
     @Test
-    @DisplayName("GET /agent/timeline?merchantId=<other merchant> is forbidden")
+    @DisplayName("GET /payments/{otherMerchantPayment} returns no foreign detail; the agent timeline is gone")
     void timelineQueryParamCannotSelectForeignMerchant() throws Exception {
-        HttpResponse<String> foreign = get("/api/v1/agent/timeline?merchantId=" + merchantBId, tokenA);
-        assertEquals(403, foreign.statusCode());
-        assertFalse(foreign.body().contains(reasoningMarkerB));
+        // M3 behaviour change: /agent/timeline is deleted (ADR-003 §3); it must not serve anything, to anyone
+        assertNotEquals(200, get("/api/v1/agent/timeline?merchantId=" + merchantBId, tokenB).statusCode());
 
-        HttpResponse<String> own = get("/api/v1/agent/timeline?merchantId=" + merchantBId, tokenB);
+        HttpResponse<String> foreign = get("/api/v1/payments/" + paymentIdB, tokenA);
+        assertNotEquals(200, foreign.statusCode());
+        assertFalse(foreign.body().contains(campaignBId.toString()));
+
+        HttpResponse<String> own = get("/api/v1/payments/" + paymentIdB, tokenB);
         assertEquals(200, own.statusCode());
-        assertTrue(own.body().contains(reasoningMarkerB));
+        assertTrue(own.body().contains(campaignBId.toString()));
+        assertTrue(own.body().contains(reasoningMarkerB), "B's own audit trail is in B's payment detail");
     }
 
     @Test
-    @DisplayName("GET /campaigns/{otherMerchantCampaign}/decisions returns no foreign records")
+    @DisplayName("GET /campaigns/{otherMerchantCampaign} returns no foreign campaign; the decisions endpoint is gone")
     void campaignDecisionsAreScopedToCallerMerchant() throws Exception {
-        HttpResponse<String> foreign = get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenA);
-        assertEquals(200, foreign.statusCode());
-        assertEquals("[]", foreign.body());
+        // M3 behaviour change: /campaigns/{id}/decisions (agent decisions) is deleted (ADR-003 §3)
+        assertNotEquals(200, get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenB).statusCode());
 
-        HttpResponse<String> own = get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenB);
+        HttpResponse<String> foreign = get("/api/v1/campaigns/" + campaignBId, tokenA);
+        assertNotEquals(200, foreign.statusCode());
+        assertFalse(foreign.body().contains(paymentIdB));
+
+        HttpResponse<String> own = get("/api/v1/campaigns/" + campaignBId, tokenB);
         assertEquals(200, own.statusCode());
-        assertTrue(own.body().contains(reasoningMarkerB));
+        assertTrue(own.body().contains(paymentIdB));
     }
 
     @Test

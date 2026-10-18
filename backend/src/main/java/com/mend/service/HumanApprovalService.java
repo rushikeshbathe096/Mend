@@ -2,17 +2,14 @@ package com.mend.service;
 
 import com.mend.compliance.ComplianceDecision;
 import com.mend.domain.entity.ActionIntent;
-import com.mend.domain.entity.AgentDecisionRecord;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.ReviewQueue;
 import com.mend.domain.enums.CampaignStatus;
 import com.mend.domain.enums.ComplianceStatus;
 import com.mend.domain.enums.ReviewQueueStatus;
-import com.mend.domain.repository.AgentDecisionRecordRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.ReviewQueueRepository;
 import com.mend.dto.ActionIntentDto;
-import com.mend.dto.AgentDecisionRecordDto;
 import com.mend.dto.CampaignDto;
 import com.mend.dto.ReviewItemDto;
 import com.mend.dto.ReviewQueueSummaryDto;
@@ -71,7 +68,6 @@ public class HumanApprovalService {
 
     private final ReviewQueueRepository reviewQueueRepository;
     private final CampaignRepository campaignRepository;
-    private final AgentDecisionRecordRepository agentDecisionRecordRepository;
     private final CampaignLifecycleService campaignLifecycleService;
     private final CampaignStateMachine campaignStateMachine;
     private final ActionIntentService actionIntentService;
@@ -82,7 +78,6 @@ public class HumanApprovalService {
     public HumanApprovalService(
             ReviewQueueRepository reviewQueueRepository,
             CampaignRepository campaignRepository,
-            AgentDecisionRecordRepository agentDecisionRecordRepository,
             CampaignLifecycleService campaignLifecycleService,
             CampaignStateMachine campaignStateMachine,
             ActionIntentService actionIntentService,
@@ -91,7 +86,6 @@ public class HumanApprovalService {
             WebhookAmountResolver webhookAmountResolver) {
         this.reviewQueueRepository = reviewQueueRepository;
         this.campaignRepository = campaignRepository;
-        this.agentDecisionRecordRepository = agentDecisionRecordRepository;
         this.campaignLifecycleService = campaignLifecycleService;
         this.campaignStateMachine = campaignStateMachine;
         this.actionIntentService = actionIntentService;
@@ -364,16 +358,11 @@ public class HumanApprovalService {
 
     private ReviewItemDto toReviewItem(UUID merchantId, ReviewQueue review) {
         Campaign campaign = campaignRepository.findById(review.getCampaignId()).orElse(null);
-        AgentDecisionRecord agentRecord = agentDecisionRecordRepository
-                .findFirstByCampaignIdOrderByCreatedAtDesc(review.getCampaignId()).orElse(null);
-
-        AgentDecisionRecordDto agentDto = agentRecord != null ? AgentDecisionRecordDto.fromEntity(agentRecord) : null;
-
         BigDecimal amount = campaign != null
                 ? webhookAmountResolver.resolveAmount(merchantId, campaign.getPaymentId()).orElse(null)
                 : null;
 
-        return ReviewItemDto.from(review, campaign, agentDto, amount);
+        return ReviewItemDto.from(review, campaign, amount);
     }
 
     private ReviewQueue loadReview(UUID merchantId, UUID reviewId) {

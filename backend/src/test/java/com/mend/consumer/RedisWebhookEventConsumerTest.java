@@ -1,18 +1,13 @@
 package com.mend.consumer;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.domain.entity.OutboxEvent;
 import com.mend.domain.entity.WebhookEvent;
-import com.mend.domain.enums.FailureClass;
-import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.OutboxEventRepository;
 import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.dto.event.WebhookOutboxPayload;
 import com.mend.service.OutboxEventStateService;
-import com.mend.dto.ai.ClassificationRequestDto;
-import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
 import com.mend.processor.DefaultWebhookEventProcessor;
 import com.mend.publisher.RedisWebhookEventPublisher;
@@ -65,9 +60,6 @@ class RedisWebhookEventConsumerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
-
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -83,15 +75,6 @@ class RedisWebhookEventConsumerTest {
     void setUp() {
         processor.setSimulateFailure(false);
 
-        when(aiClassificationClient.classify(any(ClassificationRequestDto.class))).thenReturn(
-                new ClassificationResponseDto(
-                        FailureClass.INSUFFICIENT_FUNDS,
-                        new BigDecimal("0.90"),
-                        RecommendedAction.RETRY_LATER,
-                        "Mocked test response",
-                        "v1.0.0-test"
-                )
-        );
 
         try {
             redisTemplate.delete(RedisEventConstants.WEBHOOK_STREAM);

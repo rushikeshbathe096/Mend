@@ -1,18 +1,13 @@
 package com.mend.consumer;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.config.RazorpayWebhookProperties;
 import com.mend.config.RedisStreamProperties;
 import com.mend.domain.entity.ClassificationResult;
 import com.mend.domain.entity.WebhookEvent;
-import com.mend.domain.enums.FailureClass;
-import com.mend.domain.enums.RecommendedAction;
 import com.mend.domain.enums.WebhookEventStatus;
 import com.mend.domain.enums.WebhookPublishStatus;
 import com.mend.domain.repository.ClassificationResultRepository;
 import com.mend.domain.repository.WebhookEventRepository;
-import com.mend.dto.ai.ClassificationRequestDto;
-import com.mend.dto.ai.ClassificationResponseDto;
 import com.mend.events.RedisEventConstants;
 import com.mend.processor.DefaultWebhookEventProcessor;
 import com.mend.security.RazorpaySignatureVerifier;
@@ -80,9 +75,6 @@ public class ConsumerConsolidationTest {
     @Autowired
     private OutboxPublisherService outboxPublisherService;
 
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
-
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -128,15 +120,6 @@ public class ConsumerConsolidationTest {
     @Test
     @DisplayName("STEP 8 Duplicate Test: Duplicate webhook events produce exactly ONE webhook_events row and ONE classification_result")
     void testDuplicateWebhookDeliveryIdempotency() throws Exception {
-        when(aiClassificationClient.classify(any(ClassificationRequestDto.class))).thenReturn(
-                new ClassificationResponseDto(
-                        FailureClass.INSUFFICIENT_FUNDS,
-                        new BigDecimal("0.90"),
-                        RecommendedAction.RETRY_LATER,
-                        "Insufficient funds",
-                        "v1.0.0"
-                )
-        );
 
         String externalEventId = "evt_dup_" + UUID.randomUUID().toString().substring(0, 8);
         ownEventIds.add(externalEventId);
@@ -259,7 +242,6 @@ public class ConsumerConsolidationTest {
         assertThat(fallbackResult.getConfidence()).isNull();
         assertThat(fallbackResult.getStrategyRecommendation()).isNull();
         assertThat(fallbackResult.getModelVersion()).isNull();
-        org.mockito.Mockito.verifyNoInteractions(aiClassificationClient);
     }
 
     @Test

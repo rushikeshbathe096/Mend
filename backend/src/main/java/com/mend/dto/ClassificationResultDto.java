@@ -2,7 +2,6 @@ package com.mend.dto;
 
 import com.mend.domain.entity.ClassificationResult;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -12,7 +11,8 @@ public class ClassificationResultDto {
     private UUID campaignId;
     private UUID eventId;
     private String failureClass;
-    private BigDecimal confidence;
+    /** Taxonomy table version of a deterministic row (M3); null on a legacy pre-M3 row. */
+    private String taxonomyVersion;
     private String strategyRecommendation;
     private String reasoning;
     private Map<String, Object> evidence;
@@ -29,7 +29,7 @@ public class ClassificationResultDto {
         dto.setCampaignId(result.getCampaignId());
         dto.setEventId(result.getEventId());
         dto.setFailureClass(result.getFailureClass());
-        dto.setConfidence(result.getConfidence());
+        dto.setTaxonomyVersion(result.getTaxonomyVersion());
         dto.setStrategyRecommendation(result.getStrategyRecommendation());
         dto.setReasoning(result.getReasoning());
         dto.setEvidence(result.getEvidence());
@@ -70,13 +70,7 @@ public class ClassificationResultDto {
         this.failureClass = failureClass;
     }
 
-    public BigDecimal getConfidence() {
-        return confidence;
-    }
 
-    public void setConfidence(BigDecimal confidence) {
-        this.confidence = confidence;
-    }
 
     public String getStrategyRecommendation() {
         return strategyRecommendation;
@@ -116,5 +110,13 @@ public class ClassificationResultDto {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getTaxonomyVersion() {
+        return taxonomyVersion;
+    }
+
+    public void setTaxonomyVersion(String taxonomyVersion) {
+        this.taxonomyVersion = taxonomyVersion;
     }
 }

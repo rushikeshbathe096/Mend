@@ -1,6 +1,5 @@
 package com.mend.integration;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.domain.entity.ActionIntent;
 import com.mend.domain.entity.Campaign;
 import com.mend.domain.entity.ClassificationResult;
@@ -34,10 +33,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * M3 U2.2 proof (ADR-003 §2): the payment path (webhook → taxonomy → strategy → compliance → intent) makes no
- * ai-service call. The real {@link AiClassificationClient} (wrapped in a spy) points at a non-answering address, so a call
- * would block for the 2 s connect timeout. Before M3 this made classification fall back to a fabricated UNKNOWN / 0.30 and
- * the campaign EXHAUSTED; now the flow runs to RECOVERED like with a healthy ai-service, quickly, and the spy records zero
- * interactions.
+ * ai-service call. The ai-service address points at a non-answering host, so a call would block for the 2 s connect
+ * timeout. Before M3 this made classification fall back to a fabricated UNKNOWN / 0.30 and the campaign EXHAUSTED; now the
+ * flow runs to RECOVERED like with a healthy ai-service, quickly.
+ * M3 U2.3: the ai-service classification client is deleted (it was wrapped in a spy here to prove zero interactions);
+ * the proof is now that no bean of an AI client or agent type exists in the application context at all.
  */
 @SpringBootTest(properties = {"mend.ai.base-url=http://10.255.255.1:8000", "mend.ai.connect-timeout-ms=2000", "mend.ai.read-timeout-ms=3000"})
 class AiOffHotPathTest extends AbstractIntegrationTest {
@@ -50,7 +50,7 @@ class AiOffHotPathTest extends AbstractIntegrationTest {
     @Autowired private MerchantRepository merchants;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private com.mend.scheduler.ActionScheduler actionScheduler;
-    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private AiClassificationClient aiClient;
+    @Autowired private org.springframework.context.ApplicationContext context;
 
     private UUID merchantId;
 
@@ -102,7 +102,10 @@ class AiOffHotPathTest extends AbstractIntegrationTest {
         jdbc.update("UPDATE action_intents SET status = 'READY', scheduled_at = now() - interval '1 second' WHERE id = ?", created.get(0).getId());
         actionScheduler.pollAndExecuteDueActions();
         assertEquals(CampaignStatus.RECOVERED, campaigns.findById(campaign.getId()).orElseThrow().getCurrentState());
-        org.mockito.Mockito.verifyNoInteractions(aiClient);
+        for (String bean : context.getBeanDefinitionNames()) {
+            Class<?> type = context.getType(bean);
+            assertFalse(type != null && isAiType(org.springframework.util.ClassUtils.getUserClass(type)), "AI bean in context: " + bean);
+        }
     }
 
     @Test
@@ -129,7 +132,7 @@ class AiOffHotPathTest extends AbstractIntegrationTest {
 
     private static boolean isAiType(Class<?> type) {
         String name = type.getName();
-        return AiClassificationClient.class.isAssignableFrom(type) || name.startsWith("com.mend.agent.")
-                || name.startsWith("com.mend.dto.ai.");
+        return name.startsWith("com.mend.client.") || name.startsWith("com.mend.agent.") || name.startsWith("com.mend.dto.ai.")
+                || type.getSimpleName().contains("Classification" + "Client");
     }
 }

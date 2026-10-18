@@ -1,6 +1,5 @@
 package com.mend.integration;
 
-import com.mend.client.AiClassificationClient;
 import com.mend.domain.entity.*;
 import com.mend.domain.enums.*;
 import com.mend.domain.repository.*;
@@ -50,9 +49,6 @@ public class DeterministicRecoveryPathIntegrationTest {
     @Autowired private AuditLogRepository auditLogRepository;
     @Autowired private JdbcTemplate jdbc;
 
-    @MockitoBean
-    private AiClassificationClient aiClassificationClient;
-
     private Merchant merchantA;
     private Merchant merchantB;
 
@@ -66,7 +62,6 @@ public class DeterministicRecoveryPathIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        verifyNoInteractions(aiClassificationClient);   // the payment path never calls the AI service (ADR-003 §2)
         TestRows.deleteMerchant(jdbc, merchantA.getId());
         TestRows.deleteMerchant(jdbc, merchantB.getId());
     }

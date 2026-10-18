@@ -4,7 +4,6 @@ import com.mend.dto.OperationalHealthDto;
 import com.mend.exception.TenantAccessDeniedException;
 import com.mend.security.AuthenticatedUser;
 import com.mend.security.CurrentUser;
-import com.mend.client.FastApiClassificationClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,14 +20,11 @@ public class InternalSystemHealthController {
     private static final Logger log = LoggerFactory.getLogger(InternalSystemHealthController.class);
 
     private final StringRedisTemplate redisTemplate;
-    private final FastApiClassificationClient aiClient;
 
     @Autowired
     public InternalSystemHealthController(
-            @Autowired(required = false) StringRedisTemplate redisTemplate,
-            @Autowired(required = false) FastApiClassificationClient aiClient) {
+            @Autowired(required = false) StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
-        this.aiClient = aiClient;
     }
 
     @GetMapping("/operational")
@@ -38,32 +34,21 @@ public class InternalSystemHealthController {
             throw new TenantAccessDeniedException("Access denied: System Administrator privileges required for operational health metrics");
         }
 
-        long redisStreamLag = 0;
-        long dlqCount = 0;
-
+        // M3 (invariant 3): only measured values; was a hardcoded "HEALTHY", 45 ms latency and AI status "UP".
+        Long redisStreamLag = null;
+        Long dlqCount = null;
+        String status = "UNKNOWN";
         if (redisTemplate != null) {
             try {
-                Long streamSize = redisTemplate.opsForStream().size("mend:webhooks");
-                redisStreamLag = streamSize != null ? streamSize : 0;
-                Long dlqSize = redisTemplate.opsForStream().size("mend:webhooks:dlq");
-                dlqCount = dlqSize != null ? dlqSize : 0;
+                redisStreamLag = redisTemplate.opsForStream().size("mend:webhooks");
+                dlqCount = redisTemplate.opsForStream().size("mend:webhooks:dlq");
+                status = "UP";
             } catch (Exception e) {
                 log.trace("Error fetching Redis stream metrics: {}", e.getMessage());
             }
         }
 
-        String aiStatus = "UP";
-
-        OperationalHealthDto health = new OperationalHealthDto(
-                "HEALTHY",
-                45, // ms avg processing latency
-                redisStreamLag,
-                dlqCount,
-                0,
-                0,
-                aiStatus,
-                0.0
-        );
+        OperationalHealthDto health = new OperationalHealthDto(status, redisStreamLag, dlqCount);
 
         return ResponseEntity.ok(health);
     }

@@ -293,7 +293,9 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
 
     @Test
     public void agentFailureScenarioFallsBackSafely() throws Exception {
-        JsonNode response = runScenarioJson(tokenA, merchantA.getMerchantId(), "AGENT_FAILURE");
+        // M3 behaviour change (ADR-003): the AGENT_FAILURE scenario was AI theatre; it is now UNCLASSIFIED_FAILURE (an
+        // undocumented error_reason is never guessed), with the same safe outcome
+        JsonNode response = runScenarioJson(tokenA, merchantA.getMerchantId(), "UNCLASSIFIED_FAILURE");
         org.junit.jupiter.api.Assertions.assertEquals("EXHAUSTED", response.get("finalCampaignState").asText());
     }
 
@@ -399,7 +401,7 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
         }
         org.junit.jupiter.api.Assertions.assertTrue(steps.stream().noneMatch(step -> step.startsWith("Provider ") || step.startsWith("Authoritative")),
                 "no step narrates a provider event as real: " + steps);
-        for (String scenario : java.util.List.of("LOW_RISK_RETRY", "HIGH_RISK_HUMAN_REVIEW", "CUSTOMER_ACTION", "DUPLICATE_EVENT", "AGENT_FAILURE")) {
+        for (String scenario : java.util.List.of("LOW_RISK_RETRY", "HIGH_RISK_HUMAN_REVIEW", "CUSTOMER_ACTION", "DUPLICATE_EVENT", "UNCLASSIFIED_FAILURE")) {
             JsonNode run = runScenarioJson(tokenA, merchantA.getMerchantId(), scenario);
             org.junit.jupiter.api.Assertions.assertTrue(run.get("simulated").asBoolean(), scenario);
             org.junit.jupiter.api.Assertions.assertTrue(run.get("message").asText().startsWith("SIMULATED"), scenario);
