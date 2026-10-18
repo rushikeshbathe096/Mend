@@ -43,6 +43,8 @@ export interface CampaignDto {
   subscriptionId?: string;
   currentState: string;
   failureClass?: string;
+  /** M3: set when the customer opted out of contact (compliance blocks CUSTOMER_OPTED_OUT). */
+  contactOptedOutAt?: string | null;
   strategy?: string;
   attemptCount: number;
   nextActionAt?: string;
@@ -413,3 +415,27 @@ export interface StartRecoveryResponseDto {
   message: string;
 }
 
+/** A model *suggestion* for a customer reply (M3). Only the deterministic policy acts on it; `effect` is what it did. */
+export interface ReplySuggestionDto {
+  valid: boolean;
+  intent: 'OPT_OUT' | 'ALREADY_PAID' | 'DISPUTE' | 'PROMISE_TO_PAY' | 'OTHER' | null;
+  promisedDate: string | null;
+  abstain: boolean | null;
+  validationError: string | null;
+  /** Exactly as the model provider reported it; null when it reported none. */
+  modelId: string | null;
+  promptVersion: string | null;
+  effect: string;
+  createdAt: string;
+}
+
+export interface CustomerReplyDto {
+  id: string;
+  campaignId: string;
+  text: string;
+  status: 'PENDING' | 'PARSED' | 'FAILED';
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  suggestion: ReplySuggestionDto | null;
+}

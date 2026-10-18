@@ -10,6 +10,7 @@ import { Modal } from '@/components/common/Modal';
 import { Timeline, TimelineStep } from '@/components/common/Timeline';
 import { RecoveryLifecycle } from '@/components/common/RecoveryLifecycle';
 import { FailureClassificationPanel } from '@/components/common/FailureClassificationPanel';
+import { CustomerRepliesPanel } from '@/components/campaign/CustomerRepliesPanel';
 import { ErrorAlert } from '@/components/common/Feedback';
 import { DetailSkeleton } from '@/components/common/Skeleton';
 import { api } from '@/lib/api';
@@ -22,13 +23,14 @@ import { CampaignDto, CampaignTimelineDto, PageResponse, ReviewItemDto, Campaign
 export default function CampaignDetailPage() {
   const params = useParams();
   const campaignId = params?.id as string;
-  const { currentMerchantId } = useAuth();
+  const { currentMerchantId, user } = useAuth();
+  const canClearOptOut = Boolean(user?.memberships?.some((m) => m.merchantId === currentMerchantId && m.roleName === 'MERCHANT_ADMIN'));
 
   const [campaign, setCampaign] = useState<CampaignDto | null>(null);
   const [timeline, setTimeline] = useState<CampaignTimelineDto | null>(null);
 
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'timeline' | 'actions' | 'compliance' | 'classification' | 'audit'>('timeline');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'actions' | 'compliance' | 'classification' | 'replies' | 'audit'>('timeline');
 
   const [pendingReview, setPendingReview] = useState<ReviewItemDto | null>(null);
   const [controlLoading, setControlLoading] = useState(false);
@@ -290,6 +292,7 @@ export default function CampaignDetailPage() {
                   { id: 'actions', label: `Action Intents (${timeline?.actionIntents?.length || 0})` },
                   { id: 'compliance', label: `Compliance (${timeline?.complianceDecisions?.length || 0})` },
                   { id: 'classification', label: 'Failure Classification' },
+                  { id: 'replies', label: 'Customer Replies' },
                   { id: 'audit', label: `Audit Log (${timeline?.auditLogs?.length || 0})` },
                 ].map((tab) => (
                   <button
@@ -385,6 +388,16 @@ export default function CampaignDetailPage() {
                       <p className="text-sm text-gray-500 italic py-6 text-center">No failure classification recorded for this campaign.</p>
                     )}
                   </div>
+                )}
+
+                {activeTab === 'replies' && (
+                  <CustomerRepliesPanel
+                    campaignId={campaignId}
+                    merchantId={currentMerchantId}
+                    optedOutAt={campaign.contactOptedOutAt}
+                    canClearOptOut={canClearOptOut}
+                    onOptOutCleared={fetchCampaignDetails}
+                  />
                 )}
 
                 {activeTab === 'audit' && (
