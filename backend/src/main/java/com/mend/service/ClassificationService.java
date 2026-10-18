@@ -69,21 +69,10 @@ public class ClassificationService {
         );
         result.setTaxonomyVersion(classification.tableVersion());
 
-        java.util.Map<String, Object> evidence = new java.util.HashMap<>();
+        java.util.Map<String, Object> evidence = new java.util.LinkedHashMap<>();
         evidence.put("eventId", event.getId());
         evidence.put("merchantId", event.getMerchantId());
-        evidence.put("matchedOn", classification.matchedOn().name());
-        if (classification.matchedValue() != null) {
-            evidence.put("matchedValue", classification.matchedValue());
-        }
-        if (classification.documentation() != null) {
-            evidence.put("documentation", classification.documentation());
-        }
-        if (failure != null) {
-            if (failure.code() != null) evidence.put("errorCode", failure.code());
-            if (failure.reason() != null) evidence.put("errorReason", failure.reason());
-            if (failure.source() != null) evidence.put("errorSource", failure.source());
-        }
+        evidence.putAll(classification.evidence(failure));
         result.setEvidence(evidence);
 
         ClassificationResult savedResult = classificationResultRepository.save(result);

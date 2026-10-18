@@ -223,7 +223,7 @@ public class DemoController {
         Setup setup = prepareCampaign(merchantId, "low_risk_retry", "insufficient_funds", "customer",
                 "RETRY_IMMEDIATELY", amount, response, steps);
 
-        steps.add(simulated("demo preset strategy RETRY_IMMEDIATELY (deterministic; no AI)."));
+        steps.add(simulated("demo preset strategy RETRY_IMMEDIATELY: a fixed demo value (the strategy table gives RETRY_LATER for INSUFFICIENT_FUNDS); no AI."));
         ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
         transitionToActionPending(merchantId, setup.campaignId(), "Action intent " + intent.getId() + " created after compliance approval");
         steps.add("Compliance engine ALLOWED; ActionIntent " + intent.getId() + " created for attempt #" + intent.getAttemptNumber() + ".");
@@ -424,7 +424,8 @@ public class DemoController {
 
         // M3 (ADR-003): the simulated failure is classified by the real deterministic taxonomy from its error fields;
         // no confidence, no model.
-        FailureClassification classification = FailureTaxonomy.classify(ProviderFailure.of("BAD_REQUEST_ERROR", errorReason, errorSource));
+        ProviderFailure failure = ProviderFailure.of("BAD_REQUEST_ERROR", errorReason, errorSource);
+        FailureClassification classification = FailureTaxonomy.classify(failure);
         String failureClass = classification.failureClass().name();
         Campaign campaign = campaignLifecycleService.getOrCreateCampaign(merchantId, paymentId, customerIdHash, null);
         campaign.setFailureClass(failureClass);
@@ -435,6 +436,7 @@ public class DemoController {
         ClassificationResult row = new ClassificationResult(UUID.randomUUID(), event.getId(), campaign.getId(), failureClass,
                 null, null, simulated("Razorpay error_reason '" + errorReason + "' on a fabricated webhook"), null);
         row.setTaxonomyVersion(classification.tableVersion());
+        row.setEvidence(classification.evidence(failure));
         classificationResultRepository.saveAndFlush(row);
 
         campaignLifecycleService.transitionState(merchantId, campaign.getId(), CampaignStatus.CLASSIFIED,

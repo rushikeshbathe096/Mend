@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { useLoad } from '@/lib/useLoad';
 import { useAuth } from '@/context/AuthContext';
+import { countFailureClasses } from '@/lib/failureClasses';
 import {
   AnalyticsOverviewDto,
   AnalyticsRecoveryDto,
@@ -23,6 +24,7 @@ export default function AnalyticsPage() {
 
   const [overview, setOverview] = useState<AnalyticsOverviewDto | null>(null);
   const [recovery, setRecovery] = useState<AnalyticsRecoveryDto | null>(null);
+  const classCounts = countFailureClasses(recovery?.failureClassBreakdown);
   const [funnel, setFunnel] = useState<AnalyticsFunnelDto | null>(null);
   const [failureBreakdown, setFailureBreakdown] = useState<AnalyticsFailureBreakdownDto | null>(null);
   const [strategyPerformance, setStrategyPerformance] = useState<AnalyticsStrategyPerformanceDto | null>(null);
@@ -244,20 +246,25 @@ export default function AnalyticsPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 pt-2">
+              <div className="grid grid-cols-3 gap-4 pt-2">
                 <div className="p-4 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900">
                   <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 block">Classified</span>
                   <div className="text-2xl font-black text-blue-900 dark:text-blue-100 font-mono mt-1" data-testid="classified-count">
-                    {Object.entries(recovery.failureClassBreakdown ?? {})
-                      .filter(([failureClass]) => failureClass !== 'UNCLASSIFIED')
-                      .reduce((sum, [, count]) => sum + count, 0)}
+                    {classCounts.classified}
                   </div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-amber-50/50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900">
                   <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 block">Unclassified</span>
                   <div className="text-2xl font-black text-amber-900 dark:text-amber-100 font-mono mt-1" data-testid="unclassified-count">
-                    {recovery.failureClassBreakdown?.UNCLASSIFIED ?? 0}
+                    {classCounts.unclassified}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
+                  <span className="text-xs font-semibold text-gray-600 dark:text-gray-300 block">Legacy (pre-M3)</span>
+                  <div className="text-2xl font-black text-gray-900 dark:text-white font-mono mt-1" data-testid="legacy-count">
+                    {classCounts.legacy}
                   </div>
                 </div>
               </div>

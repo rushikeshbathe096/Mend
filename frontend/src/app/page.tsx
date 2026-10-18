@@ -18,7 +18,7 @@ type Scenario = {
 // M3 (ADR-003): every route below is deterministic; no AI decides any of them.
 const scenarios: Scenario[] = [
   { id: 'RETRY_LATER', label: 'Retry later', payment: 'Insufficient funds', failureClass: 'INSUFFICIENT_FUNDS', route: 'RETRY_LATER', next: 'Compliance then ActionIntent', tone: 'emerald' },
-  { id: 'REVIEW', label: 'Merchant review', payment: 'High-value payment · ₹72,000', failureClass: 'AUTHENTICATION_FAILURE', route: 'HUMAN_APPROVAL', next: 'Merchant approval, then compliance re-check', tone: 'amber' },
+  { id: 'REVIEW', label: 'Merchant review', payment: 'Strategy the merchant has not enabled', failureClass: 'INSUFFICIENT_FUNDS', route: 'MANUAL_REVIEW', next: 'Merchant approval, then compliance re-check', tone: 'amber' },
   { id: 'CUSTOMER_ACTION', label: 'Customer action', payment: 'Expired card', failureClass: 'INSTRUMENT_INVALID', route: 'CUSTOMER_ACTION_REQUIRED', next: 'Payment link / customer update', tone: 'blue' },
   { id: 'TIMEOUT', label: 'Provider timeout', payment: 'Uncertain provider response', failureClass: 'GATEWAY_ERROR', route: 'RECONCILE', next: 'Reconciliation from provider evidence', tone: 'rose' },
   { id: 'DUPLICATE', label: 'Duplicate webhook', payment: 'Repeated external event', failureClass: 'N/A', route: 'DEDUPLICATE', next: 'One business event', tone: 'slate' },

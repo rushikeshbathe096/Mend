@@ -42,7 +42,7 @@ public class InternalSystemHealthController {
             try {
                 redisStreamLag = redisTemplate.opsForStream().size("mend:webhooks");
                 dlqCount = redisTemplate.opsForStream().size("mend:webhooks:dlq");
-                status = "UP";
+                status = redisStreamLag != null && dlqCount != null ? "UP" : "UNKNOWN";
             } catch (Exception e) {
                 log.trace("Error fetching Redis stream metrics: {}", e.getMessage());
             }

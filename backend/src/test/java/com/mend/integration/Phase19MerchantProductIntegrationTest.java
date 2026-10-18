@@ -134,6 +134,15 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
         String paymentId = response.get("paymentId").asText();
         org.junit.jupiter.api.Assertions.assertEquals("RECOVERED", response.get("finalCampaignState").asText());
 
+        // U2.3 review fix: the demo's classification carries the same evidence as the real pipeline (shown in the UI)
+        String timeline = mockMvc.perform(get("/api/v1/campaigns/" + campaignId + "/timeline")
+                .header("Authorization", "Bearer " + tokenA)
+                .header("X-Merchant-Id", merchantA.getMerchantId().toString()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        JsonNode evidence = new tools.jackson.databind.ObjectMapper().readTree(timeline).path("classification").path("evidence");
+        org.junit.jupiter.api.Assertions.assertEquals("insufficient_funds", evidence.path("errorReason").asText());
+        org.junit.jupiter.api.Assertions.assertEquals("https://razorpay.com/docs/errors/payments/list/", evidence.path("documentation").asText());
+
         // Payment detail is served from authoritative campaign + webhook data (no hardcoded amounts)
         mockMvc.perform(get("/api/v1/payments/" + paymentId)
                 .header("Authorization", "Bearer " + tokenA)

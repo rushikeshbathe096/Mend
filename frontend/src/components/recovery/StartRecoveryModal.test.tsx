@@ -148,7 +148,9 @@ describe('StartRecoveryModal', () => {
         { paymentId: 'pay_demo_test_123', customerIdHash: 'cust_hash_1' },
         { merchantId: 'm-456' }
       );
-      expect(screen.getByText('Payment Recovered')).toBeInTheDocument();
+      // U2.3 review fix: a mock SUCCESS is never headed as recovered money, even with the campaign RECOVERED
+      expect(screen.getByText('Simulated Capture (mock provider)')).toBeInTheDocument();
+      expect(screen.queryByText('Payment Recovered')).not.toBeInTheDocument();
       expect(screen.getByText(/SYNTHETIC, no real money moved/)).toBeInTheDocument();
       expect(onRecoveryComplete).toHaveBeenCalled();
     });
@@ -157,7 +159,7 @@ describe('StartRecoveryModal', () => {
     expect(screen.queryByText(/% Confidence/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/agent/i)).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText('Payment Recovered')).toBeInTheDocument();
+      expect(screen.getByText('Simulated Capture (mock provider)')).toBeInTheDocument();
     });
   });
 });

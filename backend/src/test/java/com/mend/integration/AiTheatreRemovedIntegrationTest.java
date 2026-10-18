@@ -118,7 +118,7 @@ public class AiTheatreRemovedIntegrationTest {
                 .header("X-Merchant-Id", merchantId.toString())
                 .POST(HttpRequest.BodyPublishers.ofString(body)));
 
-        assertNotEquals(200, response.statusCode(), response.body());
+        assertEquals(404, response.statusCode(), response.body());
         assertFalse(response.body().contains("agentDecision"), response.body());
         assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM agent_decision_records WHERE merchant_id = ?", Long.class, merchantId));
     }
@@ -126,7 +126,7 @@ public class AiTheatreRemovedIntegrationTest {
     @Test
     @DisplayName("Agent decision history is gone; payment detail and campaign carry no agent decisions and no confidence")
     void testGetCampaignDecisions() throws Exception {
-        assertNotEquals(200, get("/api/v1/campaigns/" + campaign.getId() + "/decisions").statusCode());
+        assertEquals(404, get("/api/v1/campaigns/" + campaign.getId() + "/decisions").statusCode());
 
         HttpResponse<String> detail = get("/api/v1/payments/" + campaign.getPaymentId());
         assertEquals(200, detail.statusCode(), detail.body());

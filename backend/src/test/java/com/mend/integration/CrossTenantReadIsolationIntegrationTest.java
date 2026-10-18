@@ -103,10 +103,10 @@ public class CrossTenantReadIsolationIntegrationTest {
     @DisplayName("GET /payments/{otherMerchantPayment} returns no foreign detail; the agent timeline is gone")
     void timelineQueryParamCannotSelectForeignMerchant() throws Exception {
         // M3 behaviour change: /agent/timeline is deleted (ADR-003 §3); it must not serve anything, to anyone
-        assertNotEquals(200, get("/api/v1/agent/timeline?merchantId=" + merchantBId, tokenB).statusCode());
+        assertEquals(404, get("/api/v1/agent/timeline?merchantId=" + merchantBId, tokenB).statusCode());
 
         HttpResponse<String> foreign = get("/api/v1/payments/" + paymentIdB, tokenA);
-        assertNotEquals(200, foreign.statusCode());
+        assertEquals(404, foreign.statusCode());
         assertFalse(foreign.body().contains(campaignBId.toString()));
 
         HttpResponse<String> own = get("/api/v1/payments/" + paymentIdB, tokenB);
@@ -119,10 +119,10 @@ public class CrossTenantReadIsolationIntegrationTest {
     @DisplayName("GET /campaigns/{otherMerchantCampaign} returns no foreign campaign; the decisions endpoint is gone")
     void campaignDecisionsAreScopedToCallerMerchant() throws Exception {
         // M3 behaviour change: /campaigns/{id}/decisions (agent decisions) is deleted (ADR-003 §3)
-        assertNotEquals(200, get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenB).statusCode());
+        assertEquals(404, get("/api/v1/campaigns/" + campaignBId + "/decisions", tokenB).statusCode());
 
         HttpResponse<String> foreign = get("/api/v1/campaigns/" + campaignBId, tokenA);
-        assertNotEquals(200, foreign.statusCode());
+        assertEquals(404, foreign.statusCode());
         assertFalse(foreign.body().contains(paymentIdB));
 
         HttpResponse<String> own = get("/api/v1/campaigns/" + campaignBId, tokenB);

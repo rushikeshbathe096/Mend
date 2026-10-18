@@ -376,7 +376,8 @@ function StartRecoveryModalBody({ isOpen, onClose, onRecoveryComplete }: StartRe
               <div className="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 space-y-2">
                 <div className="flex items-center space-x-2 text-emerald-800 dark:text-emerald-300 font-bold text-sm">
                   <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs">✓</span>
-                  <span>{resultData.campaign?.currentState === 'RECOVERED' ? 'Payment Recovered' : 'Simulated Capture (mock provider)'}</span>
+                  {/* SUCCESS is only ever a mock-mode synthetic capture (backend ActionExecutionService.toReport) */}
+                  <span>{resultData.executionResult?.status === 'SUCCESS' ? 'Simulated Capture (mock provider)' : 'Payment Recovered'}</span>
                 </div>
                 <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
                   {resultData.message || 'The payment was successfully recovered through the provider execution boundary.'}

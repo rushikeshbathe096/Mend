@@ -127,4 +127,21 @@ class FailureTaxonomyTest {
         assertEquals("payment_cancelled", failure.reason());
         assertEquals(PaymentFailureClass.CUSTOMER_DECLINED, FailureTaxonomy.classify(failure).failureClass());
     }
+
+    @Test
+    @DisplayName("Evidence names what matched, the cited doc and the provider fields read (shared by pipeline, demo, seed)")
+    void evidenceRecordsMatchAndProviderFields() {
+        ProviderFailure failure = ProviderFailure.of("BAD_REQUEST_ERROR", "insufficient_funds", "customer");
+        var evidence = FailureTaxonomy.classify(failure).evidence(failure);
+        assertEquals("REASON", evidence.get("matchedOn"));
+        assertEquals("insufficient_funds", evidence.get("matchedValue"));
+        assertEquals(FailureTaxonomy.REASONS_DOC, evidence.get("documentation"));
+        assertEquals("BAD_REQUEST_ERROR", evidence.get("errorCode"));
+        assertEquals("insufficient_funds", evidence.get("errorReason"));
+        assertEquals("customer", evidence.get("errorSource"));
+
+        var none = FailureTaxonomy.classify(ProviderFailure.of(null, "payment_failed", "customer")).evidence(null);
+        assertEquals("NONE", none.get("matchedOn"));
+        assertFalse(none.containsKey("documentation"), "no doc is cited for an unmapped reason");
+    }
 }

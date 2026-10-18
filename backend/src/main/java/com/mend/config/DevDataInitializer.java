@@ -1,7 +1,5 @@
 package com.mend.config;
 
-import com.mend.compliance.ComplianceEngine;
-import com.mend.strategy.RecoveryStrategyEngine;
 import com.mend.taxonomy.FailureClassification;
 import com.mend.taxonomy.FailureTaxonomy;
 import com.mend.taxonomy.PaymentFailureClass;
@@ -28,6 +26,13 @@ import java.util.*;
 @Component
 @ConditionalOnProperty(name = "mend.dev.seed", havingValue = "true")
 public class DevDataInitializer implements ApplicationRunner {
+
+    /**
+     * Seeded strategy and compliance rows are chosen per customer segment, not produced by RecoveryStrategyEngine or
+     * ComplianceEngine, so they carry this label instead of a real policy version (invariant 3).
+     */
+    static final String SEED_POLICY_VERSION = "dev-seed";
+
 
     private static final Logger log = LoggerFactory.getLogger(DevDataInitializer.class);
 
@@ -278,7 +283,8 @@ public class DevDataInitializer implements ApplicationRunner {
                 break;
         }
 
-        FailureClassification taxonomy = FailureTaxonomy.classify(new ProviderFailure("BAD_REQUEST_ERROR", errorReason, errorSource));
+        ProviderFailure failure = new ProviderFailure("BAD_REQUEST_ERROR", errorReason, errorSource);
+        FailureClassification taxonomy = FailureTaxonomy.classify(failure);
         String failureClass = taxonomy.failureClass().name();
         boolean unclassified = taxonomy.failureClass() == PaymentFailureClass.UNCLASSIFIED;
 
@@ -313,6 +319,7 @@ public class DevDataInitializer implements ApplicationRunner {
                 null, "Razorpay error_reason '" + errorReason + "' (" + taxonomy.matchedOn() + ")", null
         );
         classification.setTaxonomyVersion(taxonomy.tableVersion());
+        classification.setEvidence(taxonomy.evidence(failure));
         classification.setCreatedAt(createdAt.plusSeconds(5));
         classificationResultRepository.save(classification);
 
@@ -321,7 +328,7 @@ public class DevDataInitializer implements ApplicationRunner {
                 UUID.randomUUID(), campaign.getId(), merchant.getId(), classification.getId(),
                 strategy, "Strategy selected based on customer risk segment and failure class " + failureClass,
                 (segment == CustomerSegment.HIGH_RISK || segment == CustomerSegment.HIGH_VALUE) ? "HIGH" : "NORMAL",
-                null, RecoveryStrategyEngine.POLICY_VERSION
+                null, SEED_POLICY_VERSION
         );
         recoveryDecision.setEvaluatedAt(createdAt.plusSeconds(10));
         recoveryDecisionRepository.save(recoveryDecision);
@@ -340,7 +347,7 @@ public class DevDataInitializer implements ApplicationRunner {
                 strategy, compStatus, compReason,
                 unclassified ? "Failure class UNCLASSIFIED has no documented recovery mapping"
                         : compStatus == ComplianceStatus.COMPLIANCE_BLOCKED ? "Transaction amount ₹" + amount.toPlainString() + " requires merchant human approval" : "Compliance policy allowed execution",
-                ComplianceEngine.POLICY_VERSION
+                SEED_POLICY_VERSION
         );
         complianceDecision.setEvaluatedAt(createdAt.plusSeconds(15));
         complianceDecisionRepository.save(complianceDecision);
