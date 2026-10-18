@@ -32,6 +32,7 @@ public class RecoveryOrchestratorService {
     private final ActionIntentService actionIntentService;
     private final ActionIntentRepository actionIntentRepository;
     private final HumanApprovalService humanApprovalService;
+    private final ExperimentAssignmentService experimentAssignmentService;
 
     public RecoveryOrchestratorService(
             CampaignRepository campaignRepository,
@@ -40,7 +41,9 @@ public class RecoveryOrchestratorService {
             ComplianceService complianceService,
             ActionIntentService actionIntentService,
             ActionIntentRepository actionIntentRepository,
-            HumanApprovalService humanApprovalService) {
+            HumanApprovalService humanApprovalService,
+            ExperimentAssignmentService experimentAssignmentService) {
+        this.experimentAssignmentService = experimentAssignmentService;
         this.campaignRepository = campaignRepository;
         this.campaignLifecycleService = campaignLifecycleService;
         this.recoveryStrategyService = recoveryStrategyService;
@@ -58,6 +61,13 @@ public class RecoveryOrchestratorService {
         // Tenant Isolation Check
         if (!campaign.getMerchantId().equals(merchantId)) {
             throw new TenantAccessDeniedException("Campaign " + campaignId + " does not belong to merchant " + merchantId);
+        }
+
+        // M4 U4.1 (invariant 22): a holdout CONTROL campaign gets no strategy, no intent and no contact, on every path
+        // (scheduler, manual start, demo).
+        if (experimentAssignmentService.isControl(campaignId)) {
+            log.info("Campaign '{}' is in the holdout CONTROL arm. No recovery orchestration.", campaignId);
+            return null;
         }
 
         // Idempotency check: If campaign is already in ACTION_PENDING state, check for existing ActionIntent

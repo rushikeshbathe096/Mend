@@ -9,6 +9,7 @@ import com.mend.exception.AuthenticationException;
 import com.mend.exception.InvalidRequestException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
+import com.mend.experiment.HoldoutAssigner;
 import com.mend.security.AuthenticatedUser;
 import com.mend.security.TenantGuard;
 import org.springframework.stereotype.Service;
@@ -21,11 +22,14 @@ public class MerchantConfigService {
 
     private final MerchantConfigRepository merchantConfigRepository;
     private final MerchantRepository merchantRepository;
+    private final AuditService auditService;
 
     public MerchantConfigService(MerchantConfigRepository merchantConfigRepository,
-                                 MerchantRepository merchantRepository) {
+                                 MerchantRepository merchantRepository,
+                                 AuditService auditService) {
         this.merchantConfigRepository = merchantConfigRepository;
         this.merchantRepository = merchantRepository;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -88,7 +92,23 @@ public class MerchantConfigService {
             config.setEnabledRecoveryActions(request.getEnabledRecoveryActions().trim());
         }
 
+        // M4 U4.1 (ADR-004 §2): the holdout rate applies to campaigns assigned from now on; stored assignments never change.
+        Integer previousRate = null;
+        if (request.getHoldoutRateBp() != null) {
+            if (request.getHoldoutRateBp() < 0 || request.getHoldoutRateBp() > HoldoutAssigner.MAX_RATE_BP) {
+                throw new InvalidRequestException("holdoutRateBp must be between 0 and " + HoldoutAssigner.MAX_RATE_BP);
+            }
+            if (request.getHoldoutRateBp() != config.getHoldoutRateBp()) {
+                previousRate = config.getHoldoutRateBp();
+                config.setHoldoutRateBp(request.getHoldoutRateBp());
+            }
+        }
+
         config = merchantConfigRepository.save(config);
+        if (previousRate != null) {
+            auditService.logEvent(merchantId, null, "HOLDOUT_RATE_CHANGED", "USER", currentUser.getUserId(),
+                    "Holdout rate " + previousRate + " bp -> " + config.getHoldoutRateBp() + " bp");
+        }
         return MerchantConfigDto.fromEntity(config);
     }
 

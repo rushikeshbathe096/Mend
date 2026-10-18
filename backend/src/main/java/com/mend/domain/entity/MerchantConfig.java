@@ -37,6 +37,10 @@ public class MerchantConfig {
     @Column(columnDefinition = "TEXT")
     private String enabledRecoveryActions;
 
+    /** M4 U4.1 (ADR-004 §2): holdout rate in basis points, 0 (off, default) to 5000 (0.5). */
+    @Column(name = "holdout_rate_bp", nullable = false)
+    private int holdoutRateBp = 0;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -137,5 +141,13 @@ public class MerchantConfig {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public int getHoldoutRateBp() {
+        return holdoutRateBp;
+    }
+
+    public void setHoldoutRateBp(int holdoutRateBp) {
+        this.holdoutRateBp = holdoutRateBp;
     }
 }

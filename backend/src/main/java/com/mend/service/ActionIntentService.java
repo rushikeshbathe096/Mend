@@ -12,6 +12,7 @@ import com.mend.domain.repository.ActionIntentRepository;
 import com.mend.domain.repository.CampaignRepository;
 import com.mend.domain.repository.MerchantConfigRepository;
 import com.mend.exception.ComplianceBlockedException;
+import com.mend.exception.HoldoutControlException;
 import com.mend.exception.InvalidCampaignStateException;
 import com.mend.exception.ResourceNotFoundException;
 import com.mend.exception.TenantAccessDeniedException;
@@ -44,6 +45,7 @@ public class ActionIntentService {
     private final ActionIntentTransitions actionIntentTransitions;
     /** Lazy: HumanApprovalService depends on this service (approval creates the intent). */
     private final org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService;
+    private final ExperimentAssignmentService experimentAssignmentService;
 
     public ActionIntentService(
             CampaignRepository campaignRepository,
@@ -53,7 +55,9 @@ public class ActionIntentService {
             AuditService auditService,
             @Value("${mend.scheduler.default-retry-delay-minutes:15}") long defaultRetryDelayMinutes,
             ActionIntentTransitions actionIntentTransitions,
-            org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService) {
+            org.springframework.beans.factory.ObjectProvider<HumanApprovalService> humanApprovalService,
+            ExperimentAssignmentService experimentAssignmentService) {
+        this.experimentAssignmentService = experimentAssignmentService;
         this.campaignRepository = campaignRepository;
         this.merchantConfigRepository = merchantConfigRepository;
         this.actionIntentRepository = actionIntentRepository;
@@ -97,6 +101,12 @@ public class ActionIntentService {
         // Campaign State Machine Alignment
         if (campaign.getCurrentState() != CampaignStatus.ELIGIBLE) {
             throw new InvalidCampaignStateException("Cannot create Action Intent for campaign in state: " + campaign.getCurrentState());
+        }
+
+        // M4 U4.1 (invariant 22): no recovery intent for a holdout CONTROL campaign (V22 also rejects the insert). Nothing
+        // changes state here, so there is nothing to audit (an audit row would roll back with the exception anyway).
+        if (experimentAssignmentService.isControl(campaignId)) {
+            throw new HoldoutControlException(campaignId);
         }
 
         // Run Compliance Gate

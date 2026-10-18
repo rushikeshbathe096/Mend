@@ -14,6 +14,8 @@ public class MerchantConfigDto {
     private String retryStrategy;
     private Integer escalationThreshold;
     private String enabledRecoveryActions;
+    /** M4 U4.1: holdout rate in basis points (0 = off). */
+    private int holdoutRateBp;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -38,7 +40,7 @@ public class MerchantConfigDto {
         if (config == null) {
             return null;
         }
-        return new MerchantConfigDto(
+        MerchantConfigDto dto = new MerchantConfigDto(
                 config.getMerchantId(),
                 config.getMaxAttempts(),
                 config.getMaxContactAttempts(),
@@ -49,6 +51,16 @@ public class MerchantConfigDto {
                 config.getCreatedAt(),
                 config.getUpdatedAt()
         );
+        dto.setHoldoutRateBp(config.getHoldoutRateBp());
+        return dto;
+    }
+
+    public int getHoldoutRateBp() {
+        return holdoutRateBp;
+    }
+
+    public void setHoldoutRateBp(int holdoutRateBp) {
+        this.holdoutRateBp = holdoutRateBp;
     }
 
     public UUID getMerchantId() {

@@ -75,6 +75,7 @@ public class HumanApprovalService {
     private final ComplianceService complianceService;
     private final AuditService auditService;
     private final WebhookAmountResolver webhookAmountResolver;
+    private final ExperimentAssignmentService experimentAssignmentService;
 
     public HumanApprovalService(
             ReviewQueueRepository reviewQueueRepository,
@@ -84,7 +85,9 @@ public class HumanApprovalService {
             ActionIntentService actionIntentService,
             ComplianceService complianceService,
             AuditService auditService,
-            WebhookAmountResolver webhookAmountResolver) {
+            WebhookAmountResolver webhookAmountResolver,
+            ExperimentAssignmentService experimentAssignmentService) {
+        this.experimentAssignmentService = experimentAssignmentService;
         this.reviewQueueRepository = reviewQueueRepository;
         this.campaignRepository = campaignRepository;
         this.campaignLifecycleService = campaignLifecycleService;
@@ -205,6 +208,13 @@ public class HumanApprovalService {
         if (stateBefore != CampaignStatus.ELIGIBLE) {
             throw new InvalidRequestException(
                     "Campaign must be ELIGIBLE for compliance revalidation before approval (current state: " + stateBefore + ")");
+        }
+
+        // M4 U4.1 (invariant 22): approval resumes collection, which is recovery contact; a holdout CONTROL campaign gets
+        // none. The review can still be rejected (and, for reply reviews, resolved without collecting).
+        if (experimentAssignmentService.isControl(campaign.getId())) {
+            throw new InvalidRequestException("Approval blocked: campaign is in the holdout CONTROL arm; MEND takes no recovery action ("
+                    + com.mend.exception.HoldoutControlException.CODE + ")");
         }
 
         ComplianceDecision compliance = complianceService.evaluateAndPersistCompliance(merchantId, campaign.getId());

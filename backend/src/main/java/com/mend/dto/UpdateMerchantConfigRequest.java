@@ -8,6 +8,8 @@ public class UpdateMerchantConfigRequest {
     private String retryStrategy;
     private Integer escalationThreshold;
     private String enabledRecoveryActions;
+    /** M4 U4.1: holdout rate in basis points, 0..5000; null keeps the current rate. */
+    private Integer holdoutRateBp;
 
     public UpdateMerchantConfigRequest() {
     }
@@ -74,5 +76,13 @@ public class UpdateMerchantConfigRequest {
 
     public void setEnabledRecoveryActions(String enabledRecoveryActions) {
         this.enabledRecoveryActions = enabledRecoveryActions;
+    }
+
+    public Integer getHoldoutRateBp() {
+        return holdoutRateBp;
+    }
+
+    public void setHoldoutRateBp(Integer holdoutRateBp) {
+        this.holdoutRateBp = holdoutRateBp;
     }
 }

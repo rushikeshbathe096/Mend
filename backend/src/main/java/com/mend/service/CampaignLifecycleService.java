@@ -38,6 +38,7 @@ public class CampaignLifecycleService {
     private final RecoveryOrchestratorService recoveryOrchestratorService;
 
     private final InvoiceKeyResolver invoiceKeyResolver;
+    private final ExperimentAssignmentService experimentAssignmentService;
     /** Bug sweep item 5: SYNTHETIC (simulated) recoveries are only possible with the mock provider. */
     private final boolean mockProvider;
 
@@ -49,8 +50,10 @@ public class CampaignLifecycleService {
             AuditService auditService,
             @Lazy RecoveryOrchestratorService recoveryOrchestratorService,
             InvoiceKeyResolver invoiceKeyResolver,
+            ExperimentAssignmentService experimentAssignmentService,
             @org.springframework.beans.factory.annotation.Value("${mend.payment.provider:mock}") String paymentProvider) {
         this.invoiceKeyResolver = invoiceKeyResolver;
+        this.experimentAssignmentService = experimentAssignmentService;
         this.mockProvider = "mock".equalsIgnoreCase(paymentProvider);
         this.campaignRepository = campaignRepository;
         this.classificationResultRepository = classificationResultRepository;
@@ -154,6 +157,12 @@ public class CampaignLifecycleService {
 
         log.info("Transitioned campaignId='{}' [{} -> {}], reason='{}'", campaignId, previousState, targetState, reason);
 
+        // M4 U4.1 (ADR-004 §1): first eligibility is the CLASSIFIED -> ELIGIBLE edge; the holdout assignment is written in
+        // this transaction. Re-entries to ELIGIBLE (review, failure, legacy decision) keep the stored assignment.
+        if (previousState == CampaignStatus.CLASSIFIED && targetState == CampaignStatus.ELIGIBLE) {
+            experimentAssignmentService.assignAtFirstEligibility(updated);
+        }
+
         return updated;
     }
 
@@ -254,7 +263,12 @@ public class CampaignLifecycleService {
                     null
             );
 
-            if (recoveryOrchestratorService != null) {
+            if (experimentAssignmentService.isControl(campaign.getId())) {
+                // M4 U4.1 (invariant 22): CONTROL gets no strategy, no intent and no contact; the campaign stays ELIGIBLE
+                // and is still tracked (late capture, original-payment events, replies, reviews).
+                auditService.logEvent(campaign.getMerchantId(), campaign.getId(), "HOLDOUT_CONTROL_NO_ACTION", "SYSTEM", null,
+                        "Holdout CONTROL: no recovery action; campaign tracked");
+            } else if (recoveryOrchestratorService != null) {
                 recoveryOrchestratorService.orchestrateRecovery(campaign.getMerchantId(), campaign.getId());
                 campaign = campaignRepository.findById(campaign.getId()).orElse(campaign);
             }
