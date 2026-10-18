@@ -80,3 +80,41 @@ Revert proofs:
 Verify: backend `[INFO] Tests run: 990, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
 Out-of-scope finding OOS-1: `HumanApprovalService.approveReview` writes `REVIEW_APPROVAL_BLOCKED` and then throws in the
 same transaction, so that audit row is always rolled back (pre-existing).
+
+#### U4.1 review (fresh subagent; ran the tests on a clean copy of `941d456`): no blocker. Dispositions (commit `e7eac65`)
+- FIXED MINOR 1 (two campaigns of one invoice could both hash): per-invoice `pg_advisory_xact_lock` before the lookup; test
+  `concurrentCampaignsOfOneInvoice` (real threads, latch). Revert proof (lock removed), 3 of 3 runs:
+  `concurrentCampaignsOfOneInvoice:388 » IllegalArgument duplicate element: HASH`.
+- FIXED MINOR 2 (ADR said "audited"): ADR-004 §3 now says a refusal writes no audit row (it would roll back) and maps to 409.
+- FIXED MINOR 3: `concurrentSaltCreation` (two threads, merchant without salt → one salt row).
+- FIXED MINOR 4: CONTROL keeps OPT_OUT and DISPUTE reply effects (`controlKeepsCustomerRequests`); manual start-recovery on
+  CONTROL makes no intent / provider call and says "Holdout CONTROL" (`controlManualStart`).
+- FIXED MINOR 5 as DECISION U4.1-e: invoice reuse only while the holdout is on; at rate 0 a former CONTROL invoice's new
+  campaign is TREATMENT (merchant ended the experiment). Revert proof: `holdoutOffEndsTheExperimentForNewCampaigns:429
+  expected: <TREATMENT> but was: <CONTROL>`. My own `secondCampaignOfInvoiceReusesArm` now changes the rate 0.5 → 0.1.
+- FIXED MINOR 6: rates 0.01 / 0.2 / 0.5 at 4σ and a 100-bin chi-square (< 148.230, df 99, p 0.001).
+- FIXED NIT 7 (comment), 8 (68 %), 9 (Javadoc), 10 (HoldoutControlException → 409; start-recovery message).
+- OOS (noted for U4.8c): CONTROL campaigns stay ELIGIBLE, so live analytics count them as "active"; label them.
+- OOS (pre-existing): the orchestrator's catch of ComplianceBlockedException from the proxied intent creation would leave the
+  outer transaction rollback-only.
+
+### U4.2 decision log
+Plan: V23 `decision_log` (append-only trigger, chosen ∈ alternatives CHECK, unique ASSIGNMENT per campaign and
+STRATEGY/COMPLIANCE per source row), `DecisionLogService` (MANDATORY propagation) called from the assignment, strategy
+persist, compliance persist and executor fence (DISPATCHED), pre-dispatch block (BLOCKED + code) and expiry (EXPIRED).
+Commit: `5c3032a`.
+- DECISION U4.2-a: propensities in basis points; deterministic choices 10 000. Strategy alternatives = all strategies when the
+  merchant config does not restrict them, else the enabled ones + MANUAL_REVIEW + NO_ACTION (engine rule 5's matching).
+- DECISION U4.2-b: DISPATCH rows only where the executor applies a transition (dispatch fence, blocked abandon, expiry
+  abandon). SAFE_RETRY resends by the reconciler are not new policy decisions (not logged; noted for M5).
+- DECISION U4.2-c: the opt-out found at dispatch throws a typed `OptedOutAtDispatchException` (same message) so its code
+  is logged without parsing text.
+Tests: DecisionLogIntegrationTest 10 (one row per point on the TREATMENT, CONTROL, compliance-blocked, blocked-at-dispatch,
+expired and idempotent paths; failed insert rolls back the dispatch; immutability; chosen ∉ alternatives refused).
+Revert proofs:
+- strategy log call removed → 4 failures (`treatmentPathWritesOneRowPerPoint:142->single exactly one row per decision point: []`).
+- dispatch log moved after the provider call (outside the fence) → `failedLogInsertRollsBackTheDispatch:262 expected: <null>
+  but was: <2026-10-18T18:14:21.793983Z>` (dispatched despite the failed log).
+- (A swallowed log failure inside the fence is still rolled back by Spring's rollback-only marking: safe either way.)
+Verify after both: backend `[INFO] Tests run: 1006, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`;
+`scripts/ci/migrations.sh` → FreshDatabaseMigrationTest 1/0/0/0, BUILD SUCCESS.
