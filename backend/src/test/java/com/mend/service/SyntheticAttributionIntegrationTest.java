@@ -66,7 +66,7 @@ class SyntheticAttributionIntegrationTest extends AbstractIntegrationTest {
         webhooks.save(event);
         ComplianceDecisionEntity compliance = complianceDecisions.save(new ComplianceDecisionEntity(UUID.randomUUID(), campaign.getId(),
                 merchantId, null, RecoveryStrategy.RETRY_LATER, ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED,
-                "Compliant action", "v1.0.0"));
+                "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         ActionIntent intent = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, ActionType.RETRY_PAYMENT.name(),
                 RecoveryStrategy.RETRY_LATER.name(), compliance.getId(), ActionIntentStatus.READY,
                 "intent:" + campaign.getId() + ":attempt_1:" + ActionType.RETRY_PAYMENT.name(), Instant.now().minusSeconds(5));

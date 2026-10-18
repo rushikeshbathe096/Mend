@@ -87,7 +87,7 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
                 ComplianceStatus.COMPLIANCE_ALLOWED,
                 ComplianceReason.ALLOWED,
                 "Compliant action",
-                "v1.0.0"
+                com.mend.testsupport.TestCompliance.CURRENT_POLICY
         );
         complianceDecision = complianceDecisionRepository.save(complianceDecision);
     }
@@ -268,7 +268,7 @@ public class Phase10ActionSchedulerIntegrationTest extends AbstractIntegrationTe
         ComplianceDecisionEntity blockedDecision = new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), merchantId, null,
                 RecoveryStrategy.RETRY_IMMEDIATELY, ComplianceStatus.COMPLIANCE_BLOCKED,
-                ComplianceReason.MAX_ATTEMPTS_EXCEEDED, "Max attempts reached", "v1.0.0"
+                ComplianceReason.MAX_ATTEMPTS_EXCEEDED, "Max attempts reached", com.mend.testsupport.TestCompliance.CURRENT_POLICY
         );
         complianceDecisionRepository.save(blockedDecision);
 

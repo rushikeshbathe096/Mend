@@ -475,7 +475,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         Campaign campaign = createTestCampaign(tenant, uniquePaymentId, CampaignStatus.ACTION_PENDING, 0, amountMinor);
         ComplianceDecisionEntity compliance = complianceDecisionRepository.saveAndFlush(new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), tenant, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
-                ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "Compliant action", "v1.0.0"));
+                ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         ActionIntent intent = new ActionIntent(UUID.randomUUID(), tenant, campaign.getId(), 1,
                 ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(),
                 ActionIntentStatus.CLAIMED, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION", Instant.now());

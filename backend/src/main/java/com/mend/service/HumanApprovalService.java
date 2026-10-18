@@ -65,7 +65,7 @@ public class HumanApprovalService {
     private static final java.util.Set<String> KNOWN_REASON_CODES = java.util.Set.of(
             "DUPLICATE_PAYMENT_RISK", "CAPTURED_ON_TERMINAL_CAMPAIGN", "AMBIGUOUS_PROVIDER_REFERENCE", "MANUAL_REVIEW_REQUIRED",
             "OPERATOR_ACTION_REQUIRED", "HUMAN_DECISION_REQUIRED", "RECONCILIATION_ESCALATED", "AMBIGUOUS_DEBIT",
-            "CUSTOMER_DISPUTE", "CUSTOMER_SAYS_PAID");
+            "CUSTOMER_DISPUTE", "CUSTOMER_SAYS_PAID", "LEGACY_DECISION");
 
     private final ReviewQueueRepository reviewQueueRepository;
     private final CampaignRepository campaignRepository;

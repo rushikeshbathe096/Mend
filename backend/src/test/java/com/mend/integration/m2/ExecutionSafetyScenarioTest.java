@@ -131,7 +131,7 @@ class ExecutionSafetyScenarioTest extends AbstractIntegrationTest {
 
         ComplianceDecisionEntity compliance = complianceDecisionRepository.save(new ComplianceDecisionEntity(UUID.randomUUID(),
                 campaign.getId(), merchantId, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED,
-                ComplianceReason.ALLOWED, "Compliant action", "v1.0.0"));
+                ComplianceReason.ALLOWED, "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         // Scheduled long ago so the scheduler's batch (ordered by scheduled_at, max 50) always includes it, whatever
         // other test classes left behind in the shared database.
         ActionIntent newIntent = new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,

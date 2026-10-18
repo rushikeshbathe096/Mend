@@ -120,7 +120,7 @@ public class AnalyticsObservabilityIntegrationTest extends AbstractIntegrationTe
                 com.mend.domain.enums.RecoveryStrategy.RETRY_LATER,
                 ComplianceStatus.COMPLIANCE_ALLOWED,
                 com.mend.domain.enums.ComplianceReason.ALLOWED,
-                "Compliance passed", "v1.0"
+                "Compliance passed", com.mend.testsupport.TestCompliance.CURRENT_POLICY
         );
         complianceDecisionRepository.saveAndFlush(complianceA1);
 
@@ -129,7 +129,7 @@ public class AnalyticsObservabilityIntegrationTest extends AbstractIntegrationTe
                 com.mend.domain.enums.RecoveryStrategy.RETRY_IMMEDIATELY,
                 ComplianceStatus.COMPLIANCE_BLOCKED,
                 com.mend.domain.enums.ComplianceReason.MAX_ATTEMPTS_EXCEEDED,
-                "Rate limit exceeded", "v1.0"
+                "Rate limit exceeded", com.mend.testsupport.TestCompliance.CURRENT_POLICY
         );
         complianceDecisionRepository.saveAndFlush(complianceA2);
 

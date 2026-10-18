@@ -91,7 +91,7 @@ class ExecutionFenceTest extends AbstractIntegrationTest {
         event.setProcessingStatus(WebhookEventStatus.VERIFIED);
         webhooks.save(event);
         ComplianceDecisionEntity decision = compliance.save(new ComplianceDecisionEntity(UUID.randomUUID(), campaign.getId(), merchantId,
-                null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "ok", "v1"));
+                null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "ok", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         ActionIntent intent = intents.save(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1,
                 ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), decision.getId(),
                 ActionIntentStatus.READY, "intent:" + campaign.getId() + ":attempt_1:REQUEST_CUSTOMER_ACTION", Instant.now().minusSeconds(5)));

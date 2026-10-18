@@ -14,5 +14,7 @@ public enum ComplianceReason {
     /** M3 U2.4: the customer opted out of contact (reply policy); fail closed until a merchant admin clears it. */
     CUSTOMER_OPTED_OUT,
     /** M3 follow-up (owner decision B): a retry strategy for an UNCLASSIFIED failure; only a payment link is allowed. */
-    RETRY_NOT_ALLOWED_UNCLASSIFIED
+    RETRY_NOT_ALLOWED_UNCLASSIFIED,
+    /** M3 follow-up: a stored decision made before the deterministic policy (v1.x / unknown) cannot authorize a dispatch. */
+    LEGACY_DECISION
 }
