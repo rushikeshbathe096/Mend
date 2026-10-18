@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * M3 U2.3: the ai-service classification client is deleted (it was wrapped in a spy here to prove zero interactions);
  * the proof is now that no bean of an AI client or agent type exists in the application context at all.
  */
-@SpringBootTest(properties = {"mend.ai.base-url=http://10.255.255.1:8000", "mend.ai.connect-timeout-ms=2000", "mend.ai.read-timeout-ms=3000"})
+@SpringBootTest(properties = {"mend.ai.base-url=http://10.255.255.1:8000", "mend.ai.connect-timeout-ms=2000", "mend.ai.reply-read-timeout-ms=3000"})
 class AiOffHotPathTest extends AbstractIntegrationTest {
 
     @Autowired private DefaultEventProcessingService eventProcessing;

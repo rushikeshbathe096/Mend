@@ -56,3 +56,52 @@ def test_non_synthetic_rows_are_refused(tmp_path):
 ])
 def test_validity_matches_the_backend_schema(suggestion, ok):
     assert run_eval.valid(suggestion) is ok
+
+
+def rows(*pairs):
+    return [{"id": str(i), "text": text, "intent": gold, "promised_date": None} for i, (text, gold) in enumerate(pairs)]
+
+
+def test_metrics_on_a_hand_checked_example():
+    predictions = {"a": "OPT_OUT", "b": "OPT_OUT", "c": "DISPUTE"}
+    data = rows(("a", "OPT_OUT"), ("b", "DISPUTE"), ("c", "DISPUTE"))
+    report = run_eval.evaluate(data, lambda t: {"intent": predictions[t], "promised_date": None, "abstain": False})
+    assert report["per_class"]["OPT_OUT"] == {"precision": 0.5, "recall": 1.0, "f1": 0.6667, "support": 1}
+    assert report["per_class"]["DISPUTE"] == {"precision": 1.0, "recall": 0.5, "f1": 0.6667, "support": 2}
+    assert report["confusion_matrix"]["DISPUTE"]["OPT_OUT"] == 1
+    # classes with no support and no predictions score 0 and still count in the macro average
+    assert report["macro_f1"] == round((0.6667 + 0.6667) / 5, 4)
+
+
+def test_abstained_and_invalid_predictions_count_as_misses():
+    data = rows(("a", "OPT_OUT"), ("b", "OPT_OUT"))
+    answers = {"a": {"intent": "OPT_OUT", "promised_date": None, "abstain": True}, "b": {"intent": "NOPE", "abstain": False}}
+    report = run_eval.evaluate(data, lambda t: answers[t])
+    assert report["per_class"]["OPT_OUT"]["recall"] == 0.0
+    assert report["abstention_rate"] == 0.5
+    assert report["invalid_output_rate"] == 0.5
+    assert report["confusion_matrix"]["OPT_OUT"]["ABSTAIN"] == 1
+    assert report["confusion_matrix"]["OPT_OUT"]["INVALID"] == 1
+
+
+def test_model_ids_are_collected_as_reported():
+    report = run_eval.evaluate(rows(("a", "OTHER")), lambda t: {
+        "suggestion": {"intent": "OTHER", "promised_date": None, "abstain": False}, "model_id": "gemini-x-001"})
+    assert report["model_ids_reported"] == ["gemini-x-001"]
+
+
+@pytest.mark.parametrize("text,intent", [
+    ("This charge is wrong, stop messaging me", "DISPUTE"),   # dispute wins over opt-out (label guide)
+    ("Please stop", "OPT_OUT"),
+    ("I already paid", "ALREADY_PAID"),
+    ("I will pay on 2026-11-02", "PROMISE_TO_PAY"),
+    ("Hello?", "OTHER"),
+])
+def test_keyword_baseline_rules(text, intent):
+    assert run_eval.keyword_baseline(text)["intent"] == intent
+
+
+def test_keyword_baseline_takes_only_an_exact_iso_date():
+    assert run_eval.keyword_baseline("I will pay on 2026-11-02")["promised_date"] == "2026-11-02"
+    assert run_eval.keyword_baseline("I will pay tomorrow")["promised_date"] is None
+
