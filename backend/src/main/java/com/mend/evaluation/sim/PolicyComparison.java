@@ -65,6 +65,23 @@ public final class PolicyComparison {
         return md.toString();
     }
 
+    /**
+     * The true effect under the model, computed on the same draws (U4.6 review): over eligible failures of an all-TREATMENT run,
+     * recovered with MEND's action minus recovered without it (the late capture each failure would have had anyway).
+     */
+    public static String trueEffect(ReplaySimulator.Result allTreatment) {
+        List<ReplaySimulator.Outcome> eligible = allTreatment.outcomes().stream().filter(ReplaySimulator.Outcome::eligible).toList();
+        long withAction = eligible.stream().filter(o -> o.firstCapture() != null).count();
+        long withoutAction = eligible.stream().filter(o -> o.noActionCapture() != null).count();
+        long n = eligible.size();
+        BigDecimal pp = n == 0 ? BigDecimal.ZERO : BigDecimal.valueOf(withAction - withoutAction).multiply(BigDecimal.valueOf(100))
+                .divide(BigDecimal.valueOf(n), 4, RoundingMode.HALF_EVEN);
+        return "### True effect under the model (SYNTHETIC, computed, not estimated)\n\nOver the " + n + " eligible failures, with MEND's "
+                + "action every one of them: recovered " + withAction + "; recovered without any action (same draws) " + withoutAction
+                + "; true incremental recovery rate " + pp.toPlainString() + " pp (n = " + n + "). The holdout estimate in the "
+                + "report is a sample-based estimate of this number.\n";
+    }
+
     /** The outcome-model assumptions that drive every comparison (all SYNTHETIC). */
     public static String assumptions(OutcomeModel m) {
         StringBuilder md = new StringBuilder("### Outcome-model assumptions (SYNTHETIC, not measured)\n\n"

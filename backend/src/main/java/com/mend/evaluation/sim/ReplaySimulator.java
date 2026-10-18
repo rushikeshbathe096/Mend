@@ -68,8 +68,9 @@ public final class ReplaySimulator {
     }
 
     /** Per-event result, before snapshot building (also used for the paired policy comparison). */
+    /** {@code noActionCapture}: the late capture within the horizon that happens whatever MEND does (the counterfactual). */
     public record Outcome(ReplayEvent event, PaymentFailureClass failureClass, boolean eligible, Arm arm, RecoveryStrategy strategy,
-                          boolean allowed, boolean contacted, Instant firstCapture, CaptureSource source) {
+                          boolean allowed, boolean contacted, Instant firstCapture, CaptureSource source, Instant noActionCapture) {
         public long recoveredMinor() {
             return firstCapture != null ? event.amountMinor() : 0L;
         }
@@ -120,7 +121,7 @@ public final class ReplaySimulator {
                     && !(config.variant() == PolicyVariant.A_UNCLASSIFIED_INELIGIBLE && cls == PaymentFailureClass.UNCLASSIFIED);
             if (!eligible) {
                 outcomes[index] = new Outcome(e, cls, false, null, null, false, false, cap(lateCapture, horizonEnd),
-                        cap(lateCapture, horizonEnd) == null ? null : CaptureSource.ORIGINAL);
+                        cap(lateCapture, horizonEnd) == null ? null : CaptureSource.ORIGINAL, cap(lateCapture, horizonEnd));
                 continue; // never ELIGIBLE: outside the evaluation population, as in production (EXHAUSTED)
             }
 
@@ -206,7 +207,7 @@ public final class ReplaySimulator {
                     firstAny != null ? "RECOVERED" : contacts.isEmpty() ? "ELIGIBLE" : "EXECUTING", e.amountMinor(), "INR", 0,
                     config.windowStart(), true));
             outcomes[index] = new Outcome(e, cls, true, arm, strategy, compliance != null && compliance.isAllowed(), !contacts.isEmpty(),
-                    first == null ? null : first.at(), first == null ? null : first.source());
+                    first == null ? null : first.at(), first == null ? null : first.source(), cap(lateCapture, horizonEnd));
         }
 
         SnapshotParams params = new SnapshotParams(config.windowStart(), config.windowStart().plus(config.window()), asOf,

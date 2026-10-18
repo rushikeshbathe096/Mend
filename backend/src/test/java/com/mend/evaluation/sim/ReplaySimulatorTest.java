@@ -181,11 +181,32 @@ class ReplaySimulatorTest {
         for (int i = 1; i < fa.size(); i++) {
             assertEquals(java.nio.file.Files.readString(fa.get(i)), java.nio.file.Files.readString(fb.get(i)), fa.get(i).getFileName().toString());
         }
+        // U4.6 review: the snapshot directory itself (index 0) is identical too
+        for (String file : List.of("campaigns.jsonl", "decisions.jsonl", "campaigns.csv", "manifest.json")) {
+            assertEquals(java.nio.file.Files.readString(fa.get(0).resolve(file)), java.nio.file.Files.readString(fb.get(0).resolve(file)), file);
+        }
+        assertTrue(java.nio.file.Files.readString(fa.get(2)).contains("True effect under the model"));
         assertTrue(java.nio.file.Files.readString(fa.get(1)).contains("**Label: SYNTHETIC**"));
         String policies = java.nio.file.Files.readString(fa.get(2));
         assertTrue(policies.contains("**Label: SYNTHETIC**"));
         assertTrue(policies.contains("Monte Carlo noise"));
         assertFalse(policies.contains("MEASURED"));
+    }
+
+    @Test
+    @DisplayName("Golden: the committed U4.6 run (seed 20261018, 10 000, holdout 0.2) regenerates the committed snapshot checksum")
+    void committedRunIsReproducible(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        List<java.nio.file.Path> files = com.mend.evaluation.cli.SimulateCli.run(withOut(Map.of("seed", "20261018", "size", "10000",
+                "holdout-bp", "2000"), tmp));
+        String committed = java.nio.file.Files.readString(java.nio.file.Path.of("../docs/m4/results/sim-20261018-10000-manifest.json"));
+        String regenerated = java.nio.file.Files.readString(files.get(0).resolve("manifest.json"));
+        assertEquals(sha(committed), sha(regenerated));
+        assertEquals(java.nio.file.Files.readString(java.nio.file.Path.of("../docs/m4/results/sim-20261018-10000.json")),
+                java.nio.file.Files.readString(tmp.resolve("sim-20261018-10000.json")));
+    }
+
+    private static String sha(String manifestJson) {
+        return tools.jackson.databind.json.JsonMapper.builder().build().readTree(manifestJson).path("sha256").stringValue();
     }
 
     private static Map<String, String> withOut(Map<String, String> args, java.nio.file.Path out) {

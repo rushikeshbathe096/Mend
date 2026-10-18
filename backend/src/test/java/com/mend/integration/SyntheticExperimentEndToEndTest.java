@@ -87,6 +87,11 @@ class SyntheticExperimentEndToEndTest {
         TestRows.deleteMerchant(jdbc, merchantId);
     }
 
+    private int readyIntents() {
+        return jdbc.queryForObject("SELECT count(*) FROM action_intents WHERE merchant_id = ? AND status IN ('READY','SCHEDULED','PENDING')",
+                Integer.class, merchantId);
+    }
+
     private WebhookEvent webhook(String externalId, String type, String payload) {
         WebhookEvent e = new WebhookEvent(UUID.randomUUID(), externalId, type, "RAZORPAY", payload);
         e.setMerchantId(merchantId);
@@ -100,10 +105,12 @@ class SyntheticExperimentEndToEndTest {
         List<ReplayEvent> events = SyntheticGenerator.generate(SEED, SIZE, merchantId, Instant.now(), Duration.ofMinutes(1));
         SplittableRandom outcomes = new SplittableRandom(SEED);
         List<String> payIds = new ArrayList<>();
+        Map<String, Long> amounts = new HashMap<>();
         for (int i = 0; i < events.size(); i++) {
             ReplayEvent e = events.get(i);
             String payId = "pay_SYN" + Long.toHexString(SEED) + String.format("%05d", i) + UUID.randomUUID().toString().substring(0, 4);
             payIds.add(payId);
+            amounts.put(payId, e.amountMinor());
             WebhookEvent failed = webhook("payment.failed_" + payId, "payment.failed",
                     "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + payId + "\",\"amount\":" + e.amountMinor()
                             + ",\"currency\":\"INR\",\"status\":\"failed\",\"error_reason\":\"" + e.failure().reason() + "\"}}}}");
@@ -111,15 +118,23 @@ class SyntheticExperimentEndToEndTest {
         }
         jdbc.update("UPDATE action_intents SET scheduled_at = now() - interval '1 minute', status = 'READY' "
                 + "WHERE merchant_id = ? AND status IN ('SCHEDULED','PENDING','READY')", merchantId);
-        scheduler.pollAndExecuteDueActions();
-        scheduler.pollAndExecuteDueActions();
+        // U4.6 review: poll until this merchant has nothing claimable left (the scheduler claims a batch of 50 per poll)
+        for (int poll = 0; poll < 20 && readyIntents() > 0; poll++) {
+            scheduler.pollAndExecuteDueActions();
+        }
+        assertEquals(0, readyIntents());
+        int created = jdbc.queryForObject("SELECT count(*) FROM action_intents WHERE merchant_id = ?", Integer.class, merchantId);
+        int dispatched = jdbc.queryForObject("SELECT count(*) FROM action_intents WHERE merchant_id = ? AND dispatched_at IS NOT NULL",
+                Integer.class, merchantId);
+        assertTrue(created > 0);
+        assertEquals(created, dispatched, "every TREATMENT intent went through the dispatch fence");
 
         // Seeded customer behaviour (SYNTHETIC): 10 % pay the original payment late (any arm); 30 % of links get paid.
         for (String payId : payIds) {
             if (outcomes.nextDouble() < 0.10) {
                 reconciliation.reconcileWebhookEvent(webhook("payment.captured_" + payId, "payment.captured",
                         "{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + payId
-                                + "\",\"amount\":49900,\"currency\":\"INR\",\"status\":\"captured\"}}}}"));
+                                + "\",\"amount\":" + amounts.get(payId) + ",\"currency\":\"INR\",\"status\":\"captured\"}}}}"));
             }
         }
         for (ActionIntent link : intents.findAll().stream().filter(i -> merchantId.equals(i.getMerchantId())
@@ -132,7 +147,9 @@ class SyntheticExperimentEndToEndTest {
                                 + "\",\"status\":\"captured\"}}}}"));
             }
         }
-        // Simulated time: the history is 20 days old, so every invoice is mature under a 14-day horizon.
+        // Simulated time: only this merchant's audit history (the point-in-time source of eligibility, state and captures) is moved
+        // 20 days back, so every invoice is mature under a 14-day horizon. Assignments and decisions keep their real (earlier than
+        // as_of) times; the merchant's M4 start is its first assignment, so these aged rows count as pre-M4 for the coverage check.
         jdbc.update("UPDATE audit_logs SET created_at = created_at - interval '20 days' WHERE merchant_id = ?", merchantId);
         Instant asOf = Instant.now();
 
@@ -154,6 +171,13 @@ class SyntheticExperimentEndToEndTest {
         assertEquals(eligible, rows.size());
         assertEquals(control, rows.stream().filter(r -> "CONTROL".equals(r.arm())).count());
         assertEquals(recovered, rows.stream().filter(SnapshotRow::invoiceRecovered).count());
+        assertTrue(recovered > 0);
+        int recoveredT = jdbc.queryForObject("SELECT count(*) FROM campaigns c JOIN holdout_assignments a ON a.campaign_id = c.id "
+                + "WHERE c.merchant_id = ? AND c.current_state = 'RECOVERED' AND a.arm = 'TREATMENT'", Integer.class, merchantId);
+        int recoveredMend = jdbc.queryForObject("SELECT count(*) FROM campaigns WHERE merchant_id = ? AND recovery_attribution = 'MEND'",
+                Integer.class, merchantId);
+        assertTrue(recoveredMend > 0, "some links were paid");
+        assertEquals(recoveredMend, rows.stream().filter(r -> "MEND".equals(r.invoiceCaptureSource())).count());
         assertTrue(rows.stream().allMatch(r -> "SYNTHETIC".equals(r.evidenceLabel())), "mock provider data is SYNTHETIC");
 
         MetricsReport.Report report = MetricsReport.compute(SnapshotFiles.read(dir, false), new MetricsReport.Options(SEED, 2000, null, null));
@@ -167,5 +191,12 @@ class SyntheticExperimentEndToEndTest {
         assertNotEquals(Figure.Status.ALERT, srm.status(), "assignment at 0.2 is not a sample-ratio mismatch");
         assertEquals(eligible, srm.n());
         assertTrue(report.interim());
+        // the report's per-arm "k of n" equals the database's per-arm recovered counts
+        Figure armT = report.figures().stream().filter(f -> f.scope().equals("overall") && f.stratum().equals(stratum)
+                && f.name().equals("recovery rate TREATMENT")).findFirst().orElseThrow();
+        Figure armC = report.figures().stream().filter(f -> f.scope().equals("overall") && f.stratum().equals(stratum)
+                && f.name().equals("recovery rate CONTROL")).findFirst().orElseThrow();
+        assertTrue(armT.note().startsWith(recoveredT + " of " + (eligible - control)), armT.note());
+        assertTrue(armC.note().startsWith((recovered - recoveredT) + " of " + control), armC.note());
     }
 }

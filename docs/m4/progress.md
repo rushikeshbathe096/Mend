@@ -250,3 +250,26 @@ generator weights). Revert proof (unseeded draws) → `pairedDraws:107`, `reprod
   horizon cap), 12 (Monte Carlo caveat + assumptions table), 13 (tests: CLI end-to-end reproducibility and labels, reuse,
   replay, restriction, retry delay), NIT 14 (UTF-8), 15 (per-merchant domain-separated salts), 16 (EXECUTING documented).
 Verify: backend `[INFO] Tests run: 1078, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
+
+### U4.6 synthetic experiment run
+Commits: `5dff21e` (end-to-end test), `2478d9b` (results), U4.6 review fix commit below.
+- `docs/m4/results/`: `sim-20261018-10000.md|json` (report from snapshot files), `-policies.md` (true effect, B vs A,
+  retry timing, assumptions), `-manifest.json`, README (setup, headline, error analysis, real data TBD).
+- Headline (SYNTHETIC, n 10 000, holdout 0.2): incremental recovery rate 8.24 pp (6.61 … 9.77), true effect under the model
+  7.94 pp (computed on the same draws), SRM p 0.783316, CONTROL contact 0.00 %. UNCLASSIFIED 2 522; LEGACY_DECISION 0
+  (synthetic population has none; real count TBD).
+- OOS-3 (M5): retry classes (INSUFFICIENT_FUNDS, BANK_TECHNICAL, GATEWAY_ERROR; 42.65 % of synthetic failures) get a
+  retry, which cannot capture (debits not wired, NotSupported → review): wire debits or send those classes a link.
+- OOS-4 (pre-existing): `MerchantConfigService.createDefaultConfig` writes `enabledRecoveryActions = "RETRY_PAYMENT,SEND_EMAIL"`;
+  RecoveryStrategyEngine matches strategy names by substring, so such a merchant gets MANUAL_REVIEW for every campaign
+  (approval issues a link, OD-1).
+
+#### U4.6 review (fresh subagent; regenerated the run byte for byte, recomputed every README number): fixes
+- FIXED MAJOR 1 (e2e test dispatched only 100 of 121 intents; weak assertions): polls until nothing is claimable;
+  asserts created == dispatched, recovered > 0, MEND recoveries > 0 and equal in the snapshot, per-arm "k of n" == the
+  database's per-arm RECOVERED counts.
+- FIXED MINOR 2 (real amounts in late captures; README describes the stored-webhook entry and the audit-only time shift),
+  3 (`cliIsReproducibleAndLabelled` compares the snapshot directory; new golden test `committedRunIsReproducible` against the
+  committed manifest sha and report JSON), 4 (3 426 TREATMENT retries; 42.65 % retry classes), 5 (review item not modelled;
+  contact rate overstated by OOS-2), 6 (exact merchant config + OOS-4), 7 (true effect computed: `PolicyComparison.trueEffect`
+  = 7.94 pp, inside the estimate's CI), 8 (this entry; OOS-3/4), NIT 9 (manifest copy step), 10 (n on every headline figure).

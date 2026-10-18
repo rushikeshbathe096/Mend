@@ -71,6 +71,7 @@ public final class SimulateCli {
                 + "(assumptions, documented in the class). None of this is revenue.\n\n");
         ReplaySimulator.Result a0 = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.A_UNCLASSIFIED_INELIGIBLE, model, WINDOW_START, WINDOW));
         ReplaySimulator.Result b0 = simulator.run(events, new ReplaySimulator.Config(seed, 0, horizon, PolicyVariant.B_CURRENT, model, WINDOW_START, WINDOW));
+        md.append(PolicyComparison.trueEffect(b0)).append("\n");
         md.append(PolicyComparison.markdown("Owner decision B (UNCLASSIFIED → payment link) vs A (UNCLASSIFIED ineligible)",
                 PolicyComparison.compare("A: UNCLASSIFIED ineligible", a0, "B: UNCLASSIFIED link (current)", b0, resamples, seed)));
         // RETRY_LATER's delay is production's rule (ActionPolicy.scheduleDelay = the merchant's contact window)
