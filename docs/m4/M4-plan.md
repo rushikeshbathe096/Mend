@@ -12,7 +12,8 @@ revert proof per fix / behaviour change → fresh-subagent review (AGENTS.md + u
     `merchant_experiment_salts` (merchant_id, purpose ASSIGNMENT|EVAL_ID, salt_version, salt BYTEA, created_at; PK
     (merchant_id, purpose, salt_version)).
   - V22 also adds `holdout_assignments` (campaign_id PK, merchant_id, arm, bucket, holdout_rate_bp, salt_version,
-    hash_version, assigned_at), with an immutability trigger (UPDATE/DELETE/TRUNCATE).
+    hash_version, source HASH|INVOICE_REUSE, assigned_at), with an immutability trigger (UPDATE/DELETE/TRUNCATE). A later
+    campaign of an assigned invoice copies the stored arm.
   - V22 adds a BEFORE INSERT trigger on `action_intents` that rejects a CONTROL campaign. There are no FKs, so the log
     outlives test cleanup and merchant deletion (ids only).
   - `com.mend.experiment.HoldoutAssigner` (pure Java).
@@ -27,7 +28,7 @@ revert proof per fix / behaviour change → fresh-subagent review (AGENTS.md + u
   - V23 `decision_log` (id, merchant_id, campaign_id, intent_id, decision_point, chosen, alternatives JSONB,
     propensity_bp, taxonomy/strategy/compliance/assignment versions, decided_at), append-only trigger.
   - `DecisionLogService.append` is called from the assignment, strategy persist, compliance persist and executor
-    dispatch / abandon paths, in their own transactions.
+    dispatch / abandon paths, inside the deciding path's transaction (a failed log insert rolls the decision back).
   - Tests: exactly one row per decision point per path; UPDATE/DELETE/TRUNCATE rejected.
 - **U4.3 Evaluation snapshots.**
   - V24 `eval_snapshots` (immutable; status VALID|INVALID; errors JSONB).
@@ -35,10 +36,15 @@ revert proof per fix / behaviour change → fresh-subagent review (AGENTS.md + u
     default).
   - Pure `com.mend.evaluation.snapshot` (row schema, canonical JSONL / CSV writer, sha256, validator).
   - `scripts/eval/snapshot.sh` (curl).
-  - Tests: checksum stability, PII absence, each defect detected (negative / fractional amount, RECOVERED without
-    attribution, missing assignment, schema).
+  - Point in time from append-only sources (audit transitions + capture-evidence codes ≤ as_of, decision_log,
+    assignments, `dispatched_at`, `received_at`); outcome = capture evidence within H (default 14 d); day + second
+    offsets only; column allow-list; post-M4 = first eligibility ≥ V22 `installed_on`.
+  - Tests: checksum stability (also after later activity), PII absence, each defect detected (negative / fractional
+    amount, RECOVERED without attribution, missing assignment, schema).
 - **U4.4 Metrics + intervals.**
-  - Pure `com.mend.evaluation.stats` (Wilson, Newcombe, seeded bootstrap, median, sample size) and `MetricsReport`
+  - Invoice-level analysis per holdout-rate stratum; cumulative recovery by day; SRM chi-square; INTERIM label;
+    interference count; cost per incremental rupee.
+  - Pure `com.mend.evaluation.stats` (Wilson, Newcombe, seeded bootstrap, median, sample size, chi-square) and `MetricsReport`
     (snapshot files → `docs/m4/results/<id>.md` + `.json`).
   - CLI `scripts/eval/report.sh` (main class run from the backend jar via Spring Boot's PropertiesLauncher, no new
     plugin).

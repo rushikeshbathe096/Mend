@@ -1,6 +1,6 @@
 # DESIGN DOC — M4 Evaluation: does MEND cause recovery?
 
-Status: accepted for implementation by the orchestrator (U4.0). ADR: ADR-004. Plan: `docs/m4/M4-plan.md`. Metric tree:
+Status: approved for implementation by the orchestrator (U4.0, amended after the U4.0 review). ADR: ADR-004 (Proposed until U4.9). Plan: `docs/m4/M4-plan.md`. Metric tree:
 `docs/m4/metric-tree.md`. The brief (§27, §28, §51, §54, §60, §61) is not in the repository (standing DECISION from
 M3): §54 headings follow the M2/M3 design docs, the §51 checklist is derived from the M4 rules in the task prompt and
 listed in `M4-plan.md`, §60 is the metric tree.
@@ -71,14 +71,27 @@ AGENTS.md 1–18 unchanged. Added for M4 (AGENTS.md 19–25):
 
 ## Decision
 Option 3, detailed in ADR-004:
-- Unit of randomization: the campaign's `invoice_key` within a merchant (an invoice never gets both arms). Assignment:
-  `HMAC-SHA256(merchant salt, invoice_key)` → first 8 bytes as an unsigned 64-bit integer → bucket = value mod 10 000 →
-  CONTROL iff bucket < `holdout_rate_bp`. Default rate 0 (off); maximum 5 000 (0.5).
-- Analysis: intention-to-treat. Outcome = the campaign reached RECOVERED with provider evidence (any attribution except
-  SYNTHETIC in MEASURED reports) by the snapshot's `as_of`. Incremental recovery rate = rate(TREATMENT) − rate(CONTROL).
-- Statistics: Newcombe hybrid score interval (Wilson-based) for the difference of proportions; seeded percentile
-  bootstrap (default 2 000 resamples, stratified by arm) for money per eligible campaign and for median time to
-  recovery; minimum sample sizes per figure (below).
+- Unit of randomization **and of analysis**: the invoice (`invoice_key`) within a merchant. Assignment:
+  `HMAC-SHA256(merchant salt, invoice_key)` → first 8 bytes as an unsigned 64-bit integer (`Long.remainderUnsigned`) →
+  bucket = value mod 10 000 → CONTROL iff bucket < `holdout_rate_bp`. Default rate 0 (off); maximum 5 000 (0.5). A later
+  campaign of an already-assigned invoice copies that invoice's stored arm, bucket and rate (`source = INVOICE_REUSE`),
+  so an invoice never gets both arms even after a rate change. The metrics collapse campaigns to one row per invoice.
+- Outcome (review BLOCKER 1): **provider evidence of a capture within a fixed horizon H after the invoice's first
+  eligibility**, read identically in both arms and independent of campaign state handling. Capture evidence = the first
+  of: a RECOVERED transition (MEND link or late original capture), or the audit codes `CAPTURED_ON_TERMINAL_CAMPAIGN`,
+  `CAPTURED_EVIDENCE_NOT_APPLIED` (MEND link captured on an ended intent/campaign) and
+  `ORIGINAL_PAYMENT_CAPTURED_ON_TERMINAL_CAMPAIGN` (original captured after the campaign ended). H = 14 days by default
+  (72 h link validity plus retries, with margin), recorded in every snapshot. Only *mature* invoices
+  (`eligible_at + H ≤ as_of`) enter the analysis; the rest are counted as immature.
+- Analysis: intention-to-treat. Incremental recovery rate = rate(TREATMENT) − rate(CONTROL), per holdout-rate stratum
+  (no pooling across strata; a single-stratum merchant has one figure). Reports before the pre-registered sample (power
+  table, chosen at pilot start) are labelled **INTERIM — not for decision** (no alpha spending in M4; repeated looks
+  inflate false positives).
+- Statistics: Newcombe hybrid score interval (method 10, Wilson-based, no continuity correction) for the difference of
+  proportions; seeded percentile bootstrap (default 2 000 resamples, stratified by arm) for money per eligible invoice;
+  cumulative recovery by day d (1, 3, 7, 14) per arm with Newcombe intervals for the difference (causal, ITT
+  denominator). The median time to recovery among recovered invoices is reported as **descriptive, not causal** (it
+  conditions on a post-treatment outcome). Minimum sample sizes per figure (below).
 
 ## Architecture
 ```
@@ -108,6 +121,11 @@ ReplaySimulator (in memory) → FailureTaxonomy → RecoveryStrategyEngine → C
 | merchant has no salt yet | generated (SecureRandom, 32 bytes) and stored in the assignment transaction; concurrent creation resolved by the primary key, the loser re-reads |
 | campaign re-enters ELIGIBLE (review, failure, legacy decision) | no new assignment: only the CLASSIFIED → ELIGIBLE edge assigns; the stored one is reused |
 | holdout rate changed mid-experiment | existing assignments unchanged (immutable); new ones use the new rate and record it; the report stratifies by rate |
+| merchant cancels a CONTROL (or TREATMENT) campaign | it becomes terminal, but a later capture is still evidence (`ORIGINAL_PAYMENT_CAPTURED_ON_TERMINAL_CAMPAIGN`), so the outcome is not lost |
+| second campaign for an assigned invoice | copies the invoice's stored arm (`INVOICE_REUSE`), never re-hashed under a new rate |
+| decision-log insert fails inside a deciding transaction | the whole transaction rolls back (never swallowed); in the dispatch transaction this means no dispatch and no provider call, and the compliance re-check stays where it is (invariant 7) |
+| campaign made ELIGIBLE outside the CLASSIFIED edge (dev seed writes rows directly) | no assignment; "post-M4" = first eligibility at or after V22's `installed_on` in `flyway_schema_history`, so such rows are reported as coverage defects, never silently assigned |
+| refund or double payment after a capture | not observed by MEND today; money recovered is gross of refunds, labelled so; net money is TBD |
 | CONTROL campaign reaches an intent path (manual start, review approval, demo) | refused in `ActionIntentService` (`HOLDOUT_CONTROL`) and by a database trigger on `action_intents` insert |
 | CONTROL customer replies / opts out / disputes | stored and handled exactly as for TREATMENT (reply policy, opt-out, review); only recovery contact is withheld |
 | late original capture on a CONTROL campaign | RECOVERED with `ORIGINAL_PAYMENT_LATE_CAPTURE` (bug sweep item 2 edges), counted as a CONTROL recovery |
@@ -118,9 +136,15 @@ ReplaySimulator (in memory) → FailureTaxonomy → RecoveryStrategyEngine → C
 | cost not configured | cost per recovered rupee = TBD |
 
 ## Security implications
-- No PII in snapshots: no customer contact, no reply text, no payment / invoice / customer ids. Campaign, intent and
-  invoice references are `HMAC-SHA256(merchant eval salt, id)`; merchant references are SHA-256 pseudonyms. A test
-  asserts the absence of every raw id and of reply text.
+- No PII in snapshots: no customer contact, no reply text, no payment / invoice / customer ids. Campaign, intent,
+  invoice and customer references are `HMAC-SHA256(merchant EVAL_ID salt, id)`; the merchant reference is
+  `HMAC-SHA256(merchant EVAL_ID salt, "merchant")` (not an unsalted, reversible hash of an enumerable UUID).
+- Snapshots copy an explicit column allow-list: event codes only, never audit `reason` / details text (which can hold
+  provider payment ids). Timestamps are the eligibility **day** (UTC date) plus offsets in seconds from `eligible_at`,
+  so exact times cannot be joined against the provider dashboard. A test asserts the absence of every raw id and of
+  reply text.
+- Retention / erasure: the append-only tables cannot be purged by ad-hoc DELETE (trigger). Merchant offboarding or an
+  erasure request is handled by an audited, migration-gated purge per `merchant_id` (M5-owned, documented here).
 - Salts are random, generated at runtime, stored in the database (never in files, never logged).
 - Snapshot files are written under a configured directory (default outside the repository); real snapshots are never
   committed. Only SYNTHETIC results are committed under `docs/m4/results/`.
@@ -139,8 +163,12 @@ ReplaySimulator (in memory) → FailureTaxonomy → RecoveryStrategyEngine → C
 - Every fix / behaviour change gets a revert proof; test counts never drop.
 
 ## Metrics
-`docs/m4/metric-tree.md`. Minimum sample sizes: rate CI needs n ≥ 30 per arm; bootstrap money CI needs n ≥ 30 per arm;
-median time to recovery needs ≥ 10 recovered per arm. Power (planning calculation, two-sided α = 0.05, power 0.8,
+`docs/m4/metric-tree.md`. Minimum sample sizes: a rate interval needs n ≥ 30 invoices per arm; a money interval needs
+n ≥ 100 per arm (money is zero-inflated and heavy-tailed; below 300 per arm it is flagged "unstable"); the descriptive
+median needs ≥ 10 recoveries per arm (coarse at that size, said so). Money: sums are exact `long` minor units; means and
+interval bounds are computed exactly (BigDecimal, allowed outside provider code) and rounded HALF_EVEN to the paisa.
+Sample-ratio mismatch: chi-square goodness-of-fit of the observed arm counts against the configured rate per stratum,
+flagged at p < 0.001. Power (planning calculation, two-sided α = 0.05, power 0.8,
 unpooled normal approximation, computed, assumed rates):
 
 | control rate | treatment rate | holdout | eligible campaigns needed (total) | of which CONTROL |
@@ -159,6 +187,9 @@ campaigns at holdout 0.2 to detect a 5-point lift from 10 %; smaller lifts need 
   merchant opt-in, maximum 0.5, pilot recommendation 0.2 (ADR-004).
 - ITT measures the effect of *being assigned* to MEND, diluted by compliance blocks and opt-outs in TREATMENT. That is
   the honest business question; per-protocol figures are not reported as causal.
+- Interference (SUTVA): contacting a customer about a TREATMENT invoice can make them pay a CONTROL invoice, biasing the
+  difference toward zero. Assumed small; measured in every snapshot as the number of customers (hashed) with invoices in
+  both arms. Fallback design if it is material: randomize by customer.
 - Recovery is observable only through provider evidence MEND sees (MEND links, late capture of the original payment). A
   customer who pays through another channel looks unrecovered in both arms (symmetric, so the difference is unbiased
   for the observable outcome, but levels are lower bounds).

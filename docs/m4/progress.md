@@ -37,3 +37,22 @@ DECISIONS:
 - U4.0-f: new evaluation tables have no FKs (ids only) so the append-only log outlives row deletion; immutability by trigger.
 - U4.0-g: power table computed (unpooled normal approximation) and reproduced by a unit test in U4.4.
 Next: U4.1 (review of U4.0 runs in parallel).
+
+#### U4.0 review (fresh subagent; AGENTS.md + U4.0 spec + diff). Power table and Newcombe description verified correct.
+- FIXED BLOCKER 1 (outcome measured differently per arm: terminal TREATMENT campaigns lose late captures): outcome =
+  provider capture evidence (RECOVERED transition or the capture-on-terminal audit codes) within a fixed horizon H
+  (default 14 d) after first eligibility, read the same in both arms; only mature invoices analysed.
+- FIXED MAJOR 2 (no horizon / peeking): H fixed; INTERIM label before the pre-registered n (no alpha spending in M4).
+- FIXED MAJOR 3 (median among recovered not causal): cumulative recovery by day 1/3/7/14 (ITT) is the time figure; the
+  median is labelled descriptive.
+- FIXED MAJOR 4 (snapshots not point-in-time): rebuilt as of `as_of` from append-only timestamped sources only.
+- FIXED MAJOR 5 (randomization vs analysis unit): a later campaign of an assigned invoice copies the stored arm
+  (`INVOICE_REUSE`); the analysis unit is the invoice.
+- FIXED MAJOR 6 (invariant 23 vs U4.8c): invariant 23 scoped to evaluation figures from VALID snapshots; live analytics
+  labelled non-causal; UI T/C figures come from the latest VALID snapshot.
+- FIXED MINOR 7 (SUTVA stated + measured), 8 (SRM chi-square p < 0.001), 9 (per-stratum, no pooling), 10 (cost per
+  incremental rupee as decision metric), 11 (money exactness, n ≥ 100 / unstable < 300, coarse median), 12 (failure modes:
+  log-insert rollback, post-M4 = V22 `installed_on`, cancel keeps evidence, refunds TBD), 13 (HMAC merchant ref, column
+  allow-list, day + offsets), 14 (erasure procedure M5-owned, documented).
+- FIXED NIT 15 (10 000 bp everywhere), 16 (`Long.remainderUnsigned` stated; tolerance fixed in the test at 5σ), 17 (status
+  wording), 18 (AGENTS.md scope lines), 19 (transaction wording).

@@ -8,9 +8,9 @@ M3 (honest intelligence) is complete: ADR-003 Accepted, final run backend 941 / 
 UNCLASSIFIED → payment link only (owner decision B), LEGACY_DECISION at dispatch; backend 971 / 0 / 0 / 0.
 M1 (provider correctness) is complete: tag `m1-complete`, ADR-001 Accepted.
 M2 (execution safety) is complete: ADR-002 Accepted, final run 647 / 0 / 0 / 0 (`docs/m2/m2-final-test-run-summary.txt`), summary `docs/m2/M2-summary.md`.
-Only work on the unit you were given (M2 prompts: `docs/m2/agent-prompts/U*.md`; M3 units: `docs/m3/M3-plan.md`). Do not start M4+ work without its design pack. Write anything else you notice under "Out-of-scope findings" in your final message.
+Only work on the unit you were given (M2 prompts: `docs/m2/agent-prompts/U*.md`; M3 units: `docs/m3/M3-plan.md`; M4 units: `docs/m4/M4-plan.md`). Do not start M5+ work without its design pack. Write anything else you notice under "Out-of-scope findings" in your final message.
 
-Out of scope until M4 has a design pack: debit wiring, deployment, metrics registration, Redis changes, a second AI task, new dependencies (ask first). (Historical M2 scope also excluded AI service, CI and frontend changes; M3 and the CI phase changed those under their own specs.)
+Out of scope in M4 (until a later design pack): debit wiring, deployment, metrics registration, Redis changes, a second AI task, new infrastructure, new dependencies (ask first). (Historical M2 scope also excluded AI service, CI and frontend changes; M3 and the CI phase changed those under their own specs.)
 
 ## Non-negotiable invariants
 1. Money is `long` minor units (paise). Never `double`/`float`. No `BigDecimal` in provider code.
@@ -43,7 +43,8 @@ Out of scope until M4 has a design pack: debit wiring, deployment, metrics regis
 21. Assignment and propensities are logged at decision time, in the decision's transaction, and never rewritten (DB-enforced).
 22. CONTROL withholds only recovery contact (no intent, no provider call); compliance, opt-out, safety reviews and customer
     requests still apply. A campaign is assigned once, at first eligibility, never re-assigned.
-23. Evaluation data is PII-free (hashed ids only), tenant-scoped, versioned and checksummed; metrics read snapshots, never live tables.
+23. Evaluation data is PII-free (hashed ids only), tenant-scoped, versioned and checksummed. Evaluation (causal) figures are
+    computed from VALID snapshots only, never live tables; live operational analytics are labelled non-causal.
 24. No new infrastructure (no vector DB, Kafka, new services); no new Maven/npm/pip dependency without asking.
 25. The simulator never writes to production tables and runs the production policy classes, not copies.
 
