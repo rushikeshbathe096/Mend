@@ -288,3 +288,18 @@ Revert proofs (all five run at once, each targeting one test):
 Verify: backend `[INFO] Tests run: 938, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
 `Tests: 62 passed, 62 total`, build OK, lint 0 errors; ai-service `61 passed`.
 
+
+### U2.5 — evaluation (commit `2bc479d`)
+- `docs/m3/eval/replies-v1-{dev,test}.jsonl` (60 + 40 rows, all SYNTHETIC), LABEL-GUIDE.md, RESULTS.md,
+  results-replies-v1.json; `ai-service/eval/run_eval.py`.
+- DECISION U2.5-a: the keyword rules were written against the dev split (macro F1 1.0 there = upper bound). The test
+  split was written after the rules were frozen and is the headline: baseline macro F1 **0.1125**.
+- Model: **TBD**, no GEMINI_API_KEY in the environment (checked for presence only); the report carries no model numbers.
+Tests: ai-service `73 passed` (+12 test_eval.py).
+
+### U2.6 — ai-service reduction (plan)
+- Keep `/health` (honest: model configured yes/no, no provider guess) and `/api/v1/parse_reply`; delete agent/*,
+  `/api/v1/classify`, the heuristic, the MCP tools, the checkpointer, the benchmark JSONs and scripts.
+- requirements: fastapi, uvicorn, pydantic, httpx, pytest (exactly what is imported).
+- Tests: the count (73) must not drop (HARD STOP). Deleted tests of deleted code are replaced by tests of the remaining
+  surface: auth, PII/secret handling, provider error mapping, prompt-injection pass-through, health.
