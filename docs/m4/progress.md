@@ -229,3 +229,24 @@ Commit `58d455e` (adapted to snapshot v2 in `3f37a59`).
 Tests: ReplaySimulatorTest 6 (reproducible; engines are the production classes and agree with direct calls; no DB-typed
 fields; CONTROL never contacted; B gives UNCLASSIFIED links only; A ineligible; paired draws; VALID SYNTHETIC snapshot;
 generator weights). Revert proof (unseeded draws) → `pairedDraws:107`, `reproducible:48` fail.
+
+#### U4.5 review (fresh subagent): 5 MAJOR + test MAJOR. Dispositions (`c1f5c2e`)
+- FIXED MAJOR 1 (retry contacts diverged): as in production (Razorpay mode), an allowed RETRY_* is dispatched (DISPATCH row,
+  a contact for the snapshot) and captures nothing unless retries are wired. OOS-2 recorded: production counts a NotSupported
+  retry dispatch as a contact (EvalSnapshotService + the dispatch fence), which overstates exposure for retry campaigns.
+- FIXED MAJOR 2 (invented retry timing): `com.mend.strategy.ActionPolicy.scheduleDelay` (extracted from
+  `ActionIntentService.calculateScheduledTime`, which now calls it) drives RETRY_LATER in the simulator; the timing comparison
+  varies the merchant's contact window (1 h vs 48 h). Test `retryDelayFromProduction`.
+- FIXED MAJOR 3 (action after recovery): no contact when the original payment was captured first. Revert proof →
+  `noActionAfterRecovery:124 expected: <true> but was: <false>`.
+- FIXED MAJOR 4 (snapshot replay): `ReplayEvent.storedTaxonomyVersion` passed through (legacy rows fail closed);
+  `SnapshotReplay.events` adapter (day + rank, outcomes re-drawn, documented); test `snapshotReplay`.
+- FIXED MAJOR 5 (invoice reuse): per-invoice state — arm copied (INVOICE_REUSE while the holdout is on), one link in flight
+  (`duplicateActionExists` → DUPLICATE_ACTION from the production engine); generator `reuseShare`. Revert proof →
+  `reusedInvoices:156`.
+- FIXED MINOR 6/7 (`ActionPolicy.eligible`, `ActionPolicy.strategyAlternatives`, shared with CampaignLifecycleService /
+  DecisionLogService), 8 (merchant config in Config; documented fixed assumptions; `restrictedMerchantConfig`), 9 (draws keyed by
+  mix64(seed, campaign id), split per draw type; events replayed in eligibility order), 10 (StrictMath.log), 11 (per-campaign
+  horizon cap), 12 (Monte Carlo caveat + assumptions table), 13 (tests: CLI end-to-end reproducibility and labels, reuse,
+  replay, restriction, retry delay), NIT 14 (UTF-8), 15 (per-merchant domain-separated salts), 16 (EXECUTING documented).
+Verify: backend `[INFO] Tests run: 1078, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`.
