@@ -3,18 +3,23 @@
 Endpoints: GET /health and POST /api/v1/parse_reply. Nothing here can move money or change a campaign: the backend
 validates every suggestion and a deterministic policy owns all effects.
 """
+import hmac
 import logging
 import os
 from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import reply_parser
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mend-ai-service")
+
+if not os.getenv("MEND_AI_INTERNAL_TOKEN"):
+    # optional for a localhost-only setup; required as soon as the service is reachable from elsewhere
+    logger.warning("MEND_AI_INTERNAL_TOKEN is not set: /api/v1/parse_reply accepts unauthenticated calls")
 
 app = FastAPI(
     title="MEND reply-parsing service",
@@ -33,7 +38,7 @@ class HealthResponse(BaseModel):
 def require_internal_auth(internal_token: Optional[str]) -> None:
     """Require service authentication whenever an internal token is configured."""
     configured_token = os.getenv("MEND_AI_INTERNAL_TOKEN")
-    if configured_token and internal_token != configured_token:
+    if configured_token and not hmac.compare_digest((internal_token or "").encode(), configured_token.encode()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal service token")
 
 
@@ -47,6 +52,13 @@ def health_check():
 class ParseReplyRequest(BaseModel):
     """A customer reply (PII: never logged). The backend caps the text at 2000 characters; so does this endpoint."""
     text: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
 
 
 @app.post("/api/v1/parse_reply")

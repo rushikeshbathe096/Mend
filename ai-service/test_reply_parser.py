@@ -41,6 +41,12 @@ def test_missing_model_text_is_no_text(payload):
     assert result.output_error == "no_text"
 
 
+@pytest.mark.parametrize("raw", [b"[1]", b'"str"', b"42", b"null"])
+def test_provider_body_that_is_json_but_not_an_object_is_a_model_error(raw):
+    with pytest.raises(reply_parser.ModelError, match="provider_response_not_object"):
+        call(raw=raw)
+
+
 def test_provider_body_that_is_not_json_is_a_model_error():
     with pytest.raises(reply_parser.ModelError, match="provider_response_not_json"):
         call(raw=b"<html>gateway</html>")

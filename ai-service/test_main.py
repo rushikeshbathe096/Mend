@@ -72,7 +72,8 @@ def test_internal_token_is_required_when_configured(monkeypatch, token, expected
     assert client.post("/api/v1/parse_reply", json={"text": "hello"}, headers=headers).status_code == expected
 
 
-@pytest.mark.parametrize("payload", [{}, {"text": None}, {"text": 42}, {"reply": "hi"}, {"text": "x" * 2001}])
+@pytest.mark.parametrize("payload", [{}, {"text": None}, {"text": 42}, {"reply": "hi"}, {"text": "x" * 2001},
+                                     {"text": "   "}, {"text": "\n\t"}])
 def test_malformed_requests_are_rejected(payload):
     assert client.post("/api/v1/parse_reply", json=payload).status_code == 422
 

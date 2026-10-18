@@ -73,6 +73,8 @@ def parse_reply(text: str, http: Optional[httpx.Client] = None) -> ParseResult:
         payload = response.json()
     except ValueError:
         raise ModelError("provider_response_not_json") from None
+    if not isinstance(payload, dict):
+        raise ModelError("provider_response_not_object")
 
     model_id = payload.get("modelVersion") if isinstance(payload.get("modelVersion"), str) else None
     output = _first_text(payload)
