@@ -50,6 +50,7 @@ class EvalSnapshotIntegrationTest {
     @DynamicPropertySource
     static void dir(DynamicPropertyRegistry registry) {
         registry.add("mend.eval.snapshot.dir", () -> snapshotDir.toString());
+        registry.add("mend.eval.snapshot.settle-minutes", () -> "0");
     }
 
     @Autowired private ClassificationService classificationService;
@@ -61,6 +62,7 @@ class EvalSnapshotIntegrationTest {
     @Autowired private CampaignRepository campaigns;
     @Autowired private WebhookEventRepository webhooks;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.mend.scheduler.ActionScheduler scheduler;
 
     private static final byte[] SALT = new byte[32];
 
@@ -147,7 +149,8 @@ class EvalSnapshotIntegrationTest {
         String controlPay = paymentIdIn(Arm.CONTROL);
         Campaign control = failPayment(controlPay);
         lateCapture(controlPay);
-        jdbc.update("UPDATE action_intents SET dispatched_at = now() - interval '1 minute' WHERE campaign_id = ?", treatment.getId());
+        jdbc.update("UPDATE action_intents SET scheduled_at = now() - interval '1 minute', status = 'READY' WHERE campaign_id = ?", treatment.getId());
+        scheduler.pollAndExecuteDueActions();   // real dispatch (mock provider): a DISPATCHED decision row
         ageAudit(Duration.ofDays(3));
         Instant asOf = Instant.now();
 
@@ -160,7 +163,10 @@ class EvalSnapshotIntegrationTest {
         Path dir = snapshotDir.resolve(s.getId().toString());
         String campaignsJsonl = Files.readString(dir.resolve("campaigns.jsonl"));
         String decisionsJsonl = Files.readString(dir.resolve("decisions.jsonl"));
-        assertEquals(s.getSha256(), SnapshotCodec.sha256(campaignsJsonl, decisionsJsonl));
+        assertEquals(s.getSha256(), SnapshotCodec.snapshotSha256(campaignsJsonl, decisionsJsonl));
+        try (var entries = Files.list(snapshotDir)) {
+            assertTrue(entries.noneMatch(p -> p.getFileName().toString().startsWith(".tmp-")), "published atomically, no temp dir left");
+        }
         assertTrue(Files.exists(dir.resolve("campaigns.csv")));
         assertTrue(Files.readString(dir.resolve("manifest.json")).contains(s.getSha256()));
 
@@ -173,6 +179,8 @@ class EvalSnapshotIntegrationTest {
         assertEquals(5000, c.propensityBp());
         assertEquals(49_900L, c.amountMinor());
         SnapshotRow t = rows.get("TREATMENT");
+        assertTrue(t.contacted());
+        assertEquals(1, t.contactCount());
         assertFalse(t.recovered());
         assertEquals("CUSTOMER_ACTION_REQUIRED", t.strategy());
         assertEquals("SYNTHETIC", t.evidenceLabel(), "mock provider data is SYNTHETIC");
@@ -206,6 +214,38 @@ class EvalSnapshotIntegrationTest {
 
         EvalSnapshot later = snapshots.createSnapshot(request(Instant.now()));
         assertNotEquals(first.getSha256(), later.getSha256(), "a later as_of sees the capture and the new campaign");
+    }
+
+    @Test
+    @DisplayName("Merchant filter: another merchant's campaigns never appear; an unknown merchant is refused; missing files are rewritten on reuse")
+    void tenantScopedAndSelfHealing() throws Exception {
+        UUID other = UUID.randomUUID();
+        merchants.save(new Merchant(other, "M4 other merchant"));
+        try {
+            failPayment(paymentIdIn(Arm.TREATMENT));
+            UUID mine = merchantId;
+            merchantId = other;
+            jdbc.update("INSERT INTO merchant_experiment_salts (merchant_id, purpose, salt_version, salt) VALUES (?, 'ASSIGNMENT', 1, ?)", other, SALT);
+            failPayment(paymentIdIn(Arm.TREATMENT));
+            ageAudit(Duration.ofDays(3));
+            merchantId = mine;
+            ageAudit(Duration.ofDays(3));
+            Instant asOf = Instant.now();
+            EvalSnapshot s = snapshots.createSnapshot(request(asOf));
+            assertEquals(1, s.getRowCount(), "only the filtered merchant");
+
+            assertThrows(IllegalArgumentException.class, () -> snapshots.createSnapshot(
+                    new EvalSnapshotService.Request(asOf.minus(Duration.ofDays(30)), asOf, asOf, 1, List.of(UUID.randomUUID()))));
+
+            Path dir = snapshotDir.resolve(s.getId().toString());
+            Files.delete(dir.resolve("campaigns.jsonl"));
+            EvalSnapshot again = snapshots.createSnapshot(request(asOf));
+            assertEquals(s.getId(), again.getId());
+            assertEquals(s.getSha256(), SnapshotCodec.snapshotSha256(Files.readString(dir.resolve("campaigns.jsonl")),
+                    Files.readString(dir.resolve("decisions.jsonl"))));
+        } finally {
+            TestRows.deleteMerchant(jdbc, other);
+        }
     }
 
     @Test

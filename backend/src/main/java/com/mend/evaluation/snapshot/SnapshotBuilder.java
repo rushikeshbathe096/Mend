@@ -56,6 +56,13 @@ public final class SnapshotBuilder {
         return new Content(List.copyOf(rows), List.copyOf(decisionRows));
     }
 
+    private static Instant earliest(Instant a, Instant b) {
+        if (a == null) {
+            return b;
+        }
+        return b == null || a.isBefore(b) ? a : b;
+    }
+
     private static SnapshotRow row(CampaignFacts f, Pseudonyms ids, SnapshotParams params, Duration horizon) {
         Instant eligible = f.eligibleAt();
         Instant horizonEnd = eligible.plus(horizon);
@@ -67,9 +74,11 @@ public final class SnapshotBuilder {
                 .min(Comparator.comparing(Capture::at).thenComparing(c -> c.source().name()));
 
         CampaignFacts.Assignment a = f.assignment();
-        boolean postM4 = params.m4Start() != null && !eligible.isBefore(params.m4Start());
+        Instant m4Start = earliest(params.m4Start(), f.merchantM4Start());
+        boolean postM4 = m4Start != null && !eligible.isBefore(m4Start);
         String captureSource = firstCapture.map(c -> c.source().name()).orElse(null);
-        boolean synthetic = params.synthetic() || firstCapture.map(c -> c.source() == CaptureSource.SYNTHETIC).orElse(false);
+        boolean synthetic = params.synthetic() || f.syntheticSource()
+                || firstCapture.map(c -> c.source() == CaptureSource.SYNTHETIC).orElse(false);
 
         return new SnapshotRow(
                 SnapshotRow.SCHEMA_VERSION,

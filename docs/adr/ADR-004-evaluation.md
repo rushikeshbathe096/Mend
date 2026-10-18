@@ -66,6 +66,24 @@ deterministic, so logs alone cannot support a counterfactual. Design: `docs/m4/M
      same way in both arms (RECOVERED transition, or the capture-on-terminal audit codes). Only mature invoices
      (`eligible_at + H ≤ as_of`) are analysed.
    - Validation never repairs data. A failure is recorded and the snapshot is INVALID.
+   - Settled point in time (U4.3 review): `as_of` must be at least `mend.eval.snapshot.settle-minutes` (default 15) in
+     the past, and the extraction runs in one REPEATABLE READ transaction. Files are written to a temporary directory and
+     moved into place atomically only after the row commits. A reused snapshot whose files are missing is rewritten. A
+     unique index (V25) keeps concurrent runs from storing duplicates.
+   - **DECISION U4.3-f, label rule:** rows are MEASURED only in provider mode `razorpay-live` and only for non-simulated
+     sources. Mock, simulator, Razorpay test mode, an unknown key mode, demo webhooks and SYNTHETIC captures are all
+     SYNTHETIC: never revenue.
+   - "Post-M4" starts at the earlier of the configured `mend.eval.m4-start` and the merchant's first assignment at or
+     before `as_of`.
+   - Limitations:
+     - `audit_logs` (V1) is append-only by convention, not by trigger. First eligibility, state and captures come from
+       it.
+     - `amount_minor` is the failed payment's amount, so money figures assume the invoice is captured in full. The
+       captured amount is TBD.
+     - The `eval_snapshots.filters` column holds raw merchant UUIDs (admin side; not customer PII), while the files hold
+       only pseudonyms.
+     - Legacy (pre-U4.2) dispatch times come from `action_intents.dispatched_at`, which V13 backfilled. They affect only
+       UNASSIGNED rows, which are outside causal figures.
 6. **Statistics.**
    - Difference of recovery rates: Newcombe's hybrid score interval (method 10, Wilson-based, 95 %). It is well
      behaved near 0 and 1 and at small n, where the Wald interval fails.

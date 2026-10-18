@@ -27,7 +27,28 @@ public final class SnapshotValidator {
     private SnapshotValidator() {
     }
 
+    private static final Set<String> POINTS = Set.of("ASSIGNMENT", "STRATEGY", "COMPLIANCE", "DISPATCH");
+    private static final Pattern CURRENCY = Pattern.compile("^[A-Z]{3}$");
+
+    /** Campaign rows only (no horizon check). */
     public static List<Defect> validate(String campaignsJsonl) {
+        return validate(campaignsJsonl, "", null);
+    }
+
+    /** Both files; {@code horizonDays} (when known) bounds capture offsets. */
+    public static List<Defect> validate(String campaignsJsonl, String decisionsJsonl, Integer horizonDays) {
+        List<Defect> defects = campaigns(campaignsJsonl, horizonDays);
+        Set<String> refs = new HashSet<>();
+        try {
+            SnapshotCodec.lines(campaignsJsonl).forEach(r -> refs.add(text(r, "campaign_ref")));
+        } catch (RuntimeException alreadyReported) {
+            return defects;
+        }
+        decisions(decisionsJsonl, refs, defects);
+        return defects;
+    }
+
+    private static List<Defect> campaigns(String campaignsJsonl, Integer horizonDays) {
         List<Defect> defects = new ArrayList<>();
         List<JsonNode> rows;
         try {
@@ -47,7 +68,18 @@ public final class SnapshotValidator {
             String arm = text(r, "arm");
             if (r.path("recovered").asBoolean() && "UNKNOWN".equals(text(r, "capture_source"))) {
                 defects.add(new Defect("RECOVERED_WITHOUT_ATTRIBUTION", ref, "RECOVERED with no recovery attribution"));
+            } else if ("RECOVERED".equals(text(r, "state_as_of")) && r.path("recovery_attribution").isNull()) {
+                // U4.3 review: also when the recovery falls outside the horizon (recovered = false)
+                defects.add(new Defect("RECOVERED_WITHOUT_ATTRIBUTION", ref, "state RECOVERED with no recovery attribution"));
             }
+            if (r.path("recovered").asBoolean() && r.path("capture_source").isNull()) {
+                defects.add(new Defect("SCHEMA_INCONSISTENT", ref, "recovered without capture_source"));
+            }
+            if (horizonDays != null && r.path("capture_offset_s").isIntegralNumber()
+                    && (r.path("capture_offset_s").longValue() < 0 || r.path("capture_offset_s").longValue() > horizonDays * 86_400L)) {
+                defects.add(new Defect("CAPTURE_OUTSIDE_HORIZON", ref, "capture_offset_s outside 0.." + horizonDays + " days"));
+            }
+            assignment(r, ref, arm, defects);
             if (r.path("post_m4").asBoolean() && SnapshotRow.UNASSIGNED.equals(arm)) {
                 defects.add(new Defect("ASSIGNMENT_MISSING", ref, "first eligibility after M4 start but no holdout assignment"));
             }
@@ -60,6 +92,60 @@ public final class SnapshotValidator {
             }
         }
         return defects;
+    }
+
+    private static void assignment(JsonNode r, String ref, String arm, List<Defect> defects) {
+        if (!"TREATMENT".equals(arm) && !"CONTROL".equals(arm)) {
+            return;
+        }
+        JsonNode rate = r.path("holdout_rate_bp");
+        JsonNode propensity = r.path("propensity_bp");
+        if (!rate.isIntegralNumber() || rate.intValue() < 0 || rate.intValue() > 5000) {
+            defects.add(new Defect("ASSIGNMENT_RATE_INVALID", ref, "holdout_rate_bp must be 0..5000"));
+            return;
+        }
+        if ("TREATMENT".equals(arm) && (!propensity.isIntegralNumber() || propensity.intValue() != 10_000 - rate.intValue())) {
+            defects.add(new Defect("PROPENSITY_INCONSISTENT", ref, "TREATMENT propensity must be 10000 - rate"));
+        }
+        if ("CONTROL".equals(arm) && rate.intValue() == 0) {
+            defects.add(new Defect("ASSIGNMENT_RATE_INVALID", ref, "CONTROL at rate 0"));
+        }
+    }
+
+    private static void decisions(String decisionsJsonl, Set<String> campaignRefs, List<Defect> defects) {
+        List<JsonNode> rows;
+        try {
+            rows = SnapshotCodec.lines(decisionsJsonl);
+        } catch (RuntimeException unparsable) {
+            defects.add(new Defect("DECISIONS_UNPARSABLE", null, unparsable.getClass().getSimpleName()));
+            return;
+        }
+        for (JsonNode d : rows) {
+            String ref = text(d, "campaign_ref");
+            if (!SnapshotRow.SCHEMA_VERSION.equals(text(d, "schema_version"))) {
+                defects.add(new Defect("DECISION_SCHEMA_VERSION", ref, String.valueOf(text(d, "schema_version"))));
+            }
+            if (ref == null || !campaignRefs.contains(ref)) {
+                defects.add(new Defect("DECISION_ORPHAN", ref, "decision for a campaign not in the snapshot"));
+            }
+            if (!POINTS.contains(text(d, "decision_point"))) {
+                defects.add(new Defect("DECISION_BAD_POINT", ref, String.valueOf(text(d, "decision_point"))));
+            }
+            JsonNode p = d.path("propensity_bp");
+            if (!p.isIntegralNumber() || p.intValue() < 0 || p.intValue() > 10_000) {
+                defects.add(new Defect("DECISION_BAD_PROPENSITY", ref, "propensity_bp must be 0..10000"));
+            }
+            boolean chosenListed = false;
+            for (JsonNode alt : d.path("alternatives")) {
+                chosenListed |= alt.isString() && alt.stringValue().equals(text(d, "chosen"));
+            }
+            if (!chosenListed) {
+                defects.add(new Defect("DECISION_CHOSEN_NOT_ALTERNATIVE", ref, "chosen action is not among the alternatives"));
+            }
+            if (!d.path("offset_s").isIntegralNumber()) {
+                defects.add(new Defect("DECISION_BAD_OFFSET", ref, "offset_s must be whole seconds"));
+            }
+        }
     }
 
     private static void schema(JsonNode r, String ref, List<Defect> defects) {
@@ -133,6 +219,8 @@ public final class SnapshotValidator {
         }
         if (text(r, "currency") == null) {
             defects.add(new Defect("AMOUNT_WITHOUT_CURRENCY", ref, "amount without currency"));
+        } else if (!CURRENCY.matcher(text(r, "currency")).matches()) {
+            defects.add(new Defect("AMOUNT_BAD_CURRENCY", ref, "currency must be an ISO 4217 code"));
         }
     }
 

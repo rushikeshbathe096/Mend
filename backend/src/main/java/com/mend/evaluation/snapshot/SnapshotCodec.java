@@ -141,6 +141,14 @@ public final class SnapshotCodec {
         return v.isIntegralNumber() ? v.longValue() : null;
     }
 
+    /**
+     * U4.3 review: the snapshot checksum = sha256 of "campaigns.jsonl:&lt;sha&gt;\ndecisions.jsonl:&lt;sha&gt;\n" (per-file hashes), so
+     * moving a line from one file to the other changes it.
+     */
+    public static String snapshotSha256(String campaignsJsonl, String decisionsJsonl) {
+        return sha256("campaigns.jsonl:" + sha256(campaignsJsonl) + "\ndecisions.jsonl:" + sha256(decisionsJsonl) + "\n");
+    }
+
     public static String sha256(String... parts) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

@@ -12,7 +12,10 @@ import java.util.UUID;
  * @param assignment     null for a campaign never assigned (pre-M4)
  * @param dispatchTimes  provider dispatches (contacts) at or before as_of
  * @param captures       provider capture evidence at or before as_of (any order)
- * @param amountMinor    from the strict minor-unit parser, or null when unknown
+ * @param amountMinor    from the strict minor-unit parser (the failed payment's amount: money figures assume the invoice is
+ *                       captured in full), or null when unknown
+ * @param merchantM4Start the merchant's first holdout assignment at or before as_of (null = the merchant never ran M4)
+ * @param syntheticSource the failure came from a simulated source (demo webhooks), so the row is SYNTHETIC
  */
 public record CampaignFacts(
         UUID merchantId,
@@ -32,7 +35,9 @@ public record CampaignFacts(
         String stateAsOf,
         Long amountMinor,
         String currency,
-        int legacyDecisionBlocks) {
+        int legacyDecisionBlocks,
+        Instant merchantM4Start,
+        boolean syntheticSource) {
 
     public CampaignFacts {
         Objects.requireNonNull(merchantId, "merchantId");

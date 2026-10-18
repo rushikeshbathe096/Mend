@@ -2,18 +2,17 @@ package com.mend.service;
 
 import com.mend.domain.entity.EvalSnapshot;
 import com.mend.domain.entity.MerchantExperimentSalt;
+import com.mend.domain.entity.WebhookEvent;
 import com.mend.domain.repository.EvalSnapshotRepository;
-import com.mend.domain.repository.WebhookEventRepository;
 import com.mend.evaluation.snapshot.CampaignFacts;
 import com.mend.evaluation.snapshot.CampaignFacts.Capture;
 import com.mend.evaluation.snapshot.CampaignFacts.CaptureSource;
 import com.mend.evaluation.snapshot.DecisionFacts;
 import com.mend.evaluation.snapshot.Pseudonyms;
 import com.mend.evaluation.snapshot.SnapshotBuilder;
-import com.mend.evaluation.snapshot.SnapshotCodec;
 import com.mend.evaluation.snapshot.SnapshotParams;
 import com.mend.evaluation.snapshot.SnapshotRow;
-import com.mend.evaluation.snapshot.SnapshotValidator;
+import com.mend.evaluation.snapshot.SnapshotWriter;
 import com.mend.experiment.Arm;
 import com.mend.experiment.HoldoutAssigner;
 import com.mend.provider.MoneyMinor;
@@ -25,14 +24,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
+import com.mend.evaluation.snapshot.SnapshotCodec;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -51,6 +55,8 @@ public class EvalSnapshotService {
 
     private static final Logger log = LoggerFactory.getLogger(EvalSnapshotService.class);
     private static final int CHUNK = 5_000;
+    /** Webhooks the demo fabricates ({@code DemoController.DEMO_SOURCE}); their rows are SYNTHETIC. */
+    static final String DEMO_SOURCE = "MEND_DEMO_SIMULATED";
     private static final Map<String, CaptureSource> CAPTURE_CODES = Map.of(
             "CAPTURED_ON_TERMINAL_CAMPAIGN", CaptureSource.MEND,
             "CAPTURED_EVIDENCE_NOT_APPLIED", CaptureSource.MEND,
@@ -61,24 +67,31 @@ public class EvalSnapshotService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final ExperimentAssignmentService experimentAssignmentService;
-    private final WebhookEventRepository webhookEventRepository;
     private final WebhookAmountResolver amountResolver;
     private final EvalSnapshotRepository snapshotRepository;
     private final ObjectProvider<RazorpayProperties> razorpayProperties;
     private final String paymentProvider;
     private final Path snapshotDir;
+    private final Duration settleMargin;
+    private final Instant configuredM4Start;
+    private final com.mend.domain.repository.MerchantRepository merchantRepository;
+    private static final tools.jackson.databind.ObjectMapper JSON = JsonMapper.builder().build();
 
     public EvalSnapshotService(NamedParameterJdbcTemplate jdbc,
                                ExperimentAssignmentService experimentAssignmentService,
-                               WebhookEventRepository webhookEventRepository,
                                WebhookAmountResolver amountResolver,
                                EvalSnapshotRepository snapshotRepository,
                                ObjectProvider<RazorpayProperties> razorpayProperties,
                                @Value("${mend.payment.provider:mock}") String paymentProvider,
-                               @Value("${mend.eval.snapshot.dir:${java.io.tmpdir}/mend-eval-snapshots}") String snapshotDir) {
+                               @Value("${mend.eval.snapshot.dir:${java.io.tmpdir}/mend-eval-snapshots}") String snapshotDir,
+                               @Value("${mend.eval.snapshot.settle-minutes:15}") long settleMinutes,
+                               @Value("${mend.eval.m4-start:}") String m4Start,
+                               com.mend.domain.repository.MerchantRepository merchantRepository) {
+        this.settleMargin = Duration.ofMinutes(settleMinutes);
+        this.configuredM4Start = m4Start == null || m4Start.isBlank() ? null : Instant.parse(m4Start);
+        this.merchantRepository = merchantRepository;
         this.jdbc = jdbc;
         this.experimentAssignmentService = experimentAssignmentService;
-        this.webhookEventRepository = webhookEventRepository;
         this.amountResolver = amountResolver;
         this.snapshotRepository = snapshotRepository;
         this.razorpayProperties = razorpayProperties;
@@ -90,16 +103,23 @@ public class EvalSnapshotService {
         return snapshotDir;
     }
 
-    @Transactional
+    /**
+     * REPEATABLE READ: every query of one snapshot sees the same database state. as_of must be at least the settle margin in
+     * the past, so rows timestamped before as_of but committed late cannot appear on a re-run (U4.3 review).
+     */
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
     public EvalSnapshot createSnapshot(Request request) {
         Instant now = Instant.now();
         Instant asOf = request.asOf() != null ? request.asOf() : request.windowTo();
-        if (asOf == null || asOf.isAfter(now)) {
-            throw new IllegalArgumentException("as_of must not be in the future (a snapshot is a point in time)");
+        requireSettled(asOf, now, settleMargin);
+        for (UUID merchant : request.merchantIds() == null ? List.<UUID>of() : request.merchantIds()) {
+            if (!merchantRepository.existsById(merchant)) {
+                throw new IllegalArgumentException("unknown merchant in the filter: " + merchant);
+            }
         }
         SnapshotParams params = new SnapshotParams(request.windowFrom(), request.windowTo(), asOf,
                 request.horizonDays() != null ? request.horizonDays() : SnapshotParams.DEFAULT_HORIZON_DAYS,
-                m4Start(), providerMode(), request.merchantIds());
+                configuredM4Start, providerMode(), request.merchantIds());
 
         List<CampaignFacts> facts = new ArrayList<>();
         List<DecisionFacts> decisions = new ArrayList<>();
@@ -113,22 +133,22 @@ public class EvalSnapshotService {
         }
         Pseudonyms ids = new Pseudonyms(salts);
         SnapshotBuilder.Content content = SnapshotBuilder.build(facts, decisions, ids, params);
-        String campaigns = SnapshotCodec.campaignsJsonl(content.campaigns());
-        String decisionLines = SnapshotCodec.decisionsJsonl(content.decisions());
-        String sha = SnapshotCodec.sha256(campaigns, decisionLines);
+        String sha = SnapshotWriter.prepare(null, content, params.horizonDays()).sha256();
         Map<String, Object> filters = Map.of("merchant_ids", params.merchantFilter().stream().map(UUID::toString).toList());
+        List<String> merchantRefs = params.merchantFilter().stream().map(ids::merchantRef).toList();
 
-        Optional<EvalSnapshot> same = snapshotRepository.findByWindowFromAndWindowToAndAsOfAndSha256(
-                        params.windowFrom(), params.windowTo(), params.asOf(), sha).stream()
-                .filter(s -> s.getHorizonDays() == params.horizonDays() && s.getProviderMode().equals(params.providerMode())
-                        && Objects.equals(s.getFilters(), filters))
-                .findFirst();
+        Optional<EvalSnapshot> same = sameSnapshot(params, sha, filters);
         if (same.isPresent()) {
+            ensureFiles(same.get(), params, content, merchantRefs);
             log.info("event=eval_snapshot_reused id={} sha256={}", same.get().getId(), sha);
             return same.get();
         }
 
-        List<Map<String, String>> errors = SnapshotValidator.validate(campaigns).stream()
+        UUID id = UUID.randomUUID();
+        // Files go to a temporary directory and are published (atomic move) only after the row commits.
+        Path temp = snapshotDir.resolve(".tmp-" + id);
+        SnapshotWriter.Written written = SnapshotWriter.write(temp, id.toString(), now, params, content, merchantRefs);
+        List<Map<String, String>> errors = written.defects().stream()
                 .map(d -> {
                     Map<String, String> e = new LinkedHashMap<>();
                     e.put("code", d.code());
@@ -136,15 +156,101 @@ public class EvalSnapshotService {
                     e.put("detail", d.detail());
                     return e;
                 }).toList();
-        UUID id = UUID.randomUUID();
-        EvalSnapshot snapshot = new EvalSnapshot(id, SnapshotRow.SCHEMA_VERSION, now, params.windowFrom(), params.windowTo(),
-                params.asOf(), params.horizonDays(), filters, params.providerMode(), content.campaigns().size(),
-                content.decisions().size(), sha, errors.isEmpty() ? EvalSnapshot.Status.VALID : EvalSnapshot.Status.INVALID, errors);
-        writeFiles(snapshot, campaigns, decisionLines, SnapshotCodec.campaignsCsv(content.campaigns()), ids, params);
-        snapshot = snapshotRepository.saveAndFlush(snapshot);
-        log.info("event=eval_snapshot_created id={} rows={} decisions={} status={} sha256={}", id, snapshot.getRowCount(),
-                snapshot.getDecisionCount(), snapshot.getStatus(), sha);
-        return snapshot;
+        EvalSnapshot.Status status = errors.isEmpty() ? EvalSnapshot.Status.VALID : EvalSnapshot.Status.INVALID;
+        int inserted = jdbc.update("""
+                INSERT INTO eval_snapshots (id, schema_version, created_at, window_from, window_to, as_of, horizon_days, filters,
+                    provider_mode, row_count, decision_count, sha256, status, errors)
+                VALUES (:id, :schema, :createdAt, :from, :to, :asOf, :horizon, CAST(:filters AS jsonb), :mode, :rows, :decisions,
+                    :sha, :status, CAST(:errors AS jsonb))
+                ON CONFLICT DO NOTHING""", new MapSqlParameterSource()
+                .addValue("id", id).addValue("schema", SnapshotRow.SCHEMA_VERSION).addValue("createdAt", now.atOffset(ZoneOffset.UTC))
+                .addValue("from", params.windowFrom().atOffset(ZoneOffset.UTC)).addValue("to", params.windowTo().atOffset(ZoneOffset.UTC))
+                .addValue("asOf", params.asOf().atOffset(ZoneOffset.UTC)).addValue("horizon", params.horizonDays())
+                .addValue("filters", JSON.writeValueAsString(filters)).addValue("mode", params.providerMode())
+                .addValue("rows", content.campaigns().size()).addValue("decisions", content.decisions().size())
+                .addValue("sha", sha).addValue("status", status.name()).addValue("errors", JSON.writeValueAsString(errors)));
+        if (inserted == 0) {
+            // a concurrent run stored the same snapshot first (V25 unique index): use it
+            deleteQuietly(temp);
+            EvalSnapshot existing = sameSnapshot(params, sha, filters)
+                    .orElseThrow(() -> new IllegalStateException("snapshot insert conflicted but no matching snapshot exists"));
+            ensureFiles(existing, params, content, merchantRefs);
+            return existing;
+        }
+        publishAfterCommit(temp, snapshotDir.resolve(id.toString()));
+        log.info("event=eval_snapshot_created id={} rows={} decisions={} status={} sha256={}", id, content.campaigns().size(),
+                content.decisions().size(), status, sha);
+        return snapshotRepository.findById(id).orElseThrow();
+    }
+
+    /** U4.3 review: as_of must be at least {@code margin} in the past (late commits settle first). */
+    static void requireSettled(Instant asOf, Instant now, Duration margin) {
+        if (asOf == null || asOf.isAfter(now.minus(margin))) {
+            throw new IllegalArgumentException("as_of must be at least " + margin.toMinutes() + " minutes in the past (a snapshot is a "
+                    + "settled point in time)");
+        }
+    }
+
+    private Optional<EvalSnapshot> sameSnapshot(SnapshotParams params, String sha, Map<String, Object> filters) {
+        return snapshotRepository.findByWindowFromAndWindowToAndAsOfAndSha256(params.windowFrom(), params.windowTo(), params.asOf(), sha)
+                .stream()
+                .filter(s -> s.getHorizonDays() == params.horizonDays() && s.getProviderMode().equals(params.providerMode())
+                        && Objects.equals(s.getFilters(), filters))
+                .findFirst();
+    }
+
+    /** A reused snapshot whose files are missing or no longer match its checksum gets them rewritten (same content). */
+    private void ensureFiles(EvalSnapshot snapshot, SnapshotParams params, SnapshotBuilder.Content content, List<String> merchantRefs) {
+        Path dir = snapshotDir.resolve(snapshot.getId().toString());
+        try {
+            if (Files.isRegularFile(dir.resolve("manifest.json")) && snapshot.getSha256().equals(SnapshotCodec.snapshotSha256(
+                    Files.readString(dir.resolve("campaigns.jsonl")), Files.readString(dir.resolve("decisions.jsonl"))))) {
+                return;
+            }
+        } catch (IOException unreadable) {
+            log.warn("event=eval_snapshot_files_unreadable id={}", snapshot.getId());
+        }
+        Path temp = snapshotDir.resolve(".tmp-" + UUID.randomUUID());
+        SnapshotWriter.write(temp, snapshot.getId().toString(), snapshot.getCreatedAt(), params, content, merchantRefs);
+        deleteQuietly(dir);
+        move(temp, dir);
+        log.warn("event=eval_snapshot_files_rewritten id={}", snapshot.getId());
+    }
+
+    private void publishAfterCommit(Path temp, Path target) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            move(temp, target);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_COMMITTED) {
+                    move(temp, target);
+                } else {
+                    deleteQuietly(temp);
+                }
+            }
+        });
+    }
+
+    private static void move(Path from, Path to) {
+        try {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            throw new UncheckedIOException("could not publish snapshot files to " + to, e);
+        }
+    }
+
+    private static void deleteQuietly(Path dir) {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+        } catch (IOException e) {
+            log.warn("event=eval_snapshot_cleanup_failed dir={}", dir.getFileName());
+        }
     }
 
     @Transactional(readOnly = true)
@@ -163,13 +269,6 @@ public class EvalSnapshotService {
             return "razorpay-unknown";
         }
         return keyId.startsWith("rzp_test_") ? "razorpay-test" : keyId.startsWith("rzp_live_") ? "razorpay-live" : "razorpay-unknown";
-    }
-
-    /** First eligibility at or after V22's installation is post-M4 (an assignment is required). */
-    private Instant m4Start() {
-        List<LocalDateTime> installed = jdbc.query("SELECT installed_on FROM flyway_schema_history WHERE version = '22' AND success",
-                Map.of(), (rs, i) -> rs.getObject(1, LocalDateTime.class));
-        return installed.isEmpty() ? null : installed.get(0).toInstant(ZoneOffset.UTC);
     }
 
     private void load(SnapshotParams params, List<CampaignFacts> facts, List<DecisionFacts> decisions) {
@@ -194,6 +293,17 @@ public class EvalSnapshotService {
                         + " ORDER BY c.id", args,
                 (rs, i) -> new Base(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3), rs.getString(4),
                         rs.getString(5), rs.getString(6), rs.getObject(7, LocalDateTime.class).toInstant(ZoneOffset.UTC)));
+
+        // Each merchant's M4 start: its first holdout assignment at or before as_of (append-only, point in time).
+        Map<UUID, Instant> merchantM4Start = new HashMap<>();
+        List<UUID> baseMerchants = base.stream().map(Base::merchantId).distinct().toList();
+        if (!baseMerchants.isEmpty()) {
+            jdbc.query("""
+                    SELECT merchant_id, min(assigned_at) FROM holdout_assignments
+                    WHERE merchant_id IN (:merchants) AND assigned_at <= :asOfTz GROUP BY merchant_id""",
+                    new MapSqlParameterSource().addValue("merchants", baseMerchants).addValue("asOfTz", params.asOf().atOffset(ZoneOffset.UTC)),
+                    rs -> { merchantM4Start.put(rs.getObject(1, UUID.class), rs.getObject(2, OffsetDateTime.class).toInstant()); });
+        }
 
         for (int start = 0; start < base.size(); start += CHUNK) {
             List<Base> chunk = base.subList(start, Math.min(base.size(), start + CHUNK));
@@ -235,7 +345,8 @@ public class EvalSnapshotService {
             jdbc.query("""
                     SELECT i.campaign_id, i.dispatched_at FROM action_intents i
                     WHERE i.campaign_id IN (:ids) AND i.dispatched_at IS NOT NULL AND i.dispatched_at <= :asOfTz
-                      AND NOT EXISTS (SELECT 1 FROM decision_log d WHERE d.intent_id = i.id AND d.decision_point = 'DISPATCH')""", q,
+                      AND NOT EXISTS (SELECT 1 FROM decision_log d WHERE d.intent_id = i.id AND d.decision_point = 'DISPATCH'
+                                      AND d.decided_at <= :asOfTz)""", q,
                     rs -> { legacyDispatches.computeIfAbsent(rs.getObject(1, UUID.class), k -> new ArrayList<>())
                             .add(rs.getObject(2, OffsetDateTime.class).toInstant()); });
 
@@ -250,17 +361,33 @@ public class EvalSnapshotService {
                         rs.getString(2), rs.getString(3), rs.getObject(4, LocalDateTime.class).toInstant(ZoneOffset.UTC)});
             });
 
+            // U4.3 review: the failure webhooks of the chunk in one query (received by as_of), not one entity load per campaign.
+            Map<String, WebhookEvent> failures = new HashMap<>();
+            List<String> paymentIds = chunk.stream().map(Base::paymentId).filter(Objects::nonNull).distinct().toList();
+            if (!paymentIds.isEmpty()) {
+                jdbc.query("""
+                        SELECT merchant_id, external_event_id, event_type, source, raw_payload FROM webhook_events
+                        WHERE external_event_id IN (:paymentIds) AND received_at <= :asOf""",
+                        new MapSqlParameterSource().addValue("paymentIds", paymentIds).addValue("asOf", utc(params.asOf())), rs -> {
+                            WebhookEvent e = new WebhookEvent(null, rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5));
+                            failures.put(rs.getObject(1, UUID.class) + "|" + rs.getString(2), e);
+                        });
+            }
+
             for (Base b : chunk) {
-                facts.add(facts(b.id(), b.merchantId(), b.invoiceKey(), b.customerKey(), b.paymentId(), b.attribution(), b.eligibleAt(),
+                WebhookEvent failure = b.paymentId() == null ? null : failures.get(b.merchantId() + "|" + b.paymentId());
+                facts.add(facts(b.id(), b.merchantId(), b.invoiceKey(), b.customerKey(), b.attribution(), b.eligibleAt(),
                         assignments.get(b.id()), classes.get(b.id()), decisionsByCampaign.getOrDefault(b.id(), List.of()),
-                        legacyDispatches.getOrDefault(b.id(), List.of()), audit.getOrDefault(b.id(), List.of()), params.asOf()));
+                        legacyDispatches.getOrDefault(b.id(), List.of()), audit.getOrDefault(b.id(), List.of()), failure,
+                        merchantM4Start.get(b.merchantId())));
             }
         }
     }
 
-    private CampaignFacts facts(UUID id, UUID merchantId, String invoiceKey, String customerKey, String paymentId, String attribution,
+    private CampaignFacts facts(UUID id, UUID merchantId, String invoiceKey, String customerKey, String attribution,
                                 Instant eligibleAt, CampaignFacts.Assignment assignment, String[] classification,
-                                List<DecisionFacts> decisions, List<Instant> legacyDispatches, List<Object[]> audit, Instant asOf) {
+                                List<DecisionFacts> decisions, List<Instant> legacyDispatches, List<Object[]> audit, WebhookEvent failure,
+                                Instant merchantM4Start) {
         String state = null;
         Instant recoveredAt = null;
         List<Capture> captures = new ArrayList<>();
@@ -314,49 +441,16 @@ public class EvalSnapshotService {
 
         Long amount = null;
         String currency = null;
-        if (paymentId != null) {
-            Optional<MoneyMinor> money = webhookEventRepository.findByMerchantIdAndExternalEventId(merchantId, paymentId)
-                    .filter(e -> e.getReceivedAt() == null || !e.getReceivedAt().isAfter(asOf))
-                    .flatMap(amountResolver::extractMoneyMinor);
-            if (money.isPresent()) {
-                amount = money.get().amountMinor();
-                currency = money.get().currency();
-            }
+        Optional<MoneyMinor> money = failure == null ? Optional.empty() : amountResolver.extractMoneyMinor(failure);
+        if (money.isPresent()) {
+            amount = money.get().amountMinor();
+            currency = money.get().currency();
         }
+        boolean syntheticSource = failure != null && DEMO_SOURCE.equals(failure.getSource());
         return new CampaignFacts(merchantId, id, invoiceKey, customerKey, eligibleAt, assignment,
                 classification != null ? classification[0] : null, classification != null ? classification[1] : null,
-                strategy, compliance, complianceReason, contacts, captures, attributionAsOf, state, amount, currency, legacyBlocks);
-    }
-
-    private void writeFiles(EvalSnapshot s, String campaigns, String decisions, String csv, Pseudonyms ids, SnapshotParams params) {
-        Path dir = snapshotDir.resolve(s.getId().toString());
-        try {
-            Files.createDirectories(dir);
-            Files.writeString(dir.resolve("campaigns.jsonl"), campaigns, StandardCharsets.UTF_8);
-            Files.writeString(dir.resolve("decisions.jsonl"), decisions, StandardCharsets.UTF_8);
-            Files.writeString(dir.resolve("campaigns.csv"), csv, StandardCharsets.UTF_8);
-            Map<String, Object> manifest = new LinkedHashMap<>();
-            manifest.put("snapshot_id", s.getId().toString());
-            manifest.put("schema_version", s.getSchemaVersion());
-            manifest.put("created_at", s.getCreatedAt().toString());
-            manifest.put("window_from", s.getWindowFrom().toString());
-            manifest.put("window_to", s.getWindowTo().toString());
-            manifest.put("as_of", s.getAsOf().toString());
-            manifest.put("horizon_days", s.getHorizonDays());
-            manifest.put("provider_mode", s.getProviderMode());
-            manifest.put("merchant_refs", params.merchantFilter().stream()
-                    .map(m -> ids.ref(m, "merchant", "self") ).toList());
-            manifest.put("row_count", s.getRowCount());
-            manifest.put("decision_count", s.getDecisionCount());
-            manifest.put("sha256", s.getSha256());
-            manifest.put("sha256_covers", List.of("campaigns.jsonl", "decisions.jsonl"));
-            manifest.put("status", s.getStatus().name());
-            manifest.put("errors", s.getErrors());
-            Files.writeString(dir.resolve("manifest.json"), JsonMapper.builder().build().writerWithDefaultPrettyPrinter()
-                    .writeValueAsString(manifest) + "\n", StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException("could not write snapshot files to " + dir, e);
-        }
+                strategy, compliance, complianceReason, contacts, captures, attributionAsOf, state, amount, currency, legacyBlocks,
+                merchantM4Start, syntheticSource);
     }
 
     private static LocalDateTime utc(Instant instant) {
@@ -365,7 +459,7 @@ public class EvalSnapshotService {
 
     private static List<String> stringList(String json) {
         List<String> out = new ArrayList<>();
-        JsonMapper.builder().build().readTree(json).forEach(n -> out.add(n.stringValue()));
+        JSON.readTree(json).forEach(n -> out.add(n.stringValue()));
         return out;
     }
 }

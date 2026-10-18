@@ -19,7 +19,7 @@ class SnapshotBuilderTest {
     private static final Instant T0 = Instant.parse("2026-09-01T10:15:30Z");
     private static final Instant AS_OF = Instant.parse("2026-10-01T00:00:00Z");
     private static final SnapshotParams PARAMS = new SnapshotParams(Instant.parse("2026-09-01T00:00:00Z"),
-            Instant.parse("2026-09-10T00:00:00Z"), AS_OF, 14, Instant.parse("2026-08-01T00:00:00Z"), "razorpay-test", List.of());
+            Instant.parse("2026-09-10T00:00:00Z"), AS_OF, 14, Instant.parse("2026-08-01T00:00:00Z"), "razorpay-live", List.of());
 
     private static Pseudonyms ids() {
         byte[] salt = new byte[32];
@@ -33,7 +33,7 @@ class SnapshotBuilderTest {
         Assignment a = arm == null ? null : new Assignment(arm, 2000, "CONTROL".equals(arm) ? 2000 : 8000, "HASH", 1, "hmac-v1");
         return new CampaignFacts(MERCHANT, id, "inv:inv_" + suffix, "cust_" + suffix, eligibleAt, a, "INSUFFICIENT_FUNDS",
                 "razorpay-error-taxonomy-v1", "RETRY_LATER", "ALLOWED", "ALLOWED", contacts, captures, null, "ELIGIBLE",
-                amount, amount == null ? null : "INR", 0);
+                amount, amount == null ? null : "INR", 0, null, false);
     }
 
     private static List<CampaignFacts> population() {
@@ -119,13 +119,43 @@ class SnapshotBuilderTest {
     }
 
     @Test
-    @DisplayName("Mock-provider and SYNTHETIC captures are labelled SYNTHETIC")
+    @DisplayName("DECISION U4.3-f: only razorpay-live is MEASURED; mock, test mode, unknown, demo sources and SYNTHETIC captures are SYNTHETIC")
     void syntheticLabels() {
-        SnapshotParams mock = new SnapshotParams(PARAMS.windowFrom(), PARAMS.windowTo(), AS_OF, 14, PARAMS.m4Start(), "mock", List.of());
-        assertTrue(SnapshotBuilder.build(population(), List.of(), ids(), mock).campaigns().stream()
-                .allMatch(r -> r.evidenceLabel().equals("SYNTHETIC")));
+        for (String mode : List.of("mock", "razorpay-test", "razorpay-unknown", "simulator")) {
+            SnapshotParams p = new SnapshotParams(PARAMS.windowFrom(), PARAMS.windowTo(), AS_OF, 14, PARAMS.m4Start(), mode, List.of());
+            assertTrue(SnapshotBuilder.build(population(), List.of(), ids(), p).campaigns().stream()
+                    .allMatch(r -> r.evidenceLabel().equals("SYNTHETIC")), mode);
+        }
+        CampaignFacts demo = new CampaignFacts(MERCHANT, UUID.randomUUID(), "inv:inv_demo", null, T0, null, null, null, null, null, null,
+                List.of(), List.of(), null, "ELIGIBLE", 100L, "INR", 0, null, true);
+        assertEquals("SYNTHETIC", SnapshotBuilder.build(List.of(demo), List.of(), ids(), PARAMS).campaigns().get(0).evidenceLabel());
         CampaignFacts synth = campaign("s", "TREATMENT", T0, List.of(), List.of(new Capture(T0.plusSeconds(100), CaptureSource.SYNTHETIC)), 100L);
         assertEquals("SYNTHETIC", SnapshotBuilder.build(List.of(synth), List.of(), ids(), PARAMS).campaigns().get(0).evidenceLabel());
+    }
+
+    @Test
+    @DisplayName("post-M4 starts at the earlier of the configured start and the merchant's first assignment")
+    void postM4Start() {
+        SnapshotParams noGlobal = new SnapshotParams(PARAMS.windowFrom(), PARAMS.windowTo(), AS_OF, 14, null, "razorpay-live", List.of());
+        CampaignFacts before = new CampaignFacts(MERCHANT, UUID.randomUUID(), "inv:inv_p1", null, T0, null, null, null, null, null, null,
+                List.of(), List.of(), null, "ELIGIBLE", null, null, 0, T0.plusSeconds(1), false);
+        CampaignFacts after = new CampaignFacts(MERCHANT, UUID.randomUUID(), "inv:inv_p2", null, T0, null, null, null, null, null, null,
+                List.of(), List.of(), null, "ELIGIBLE", null, null, 0, T0, false);
+        CampaignFacts never = new CampaignFacts(MERCHANT, UUID.randomUUID(), "inv:inv_p3", null, T0, null, null, null, null, null, null,
+                List.of(), List.of(), null, "ELIGIBLE", null, null, 0, null, false);
+        List<SnapshotRow> rows = SnapshotBuilder.build(List.of(before, after, never), List.of(), ids(), noGlobal).campaigns();
+        Pseudonyms ids = ids();
+        assertFalse(rows.stream().filter(r -> r.invoiceRef().equals(ids.ref(MERCHANT, "invoice", "inv:inv_p1"))).findFirst().orElseThrow().postM4());
+        assertTrue(rows.stream().filter(r -> r.invoiceRef().equals(ids.ref(MERCHANT, "invoice", "inv:inv_p2"))).findFirst().orElseThrow().postM4());
+        assertFalse(rows.stream().filter(r -> r.invoiceRef().equals(ids.ref(MERCHANT, "invoice", "inv:inv_p3"))).findFirst().orElseThrow().postM4());
+    }
+
+    @Test
+    @DisplayName("Checksum: moving a line from one file to the other changes it; parameters are truncated to microseconds")
+    void checksumRule() {
+        assertNotEquals(SnapshotCodec.snapshotSha256("a\nb\n", "c\n"), SnapshotCodec.snapshotSha256("a\n", "b\nc\n"));
+        SnapshotParams p = new SnapshotParams(Instant.parse("2026-09-01T00:00:00.123456789Z"), PARAMS.windowTo(), AS_OF, 14, null, "mock", List.of());
+        assertEquals(Instant.parse("2026-09-01T00:00:00.123456Z"), p.windowFrom());
     }
 
     @Test

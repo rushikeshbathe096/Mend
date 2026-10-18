@@ -21,7 +21,7 @@ class SnapshotValidatorTest {
     private static String validLine() {
         CampaignFacts f = new CampaignFacts(MERCHANT, UUID.randomUUID(), "inv:inv_v", null, T0,
                 new CampaignFacts.Assignment("TREATMENT", 2000, 8000, "HASH", 1, "h"), "INSUFFICIENT_FUNDS", "t", "RETRY_LATER",
-                "ALLOWED", "ALLOWED", List.of(), List.of(), null, "ELIGIBLE", 49_900L, "INR", 0);
+                "ALLOWED", "ALLOWED", List.of(), List.of(), null, "ELIGIBLE", 49_900L, "INR", 0, null, false);
         SnapshotParams params = new SnapshotParams(T0, T0.plusSeconds(86_400), T0.plusSeconds(30 * 86_400L), 14, T0, "razorpay-test", List.of());
         return SnapshotCodec.campaignsJsonl(SnapshotBuilder.build(List.of(f), List.of(), new Pseudonyms(Map.of(MERCHANT, new byte[32])), params).campaigns());
     }
@@ -55,6 +55,32 @@ class SnapshotValidatorTest {
         String line = validLine();
         assertTrue(line.contains(from), from);
         assertTrue(codes(line.replace(from, to)).contains(code.trim()), codes(line.replace(from, to)).toString());
+    }
+
+    @Test
+    @DisplayName("U4.3 review: RECOVERED state without attribution (outside the horizon), capture source missing, capture past the horizon, "
+            + "TREATMENT propensity, currency, decision-file defects")
+    void reviewDefects() {
+        String line = validLine();
+        assertTrue(codes(line.replace("\"state_as_of\":\"ELIGIBLE\"", "\"state_as_of\":\"RECOVERED\"")).contains("RECOVERED_WITHOUT_ATTRIBUTION"));
+        String noSource = line.replace("\"recovered\":false", "\"recovered\":true").replace("\"capture_offset_s\":null", "\"capture_offset_s\":60");
+        assertTrue(codes(noSource).contains("SCHEMA_INCONSISTENT"));
+        String late = noSource.replace("\"capture_source\":null", "\"capture_source\":\"MEND\"").replace("\"capture_offset_s\":60", "\"capture_offset_s\":2000000");
+        assertTrue(SnapshotValidator.validate(late, "", 14).stream().anyMatch(d -> d.code().equals("CAPTURE_OUTSIDE_HORIZON")));
+        assertTrue(codes(line.replace("\"propensity_bp\":8000", "\"propensity_bp\":9000")).contains("PROPENSITY_INCONSISTENT"));
+        assertTrue(codes(line.replace("\"currency\":\"INR\"", "\"currency\":\"rupee\"")).contains("AMOUNT_BAD_CURRENCY"));
+
+        String decision = "{\"schema_version\":\"eval-snapshot-v1\",\"merchant_ref\":\"x\",\"campaign_ref\":\"%s\",\"intent_ref\":null,"
+                + "\"decision_point\":\"%s\",\"chosen\":\"A\",\"reason_code\":null,\"alternatives\":[%s],\"propensity_bp\":%d,"
+                + "\"taxonomy_version\":null,\"strategy_version\":null,\"compliance_version\":null,\"assignment_version\":null,\"offset_s\":0}\n";
+        String ref = line.substring(line.indexOf("\"campaign_ref\":\"") + 16, line.indexOf("\"campaign_ref\":\"") + 48);
+        assertEquals(List.of(), SnapshotValidator.validate(line, String.format(decision, ref, "STRATEGY", "\"A\"", 10000), 14));
+        java.util.function.Function<String, List<String>> d = text -> SnapshotValidator.validate(line, text, 14).stream()
+                .map(SnapshotValidator.Defect::code).toList();
+        assertTrue(d.apply(String.format(decision, "0".repeat(32), "STRATEGY", "\"A\"", 10000)).contains("DECISION_ORPHAN"));
+        assertTrue(d.apply(String.format(decision, ref, "STRATEGY", "\"A\"", 10001)).contains("DECISION_BAD_PROPENSITY"));
+        assertTrue(d.apply(String.format(decision, ref, "STRATEGY", "\"B\"", 10000)).contains("DECISION_CHOSEN_NOT_ALTERNATIVE"));
+        assertTrue(d.apply(String.format(decision, ref, "GUESS", "\"A\"", 10000)).contains("DECISION_BAD_POINT"));
     }
 
     @Test
