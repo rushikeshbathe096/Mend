@@ -261,12 +261,14 @@ public class ActionExecutionService {
         return ExecutionPreparation.proceed(intent, campaign, callerClaimToken);
     }
 
+    private static final java.util.regex.Pattern POLICY_VERSION_FORMAT = java.util.regex.Pattern.compile("^v(\\d+)\\.(\\d+)$");
+
     /** Policy versions of the deterministic (taxonomy) compliance engine: v2.0 and later (ComplianceEngine.POLICY_VERSION). */
     static boolean isTaxonomyEraPolicy(String policyVersion) {
         if (policyVersion == null) {
             return false;
         }
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^v(\\d+)\\.(\\d+)$").matcher(policyVersion);
+        java.util.regex.Matcher m = POLICY_VERSION_FORMAT.matcher(policyVersion);
         return m.matches() && Integer.parseInt(m.group(1)) >= 2;
     }
 

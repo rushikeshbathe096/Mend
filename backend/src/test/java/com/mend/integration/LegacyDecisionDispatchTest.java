@@ -47,6 +47,8 @@ class LegacyDecisionDispatchTest extends AbstractIntegrationTest {
     @Autowired private ActionExecutionService executionService;
     @Autowired private ActionScheduler scheduler;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private RecoveryDecisionRepository recoveryDecisions;
+    @Autowired private com.mend.service.HumanApprovalService humanApprovalService;
     @MockitoSpyBean private PaymentProvider provider;
 
     private UUID merchantId;
@@ -65,16 +67,23 @@ class LegacyDecisionDispatchTest extends AbstractIntegrationTest {
 
     /** A campaign as M3 found it: AI-era classification (no taxonomy version), a v1.0 ALLOWED decision, a READY intent. */
     private ActionIntent preM3Intent(String policyVersion) {
+        return preM3Intent(policyVersion, false);
+    }
+
+    private ActionIntent preM3Intent(String policyVersion, boolean linkedRecoveryDecision) {
         Campaign campaign = new Campaign(UUID.randomUUID(), merchantId);
         campaign.setPaymentId("pay_legacy" + UUID.randomUUID().toString().replace("-", "").substring(0, 10));
         campaign.setFailureClass("INSUFFICIENT_FUNDS");
         campaign.setConfidence(new BigDecimal("0.92"));
         campaign.setCurrentState(CampaignStatus.ACTION_PENDING);
         campaign = campaigns.saveAndFlush(campaign);
-        classifications.saveAndFlush(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(), "INSUFFICIENT_FUNDS",
-                new BigDecimal("0.92"), "RETRY_LATER", "AI analysis", "v1.0.0-bounded-heuristic"));
+        ClassificationResult legacyClass = classifications.saveAndFlush(new ClassificationResult(UUID.randomUUID(), null, campaign.getId(),
+                "INSUFFICIENT_FUNDS", new BigDecimal("0.92"), "RETRY_LATER", "AI analysis", "v1.0.0-bounded-heuristic"));
+        UUID recoveryDecisionId = !linkedRecoveryDecision ? null : recoveryDecisions.saveAndFlush(new com.mend.domain.entity.RecoveryDecisionEntity(
+                UUID.randomUUID(), campaign.getId(), merchantId, legacyClass.getId(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                "pre-M3 AI recommendation", "NORMAL", new BigDecimal("0.92"), "v1.0")).getId();
         ComplianceDecisionEntity decision = complianceDecisions.saveAndFlush(new ComplianceDecisionEntity(null, campaign.getId(),
-                merchantId, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED,
+                merchantId, recoveryDecisionId, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, ComplianceStatus.COMPLIANCE_ALLOWED,
                 ComplianceReason.ALLOWED, "pre-M3 AI-gated decision", policyVersion));
         return intents.saveAndFlush(new ActionIntent(UUID.randomUUID(), merchantId, campaign.getId(), 1, "REQUEST_CUSTOMER_ACTION",
                 "CUSTOMER_ACTION_REQUIRED", decision.getId(), ActionIntentStatus.READY, "intent:" + UUID.randomUUID(),
@@ -114,4 +123,23 @@ class LegacyDecisionDispatchTest extends AbstractIntegrationTest {
         assertEquals(ActionIntentStatus.FAILED, intents.findById(intent.getId()).orElseThrow().getStatus());
         assertEquals(CampaignStatus.ELIGIBLE, campaigns.findById(intent.getCampaignId()).orElseThrow().getCurrentState());
     }
+
+    @Test
+    @DisplayName("Approving the LEGACY_DECISION review re-evaluates under the current policy (never reuses the v1.0 decision)")
+    void approvingTheReviewReEvaluatesUnderTheCurrentPolicy() {
+        ActionIntent intent = preM3Intent("v1.0", true);   // linked recovery decision: the idempotency shortcut's case
+        ActionIntent claimed = claimService.claimSpecificIntent(intent.getId(), "legacy-worker").orElseThrow();
+        assertThrows(ComplianceBlockedException.class,
+                () -> executionService.executeActionIntent(claimed.getId(), "legacy-worker", claimed.getClaimToken()));
+        UUID reviewId = jdbc.queryForObject("SELECT id FROM review_queue WHERE campaign_id = ? AND status = 'PENDING'",
+                UUID.class, intent.getCampaignId());
+
+        // the classification is a pre-M3 row (no taxonomy version), so the current policy blocks it
+        com.mend.exception.InvalidRequestException blocked = assertThrows(com.mend.exception.InvalidRequestException.class,
+                () -> humanApprovalService.approveReview(merchantId, reviewId, "re-run", com.mend.testsupport.TestUsers.memberOf(merchantId)));
+        assertTrue(blocked.getMessage().contains("UNKNOWN_CLASSIFICATION"), blocked.getMessage());
+        assertEquals(1, intents.findByCampaignId(intent.getCampaignId()).size(), "no new intent on the legacy decision");
+        verify(provider, never()).createPaymentLink(any(), any());
+    }
 }
+

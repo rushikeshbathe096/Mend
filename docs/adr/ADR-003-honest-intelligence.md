@@ -120,6 +120,15 @@ confidence is not. Async parsing keeps AI useful without putting it between a fa
 - All database sessions run in UTC (Hikari `connection-init-sql`, Flyway `init-sqls`, Hibernate `jdbc.time_zone`).
   TIMESTAMP-without-time-zone defaults therefore agree with the UTC Instants Java writes. Before this, a local JVM zone
   (seen: Asia/Kolkata) put DB-defaulted values 5 h 30 min ahead. Rows defaulted that way earlier are not rewritten.
+  The 21 TIMESTAMP-without-time-zone columns with a DB default, all now consistent with what Java writes:
+  - V1 `created_at` on roles, users, merchants, merchant_users, campaigns, campaign_attempts, action_intents,
+    classification_results, review_queue, merchant_config and audit_logs;
+  - V1 `updated_at` on users, merchants, campaigns and merchant_config;
+  - V1 `webhook_events.received_at`;
+  - V9 `agent_decision_records.created_at`;
+  - V20 `customer_replies` `next_attempt_at`, `created_at` and `updated_at`, and `reply_suggestions.created_at`.
+
+  The TIMESTAMPTZ columns (V6–V8, V11, V12) were already zone-independent.
 - Reply-raised reviews (`CUSTOMER_DISPUTE`, `CUSTOMER_SAYS_PAID`) use the existing approval queue. Approving one resumes
   collection, and the review text says so. A separate review kind for "resolve, do not collect" is M4-owned.
 - The UI loses the "AI Agent Decisions" tab; review items lose agent fields (historical rows remain in the database).

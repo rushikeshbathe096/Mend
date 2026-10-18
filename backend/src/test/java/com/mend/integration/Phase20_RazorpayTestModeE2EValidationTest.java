@@ -475,6 +475,7 @@ public class Phase20_RazorpayTestModeE2EValidationTest {
         Campaign campaign = createTestCampaign(tenant, uniquePaymentId, CampaignStatus.ACTION_PENDING, 0, amountMinor);
         ComplianceDecisionEntity compliance = complianceDecisionRepository.saveAndFlush(new ComplianceDecisionEntity(
                 UUID.randomUUID(), campaign.getId(), tenant, null, RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                // M3 behaviour change: was a v1.x version, which is now LEGACY_DECISION at dispatch (see TestCompliance)
                 ComplianceStatus.COMPLIANCE_ALLOWED, ComplianceReason.ALLOWED, "Compliant action", com.mend.testsupport.TestCompliance.CURRENT_POLICY));
         ActionIntent intent = new ActionIntent(UUID.randomUUID(), tenant, campaign.getId(), 1,
                 ActionType.REQUEST_CUSTOMER_ACTION.name(), RecoveryStrategy.CUSTOMER_ACTION_REQUIRED.name(), compliance.getId(),

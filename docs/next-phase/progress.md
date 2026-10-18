@@ -410,3 +410,16 @@ Baseline (= tag m3-complete): backend 941/0/0/0, frontend 62, ai-service 90.
 ### 4. docs
 ADR-003 Consequences (legacy-intent gap closed, decision B, UTC), M3-summary follow-ups line, AGENTS.md milestone line,
 this file.
+
+### Follow-ups review (fresh subagent): no blocker. Dispositions
+- FIXED MAJOR 1: approving a LEGACY_DECISION review could hit ComplianceService's idempotency shortcut and get the v1.0
+  decision back, an endless review loop. The shortcut now reuses only a decision made under the current policy version.
+  Test `approvingTheReviewReEvaluatesUnderTheCurrentPolicy` (linked pre-M3 recovery decision → approval blocked as
+  UNKNOWN_CLASSIFICATION, no new intent). Revert proof: shortcut restored → `…:138 Unexpected exception type … was:
+  DataIntegrityViolation` (the approval reused the v1.0 decision and tried a duplicate intent).
+- FIXED MINOR 2: per-site `// M3 behaviour change` comments on the 16 fixture lines using `TestCompliance.CURRENT_POLICY`.
+- FIXED MINOR 3: the 21-column list is also in ADR-003 Consequences.
+- FIXED NIT 4: static Pattern for the policy-version rule.
+Final CI scripts: backend `[INFO] Tests run: 971, Failures: 0, Errors: 0, Skipped: 0` BUILD SUCCESS; frontend
+`Tests: 62 passed, 62 total`, lint `✖ 1 problem (0 errors, 1 warning)`; ai-service `90 passed`; migrations 21 applied,
+validate OK. Next: merge into local main (`--no-ff`), tag `m3-followups`. Not pushed.
