@@ -273,3 +273,19 @@ Commits: `5dff21e` (end-to-end test), `2478d9b` (results), U4.6 review fix commi
   committed manifest sha and report JSON), 4 (3 426 TREATMENT retries; 42.65 % retry classes), 5 (review item not modelled;
   contact rate overstated by OOS-2), 6 (exact merchant config + OOS-4), 7 (true effect computed: `PolicyComparison.trueEffect`
   = 7.94 pp, inside the estimate's CI), 8 (this entry; OOS-3/4), NIT 9 (manifest copy step), 10 (n on every headline figure).
+
+### U4.7 retrieval-augmented reply parsing (gated)
+Commits: `319f6ca` (ai-service few-shot prompt), `2b1a096` (store, flag, job, harness, docs).
+- GEMINI_API_KEY absent (presence checked only) and `replies-v2` absent → metrics TBD, flag stays off
+  (`docs/m4/eval/retrieval-results.json`: KEEP_DISABLED). Details: `docs/m4/eval/RETRIEVAL.md`.
+- V26 `reply_label_examples` (source SYNTHETIC|CONSENTED CHECK, append-only, tsvector 'simple' + GIN);
+  `ReplyExampleStore` (import, `similar` = ts_rank over OR of lexemes, k ≤ 5); `ReplyParsingJob` calls `parse(text, examples)`
+  only with `mend.reply.retrieval.enabled=true` (default false), else exactly `parse(text)`; `HttpReplyParserClient` sends
+  `examples`; ai-service `reply-parse-v2-fewshot` with JSON-encoded examples (≤ 5, validated); `eval/retrieval_eval.py` with
+  `adoption_decision` (ADOPT only if macro F1 improves on the blind set without more invalid output).
+- DECISION U4.7-a: the old `ReplyParserClient.parse(text)` contract is unchanged (default method for the examples variant), so
+  every existing stub and the M3 behaviour stay as they were with the flag off.
+- DECISION U4.7-b: the store is loaded only from the SYNTHETIC dev split of replies-v1 (never the held-out test split).
+Tests: backend ReplyRetrievalIntegrationTest 3, ReplyRetrievalEnabledIntegrationTest 1; ai-service test_fewshot 8,
+test_retrieval_eval 7 (ai-service 90 → 105 passed).
+Verify: backend `[INFO] Tests run: 1082, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; ai-service `105 passed`.
