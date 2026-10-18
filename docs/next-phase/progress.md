@@ -348,3 +348,11 @@ Verify: `scripts/ci/ai-service.sh` (fresh venv from requirements) → `79 passed
   NIT 6 (.gitignore), NIT 7 (.dockerignore).
 - Out-of-scope note answered: backend full run after U2.6 = `[INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0`.
 Verify: ai-service `90 passed`.
+
+### U2.7 — close-out
+- Final runs (CI scripts): backend `[INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0` BUILD SUCCESS; frontend
+  `Tests: 62 passed, 62 total`, lint `✖ 1 problem (0 errors, 1 warning)`, build OK; ai-service (fresh venv) `90 passed`;
+  migrations: 21 applied, validate OK. Recorded in `docs/m3/m3-final-test-run-summary.txt`.
+- `docs/m3/M3-summary.md` (12 lines), ADR-003 **Accepted** with an evidence table, §50 checklist 13/13 ticked with commits,
+  AGENTS.md milestone → "M3 complete — next: M4 (needs design pack)".
+- DECISION U2.7-a: the M3 invariants 16–18 from the design doc are added to AGENTS.md (as M2 did for 11–15).

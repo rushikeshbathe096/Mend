@@ -1,0 +1,6 @@
+M3 final test run (2026-10-18, branch m3/honest-intelligence @ 65e97e6); raw logs local-only
+backend  scripts/ci/backend.sh:    [INFO] Tests run: 940, Failures: 0, Errors: 0, Skipped: 0  [INFO] BUILD SUCCESS
+frontend scripts/ci/frontend.sh:   Tests: 62 passed, 62 total; lint ✖ 1 problem (0 errors, 1 warning); build ✓ Compiled successfully in 135ms
+ai-service scripts/ci/ai-service.sh (fresh venv): 90 passed, 1 warning in 0.43s
+migrations scripts/ci/migrations.sh: fresh database mend_test_1792293172_90d28935: applied 21 migrations, current version 21, validate OK
+Start of M3 (ci-v1, 1c7fb7d): backend 813/0/0/0, frontend 53, ai-service 51. Counts never dropped in any unit.

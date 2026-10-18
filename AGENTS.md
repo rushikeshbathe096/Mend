@@ -2,10 +2,12 @@
 
 MEND is a financial workflow system (revenue recovery on Razorpay). Correctness before intelligence.
 
-## Current milestone: M2 complete — next: M3 (do not start without a design pack)
+## Current milestone: M3 complete — next: M4 (needs design pack)
+M3 (honest intelligence) is complete: ADR-003 Accepted, final run backend 940 / 0 / 0 / 0, frontend 62, ai-service 90
+(`docs/m3/m3-final-test-run-summary.txt`), summary `docs/m3/M3-summary.md`.
 M1 (provider correctness) is complete: tag `m1-complete`, ADR-001 Accepted.
 M2 (execution safety) is complete: ADR-002 Accepted, final run 647 / 0 / 0 / 0 (`docs/m2/m2-final-test-run-summary.txt`), summary `docs/m2/M2-summary.md`.
-Only work on the unit you were given (`docs/m2/agent-prompts/U*.md`). Do not start M3+ work. Write anything else you notice under "Out-of-scope findings" in your final message.
+Only work on the unit you were given (`docs/m2/agent-prompts/U*.md`). Do not start M4+ work without its design pack. Write anything else you notice under "Out-of-scope findings" in your final message.
 
 Out of scope in M2: debit wiring, AI service, CI/deployment, metrics registration, Redis changes, new dependencies (ask first), frontend changes.
 
@@ -27,6 +29,11 @@ Out of scope in M2: debit wiring, AI service, CI/deployment, metrics registratio
 13. Possibly-dispatched work (EXECUTING) is never returned to READY by lease expiry.
 14. At most one in-flight intent (CLAIMED, EXECUTING, NEEDS_RECONCILIATION, AWAITING_PAYMENT) per (merchant, invoice_key) — enforced by the database.
 15. Campaign-level (original payment) events never finalize a recovery intent.
+
+### M3 invariants (ADR-003)
+16. The payment flow makes no ai-service call.
+17. LLM output is a suggestion: only the deterministic ReplyPolicy acts on it, never with a financial action.
+18. A model id is recorded only as the provider reported it; without a model there is no output ("model unavailable").
 
 ## Tests
 - Run: `cd backend && ./mvnw test`

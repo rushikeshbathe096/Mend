@@ -1,6 +1,6 @@
 # ADR-003 — Honest intelligence: deterministic payment path, one async AI task
 
-Status: **Proposed** (M3 U2.0, 2026-10-18). Accepted at U2.7 with evidence.
+Status: **Accepted** (M3 U2.7, 2026-10-18). Proposed at U2.0; evidence below.
 Milestone: M3 · Depends on: ADR-001, ADR-002
 
 ## Context
@@ -110,4 +110,15 @@ Razorpay documents new reasons; real recordings contradict a mapping; an inbound
 AI task is proposed (needs its own ADR).
 
 ## Evidence
-To be filled at U2.7 (commits, test counts, eval results).
+| decision | commits | proof |
+|---|---|---|
+| 1. Taxonomy | `314bf9e`, `0014eed` | `FailureTaxonomyTest`, `TaxonomyPurityTest` |
+| 2. Off the hot path | `31a1949`, `ecf1d83` | `AiOffHotPathTest`: unreachable ai-service, flow to RECOVERED, no AI bean in the context |
+| 3. No theatre | `1c2363f`, `f005c62`, `3aedd1d`, `53ec57d` | `AiTheatreRemovedIntegrationTest`, `HonestApiDtoTest` |
+| 4. Strategy and eligibility by class | `31a1949`, `ecf1d83` | `ComplianceEngineTest`, `RecoveryStrategyEngineTest` (legacy rows fail closed) |
+| 5. One AI task | `8fe7e0c`, `3f6209d`, `b0645f8`, `3ff511f`, `be25b4b` | `ReplyParsingIntegrationTest` (14, real PostgreSQL and threads), `ReplySuggestionValidatorTest`, ai-service `test_parse_reply.py` / `test_main.py` |
+| 6. Evaluation | `2bc479d`, `e2c72c1` | `docs/m3/eval/RESULTS.md`; model **TBD** (no key) |
+
+Final run: backend 940/0/0/0, frontend 62 (lint 0 errors), ai-service 90, migrations V1–V21 validate OK
+(`docs/m3/m3-final-test-run-summary.txt`). Each unit had a fresh-subagent review, findings fixed with revert proofs
+(`docs/next-phase/progress.md`).
