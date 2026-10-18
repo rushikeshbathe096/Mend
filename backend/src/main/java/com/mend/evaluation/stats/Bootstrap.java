@@ -76,7 +76,8 @@ public final class Bootstrap {
         return out;
     }
 
-    private static BigInterval percentile(BigDecimal estimate, BigDecimal[] stats) {
+    /** Package-private for the index test: bounds are sorted[ceil(0.025·B) − 1] and sorted[ceil(0.975·B) − 1]. */
+    static BigInterval percentile(BigDecimal estimate, BigDecimal[] stats) {
         Arrays.sort(stats);
         int b = stats.length;
         return new BigInterval(estimate, stats[(int) Math.ceil(0.025 * b) - 1], stats[(int) Math.ceil(0.975 * b) - 1]);

@@ -8,6 +8,11 @@ package com.mend.evaluation.snapshot;
  * @param recovered      provider capture evidence within the horizon (and at or before as_of)
  * @param mature         eligibility + horizon is at or before as_of (only mature rows enter outcome figures)
  * @param captureSource  MEND | ORIGINAL | SYNTHETIC | UNKNOWN of the first capture within the horizon, or null
+ * @param invoiceFirst   this row is its invoice's first eligible campaign in the snapshot (the analysis unit, U4.4 review)
+ * @param invoiceRecovered capture evidence on ANY campaign of the invoice within the horizon after the invoice's first
+ *                       eligibility (invoice-level ITT outcome); the same on every row of the invoice
+ * @param invoiceContactCount provider contacts across all campaigns of the invoice (also later, re-hashed ones)
+ * @param recoveryAttribution as of as_of, whatever the horizon (the outcome fields apply the horizon)
  */
 public record SnapshotRow(
         String schemaVersion,
@@ -41,8 +46,16 @@ public record SnapshotRow(
         String amountStatus,
         String stateAsOf,
         int legacyDecisionBlocks,
+        boolean invoiceFirst,
+        int invoiceCampaigns,
+        boolean invoiceMature,
+        boolean invoiceRecovered,
+        Long invoiceCaptureOffsetS,
+        String invoiceCaptureSource,
+        int invoiceContactCount,
         String evidenceLabel) {
 
-    public static final String SCHEMA_VERSION = "eval-snapshot-v1";
+    /** v2 (U4.4 review): invoice-level outcome columns. */
+    public static final String SCHEMA_VERSION = "eval-snapshot-v2";
     public static final String UNASSIGNED = "UNASSIGNED";
 }

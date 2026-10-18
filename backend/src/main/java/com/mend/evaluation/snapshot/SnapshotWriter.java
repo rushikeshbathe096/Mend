@@ -18,6 +18,9 @@ import java.util.Map;
  */
 public final class SnapshotWriter {
 
+    /** Used in file names: letters, digits, '.', '_' and '-' only, never a path (U4.4 review). */
+    public static final java.util.regex.Pattern SNAPSHOT_ID = java.util.regex.Pattern.compile("^[A-Za-z0-9_-][A-Za-z0-9._-]{0,79}$");
+
     private SnapshotWriter() {
     }
 
@@ -28,16 +31,19 @@ public final class SnapshotWriter {
         }
     }
 
-    public static Written prepare(String snapshotId, SnapshotBuilder.Content content, int horizonDays) {
+    public static Written prepare(String snapshotId, SnapshotBuilder.Content content, SnapshotParams params) {
         String campaigns = SnapshotCodec.campaignsJsonl(content.campaigns());
         String decisions = SnapshotCodec.decisionsJsonl(content.decisions());
-        return new Written(snapshotId, SnapshotCodec.snapshotSha256(campaigns, decisions),
-                SnapshotValidator.validate(campaigns, decisions, horizonDays));
+        return new Written(snapshotId, SnapshotCodec.snapshotSha256(campaigns, decisions, params),
+                SnapshotValidator.validate(campaigns, decisions, params.horizonDays()));
     }
 
     public static Written write(Path dir, String snapshotId, Instant createdAt, SnapshotParams params, SnapshotBuilder.Content content,
                                 List<String> merchantRefs) {
-        Written written = prepare(snapshotId, content, params.horizonDays());
+        if (!SNAPSHOT_ID.matcher(snapshotId).matches()) {
+            throw new IllegalArgumentException("snapshot id must match " + SNAPSHOT_ID.pattern());
+        }
+        Written written = prepare(snapshotId, content, params);
         try {
             Files.createDirectories(dir);
             Files.writeString(dir.resolve("campaigns.jsonl"), SnapshotCodec.campaignsJsonl(content.campaigns()), StandardCharsets.UTF_8);
@@ -56,7 +62,9 @@ public final class SnapshotWriter {
             manifest.put("row_count", content.campaigns().size());
             manifest.put("decision_count", content.decisions().size());
             manifest.put("sha256", written.sha256());
-            manifest.put("sha256_rule", "sha256(\"campaigns.jsonl:\" + sha256(campaigns.jsonl) + \"\\ndecisions.jsonl:\" + sha256(decisions.jsonl) + \"\\n\")");
+            manifest.put("sha256_rule", "sha256(\"campaigns.jsonl:\" + sha256(campaigns.jsonl) + \"\\ndecisions.jsonl:\" + sha256(decisions.jsonl)"
+                    + " + \"\\nparams:\" + sha256(canonical params) + \"\\n\")");
+            manifest.put("canonical_params", SnapshotCodec.canonicalParams(params));
             manifest.put("campaigns_sha256", SnapshotCodec.sha256(SnapshotCodec.campaignsJsonl(content.campaigns())));
             manifest.put("decisions_sha256", SnapshotCodec.sha256(SnapshotCodec.decisionsJsonl(content.decisions())));
             manifest.put("evidence_label_rule", "MEASURED only for provider mode razorpay-live and non-simulated sources; else SYNTHETIC");

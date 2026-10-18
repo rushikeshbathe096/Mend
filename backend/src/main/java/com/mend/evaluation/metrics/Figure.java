@@ -10,5 +10,5 @@ import com.mend.evaluation.EvidenceLabel;
 public record Figure(String scope, String stratum, String name, String value, String low, String high, long n,
                      EvidenceLabel label, Status status, String note) {
 
-    public enum Status { OK, INSUFFICIENT_DATA, UNSTABLE, TBD, DESCRIPTIVE, ALERT }
+    public enum Status { OK, INSUFFICIENT_DATA, UNSTABLE, TBD, DESCRIPTIVE, EXPLORATORY, ALERT }
 }

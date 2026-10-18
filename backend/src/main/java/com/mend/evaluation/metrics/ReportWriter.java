@@ -15,14 +15,14 @@ public final class ReportWriter {
 
     public static String markdown(MetricsReport.Report r, String title) {
         StringBuilder md = new StringBuilder();
-        md.append("# ").append(title).append("\n\n");
+        md.append("# ").append(cell(title)).append("\n\n");
         md.append("**Label: ").append(r.label()).append("**").append(r.interim() ? " · **INTERIM — not for decision**" : " · FINAL").append("\n\n");
         md.append("| snapshot | sha256 | as_of | horizon | provider mode | status | bootstrap |\n|---|---|---|---|---|---|---|\n");
         md.append("| `").append(r.snapshotId()).append("` | `").append(r.sha256(), 0, 16).append("…` | ").append(r.asOf()).append(" | ")
                 .append(r.horizonDays()).append(" d | ").append(r.providerMode()).append(" | ").append(r.snapshotStatus()).append(" | seed ")
                 .append(r.options().seed()).append(", ").append(r.options().resamples()).append(" resamples |\n\n");
         for (String note : r.notes()) {
-            md.append("> ").append(note).append("\n");
+            md.append("> ").append(cell(note)).append("\n>\n");
         }
         md.append("\nEvery figure: value, 95 % interval where computed, n, label (MEASURED / SYNTHETIC / TBD) and status. "
                 + "\"insufficient data\" = n below the minimum (rates 30, money 100 per arm, median 10 recoveries); no interval is "
@@ -33,17 +33,33 @@ public final class ReportWriter {
             if (!f.scope().equals(scope)) {
                 scope = f.scope();
                 stratum = null;
-                md.append("\n## ").append(scope).append("\n");
+                md.append("\n## ").append(cell(scope)).append("\n");
             }
             if (!f.stratum().equals(stratum)) {
                 stratum = f.stratum();
-                md.append("\n### ").append(stratum).append("\n\n| figure | value | 95 % interval | n | label | status | note |\n|---|---|---|---|---|---|---|\n");
+                md.append("\n### ").append(cell(stratum)).append("\n\n| figure | value | 95 % interval | n | label | status | note |\n|---|---|---|---|---|---|---|\n");
             }
-            md.append("| ").append(f.name()).append(" | ").append(f.value()).append(" | ")
-                    .append(f.low() == null ? "—" : f.low() + " … " + f.high()).append(" | ").append(f.n()).append(" | ")
-                    .append(f.label()).append(" | ").append(f.status()).append(" | ").append(f.note().replace("|", "/")).append(" |\n");
+            md.append("| ").append(cell(f.name())).append(" | ").append(cell(f.value())).append(" | ")
+                    .append(f.low() == null ? "—" : cell(f.low()) + " … " + cell(f.high())).append(" | ").append(f.n()).append(" | ")
+                    .append(f.label()).append(" | ").append(f.status()).append(" | ").append(cell(f.note())).append(" |\n");
         }
         return md.toString();
+    }
+
+    /** U4.4 review: text from the data (classes, strategies, notes) cannot break a table or inject markup. */
+    static String cell(String text) {
+        if (text == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        for (char ch : text.toCharArray()) {
+            switch (ch) {
+                case '|', '\\', '*', '_', '<', '>', '#', '`', '[', ']' -> out.append('\\').append(ch);
+                case '\n', '\r' -> out.append(' ');
+                default -> out.append(ch);
+            }
+        }
+        return out.toString();
     }
 
     public static String json(MetricsReport.Report r) {

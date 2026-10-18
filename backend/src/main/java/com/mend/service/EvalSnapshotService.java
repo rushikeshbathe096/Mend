@@ -133,7 +133,7 @@ public class EvalSnapshotService {
         }
         Pseudonyms ids = new Pseudonyms(salts);
         SnapshotBuilder.Content content = SnapshotBuilder.build(facts, decisions, ids, params);
-        String sha = SnapshotWriter.prepare(null, content, params.horizonDays()).sha256();
+        String sha = SnapshotWriter.prepare(null, content, params).sha256();
         Map<String, Object> filters = Map.of("merchant_ids", params.merchantFilter().stream().map(UUID::toString).toList());
         List<String> merchantRefs = params.merchantFilter().stream().map(ids::merchantRef).toList();
 
@@ -204,7 +204,7 @@ public class EvalSnapshotService {
         Path dir = snapshotDir.resolve(snapshot.getId().toString());
         try {
             if (Files.isRegularFile(dir.resolve("manifest.json")) && snapshot.getSha256().equals(SnapshotCodec.snapshotSha256(
-                    Files.readString(dir.resolve("campaigns.jsonl")), Files.readString(dir.resolve("decisions.jsonl"))))) {
+                    Files.readString(dir.resolve("campaigns.jsonl")), Files.readString(dir.resolve("decisions.jsonl")), params))) {
                 return;
             }
         } catch (IOException unreadable) {

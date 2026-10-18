@@ -72,6 +72,12 @@ public final class SnapshotValidator {
                 // U4.3 review: also when the recovery falls outside the horizon (recovered = false)
                 defects.add(new Defect("RECOVERED_WITHOUT_ATTRIBUTION", ref, "state RECOVERED with no recovery attribution"));
             }
+            if (r.path("invoice_recovered").asBoolean() && (r.path("invoice_capture_source").isNull() || !r.path("invoice_capture_offset_s").isIntegralNumber())) {
+                defects.add(new Defect("SCHEMA_INCONSISTENT", ref, "invoice recovered without capture source / offset"));
+            }
+            if ("UNKNOWN".equals(text(r, "invoice_capture_source"))) {
+                defects.add(new Defect("RECOVERED_WITHOUT_ATTRIBUTION", ref, "the invoice's first capture has no attribution"));
+            }
             if (r.path("recovered").asBoolean() && r.path("capture_source").isNull()) {
                 defects.add(new Defect("SCHEMA_INCONSISTENT", ref, "recovered without capture_source"));
             }
@@ -186,7 +192,7 @@ public final class SnapshotValidator {
         if (!r.path("capture_source").isNull() && !CAPTURE_SOURCES.contains(text(r, "capture_source"))) {
             defects.add(new Defect("SCHEMA_BAD_ENUM", ref, "capture_source"));
         }
-        for (String flag : List.of("post_m4", "contacted", "mature", "recovered")) {
+        for (String flag : List.of("post_m4", "contacted", "mature", "recovered", "invoice_first", "invoice_mature", "invoice_recovered")) {
             if (!r.path(flag).isBoolean()) {
                 defects.add(new Defect("SCHEMA_BAD_TYPE", ref, flag));
             }

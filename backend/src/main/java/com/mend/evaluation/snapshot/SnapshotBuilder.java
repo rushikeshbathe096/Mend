@@ -32,9 +32,15 @@ public final class SnapshotBuilder {
         Duration horizon = Duration.ofDays(params.horizonDays());
         List<SnapshotRow> rows = new ArrayList<>();
         Map<UUID, Instant> eligibleAt = new HashMap<>();
+        Map<String, List<CampaignFacts>> byInvoice = new HashMap<>();
+        for (CampaignFacts f : facts) {
+            byInvoice.computeIfAbsent(invoiceKey(f), k -> new ArrayList<>()).add(f);
+        }
+        Map<String, Invoice> invoices = new HashMap<>();
+        byInvoice.forEach((key, group) -> invoices.put(key, invoice(group, params, horizon)));
         for (CampaignFacts f : facts) {
             eligibleAt.put(f.campaignId(), f.eligibleAt());
-            rows.add(row(f, ids, params, horizon));
+            rows.add(row(f, invoices.get(invoiceKey(f)), ids, params, horizon));
         }
         rows.sort(Comparator.comparing(SnapshotRow::merchantRef).thenComparing(SnapshotRow::campaignRef));
 
@@ -56,6 +62,26 @@ public final class SnapshotBuilder {
         return new Content(List.copyOf(rows), List.copyOf(decisionRows));
     }
 
+    /** U4.4 review: the invoice is the analysis unit; its outcome spans all its campaigns (exact times, before pseudonymising). */
+    private record Invoice(UUID firstCampaign, int campaigns, boolean mature, Capture firstCapture, Instant firstEligible, int contacts) {
+    }
+
+    private static String invoiceKey(CampaignFacts f) {
+        return f.merchantId() + "|" + (f.invoiceKey() != null ? f.invoiceKey() : "cmp:" + f.campaignId());
+    }
+
+    private static Invoice invoice(List<CampaignFacts> group, SnapshotParams params, Duration horizon) {
+        CampaignFacts first = group.stream().min(Comparator.comparing(CampaignFacts::eligibleAt).thenComparing(CampaignFacts::campaignId))
+                .orElseThrow();
+        Instant start = first.eligibleAt();
+        Instant end = start.plus(horizon);
+        Capture capture = group.stream().flatMap(f -> f.captures().stream())
+                .filter(c -> !c.at().isBefore(start) && !c.at().isAfter(end) && !c.at().isAfter(params.asOf()))
+                .min(Comparator.comparing(Capture::at).thenComparing(c -> c.source().name())).orElse(null);
+        int contacts = (int) group.stream().flatMap(f -> f.dispatchTimes().stream()).filter(t -> !t.isAfter(params.asOf())).count();
+        return new Invoice(first.campaignId(), group.size(), !end.isAfter(params.asOf()), capture, start, contacts);
+    }
+
     private static Instant earliest(Instant a, Instant b) {
         if (a == null) {
             return b;
@@ -63,7 +89,7 @@ public final class SnapshotBuilder {
         return b == null || a.isBefore(b) ? a : b;
     }
 
-    private static SnapshotRow row(CampaignFacts f, Pseudonyms ids, SnapshotParams params, Duration horizon) {
+    private static SnapshotRow row(CampaignFacts f, Invoice invoice, Pseudonyms ids, SnapshotParams params, Duration horizon) {
         Instant eligible = f.eligibleAt();
         Instant horizonEnd = eligible.plus(horizon);
         boolean mature = !horizonEnd.isAfter(params.asOf());
@@ -112,6 +138,14 @@ public final class SnapshotBuilder {
                 f.amountMinor() == null ? "UNKNOWN" : "KNOWN",
                 f.stateAsOf(),
                 f.legacyDecisionBlocks(),
-                (synthetic ? EvidenceLabel.SYNTHETIC : EvidenceLabel.MEASURED).name());
+                invoice.firstCampaign().equals(f.campaignId()),
+                invoice.campaigns(),
+                invoice.mature(),
+                invoice.firstCapture() != null,
+                invoice.firstCapture() == null ? null : Duration.between(invoice.firstEligible(), invoice.firstCapture().at()).toSeconds(),
+                invoice.firstCapture() == null ? null : invoice.firstCapture().source().name(),
+                invoice.contacts(),
+                (synthetic || invoice.firstCapture() != null && invoice.firstCapture().source() == CaptureSource.SYNTHETIC
+                        ? EvidenceLabel.SYNTHETIC : EvidenceLabel.MEASURED).name());
     }
 }

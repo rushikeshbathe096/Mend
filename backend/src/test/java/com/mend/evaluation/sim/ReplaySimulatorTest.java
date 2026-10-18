@@ -38,7 +38,7 @@ class ReplaySimulatorTest {
     }
 
     private static String sha(ReplaySimulator.Result r) {
-        return SnapshotWriter.prepare("x", r.content(), 14).sha256();
+        return SnapshotWriter.prepare("x", r.content(), r.params()).sha256();
     }
 
     @Test
@@ -115,7 +115,7 @@ class ReplaySimulatorTest {
     @DisplayName("Generated snapshot is VALID and SYNTHETIC; the generator follows its documented weights (±3 points at n = 20 000)")
     void snapshotAndDistributions() {
         ReplaySimulator.Result r = run(17, 3000, 2000, PolicyVariant.B_CURRENT);
-        SnapshotWriter.Written w = SnapshotWriter.prepare("x", r.content(), 14);
+        SnapshotWriter.Written w = SnapshotWriter.prepare("x", r.content(), r.params());
         assertTrue(w.valid(), w.defects().toString());
         assertTrue(SnapshotCodec.campaignsJsonl(r.content().campaigns()).contains("\"evidence_label\":\"SYNTHETIC\""));
         assertFalse(SnapshotCodec.campaignsJsonl(r.content().campaigns()).contains("\"evidence_label\":\"MEASURED\""));

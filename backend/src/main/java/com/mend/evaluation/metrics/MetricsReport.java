@@ -17,10 +17,11 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
- * M4 U4.4 (ADR-004 §6, metric tree): computes every figure from snapshot rows only (invariant 23). Unit: the invoice (rows
- * of one invoice collapse to its first assignment). Causal figures compare TREATMENT and CONTROL per holdout-rate stratum
- * among mature invoices (intention-to-treat); nothing is pooled across strata. Every figure has its n and label; below
- * the minimum n there is no interval ("insufficient data"); an unknown cost is TBD.
+ * M4 U4.4 (ADR-004 §6, metric tree): computes every figure from snapshot rows only (invariant 23). The unit is the invoice:
+ * its first eligible campaign's assignment, and the invoice-level outcome across all its campaigns (snapshot v2, U4.4 review).
+ * Causal figures compare TREATMENT and CONTROL per holdout-rate stratum among mature invoices (intention-to-treat); nothing
+ * is pooled across strata. Every figure has its n and label; a value that is not a computed number is labelled TBD; below the
+ * minimum n there is no interval ("insufficient data"); an unknown cost is TBD.
  */
 public final class MetricsReport {
 
@@ -29,15 +30,22 @@ public final class MetricsReport {
     public static final int STABLE_N_MONEY = 300;
     public static final int MIN_RECOVERED_MEDIAN = 10;
     public static final int[] CUMULATIVE_DAYS = {1, 3, 7, 14};
+    static final String INSUFFICIENT = "insufficient data";
 
     /**
-     * @param costPerContactMinor configured cost of one provider contact in minor units, or null (cost TBD)
-     * @param plannedTotal        pre-registered total of mature invoices for a final analysis, or null (always INTERIM)
+     * @param costPerContactMinor configured cost of one provider contact in minor units (an assumption), or null (cost TBD)
+     * @param plannedTotal        pre-registered mature invoices per holdout-rate stratum for a final analysis, or null (INTERIM)
      */
     public record Options(long seed, int resamples, Long costPerContactMinor, Long plannedTotal) {
         public Options {
             if (resamples < Bootstrap.MIN_RESAMPLES) {
                 throw new IllegalArgumentException("at least " + Bootstrap.MIN_RESAMPLES + " resamples");
+            }
+            if (costPerContactMinor != null && costPerContactMinor < 0) {
+                throw new IllegalArgumentException("cost per contact must not be negative");
+            }
+            if (plannedTotal != null && plannedTotal < 1) {
+                throw new IllegalArgumentException("planned total must be positive");
             }
         }
     }
@@ -46,10 +54,34 @@ public final class MetricsReport {
                          EvidenceLabel label, boolean interim, Options options, List<Figure> figures, List<String> notes) {
     }
 
-    /** One invoice as analysed: its first assignment and the outcome of that campaign. */
+    /** One invoice as analysed: the row of its first eligible campaign, which carries the invoice-level outcome. */
     record Unit(SnapshotRow row) {
         boolean control() {
             return "CONTROL".equals(row.arm());
+        }
+
+        boolean mature() {
+            return row.invoiceMature();
+        }
+
+        boolean recovered() {
+            return row.invoiceRecovered();
+        }
+
+        Long captureOffsetS() {
+            return row.invoiceCaptureOffsetS();
+        }
+
+        String captureSource() {
+            return row.invoiceCaptureSource();
+        }
+
+        int contacts() {
+            return row.invoiceContactCount();
+        }
+
+        boolean knownInr() {
+            return row.amountMinor() != null && "INR".equals(row.currency());
         }
     }
 
@@ -58,13 +90,15 @@ public final class MetricsReport {
     private final EvidenceLabel label;
     private final List<Figure> figures = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
+    private boolean anyInterim;
 
     private MetricsReport(SnapshotFiles snapshot, Options options) {
         this.snapshot = snapshot;
         this.options = options;
-        boolean synthetic = snapshot.rows().stream().anyMatch(r -> "SYNTHETIC".equals(r.evidenceLabel()))
-                || "mock".equals(snapshot.providerMode()) || "simulator".equals(snapshot.providerMode());
-        this.label = synthetic ? EvidenceLabel.SYNTHETIC : EvidenceLabel.MEASURED;
+        // U4.4 review: fail closed — MEASURED only for a non-empty, all-MEASURED snapshot from Razorpay live mode
+        boolean measured = !snapshot.rows().isEmpty() && "razorpay-live".equals(snapshot.providerMode())
+                && snapshot.rows().stream().allMatch(r -> "MEASURED".equals(r.evidenceLabel()));
+        this.label = measured ? EvidenceLabel.MEASURED : EvidenceLabel.SYNTHETIC;
     }
 
     public static Report compute(SnapshotFiles snapshot, Options options) {
@@ -77,23 +111,23 @@ public final class MetricsReport {
                     + "--allow-invalid was given; they are not fit for a decision.");
         }
         if (label == EvidenceLabel.SYNTHETIC) {
-            notes.add("SYNTHETIC: simulator, generated or mock-provider data. These are not revenue and support no claim about real customers.");
-        } else if ("razorpay-test".equals(snapshot.providerMode())) {
-            notes.add("MEASURED in Razorpay test mode: real provider evidence, but test-mode money is not revenue.");
+            notes.add("SYNTHETIC: simulator, generated, mock-provider or Razorpay test-mode data. Not revenue; no claim about real "
+                    + "customers follows from it.");
         }
         List<SnapshotRow> rows = snapshot.rows();
         scope("overall", rows);
-        rows.stream().map(SnapshotRow::merchantRef).distinct().sorted()
-                .forEach(m -> scope("merchant " + m.substring(0, 12), rows.stream().filter(r -> r.merchantRef().equals(m)).toList()));
-        long matureAssigned = units(rows).stream().filter(u -> u.row().mature() && rate(u.row()) > 0).count();
-        boolean interim = options.plannedTotal() == null || matureAssigned < options.plannedTotal();
-        notes.add(interim
+        rows.stream().map(SnapshotRow::merchantRef).filter(Objects::nonNull).distinct().sorted()
+                .forEach(m -> scope("merchant " + (m.length() > 12 ? m.substring(0, 12) : m),
+                        rows.stream().filter(r -> m.equals(r.merchantRef())).toList()));
+        notes.add(anyInterim || options.plannedTotal() == null
                 ? "INTERIM — not for decision: " + (options.plannedTotal() == null ? "no pre-registered sample size was given"
-                    : "mature invoices " + matureAssigned + " < pre-registered " + options.plannedTotal())
+                    : "at least one holdout-rate stratum has fewer mature invoices than the pre-registered " + options.plannedTotal())
                     + ". Repeated looks inflate false positives (no alpha spending in M4)."
-                : "FINAL: the pre-registered sample (" + options.plannedTotal() + " mature invoices) is reached.");
+                : "FINAL: every holdout-rate stratum reached the pre-registered " + options.plannedTotal() + " mature invoices.");
+        notes.add("Amounts are the failed payments' amounts (gross, refunds not observed): \"recovered amount\" assumes the invoice "
+                + "was captured in full. Captured amounts are TBD.");
         return new Report(snapshot.snapshotId(), snapshot.sha256(), snapshot.asOf(), snapshot.horizonDays(), snapshot.providerMode(),
-                snapshot.status(), label, interim, options, List.copyOf(figures), List.copyOf(notes));
+                snapshot.status(), label, anyInterim || options.plannedTotal() == null, options, List.copyOf(figures), List.copyOf(notes));
     }
 
     private void scope(String scope, List<SnapshotRow> rows) {
@@ -111,64 +145,70 @@ public final class MetricsReport {
     }
 
     private void stratum(String scope, String stratum, List<Unit> all, int rateBp) {
-        List<Unit> mature = all.stream().filter(u -> u.row().mature()).toList();
+        List<Unit> mature = all.stream().filter(Unit::mature).toList();
         List<Unit> t = mature.stream().filter(u -> !u.control()).toList();
         List<Unit> c = mature.stream().filter(Unit::control).toList();
+        boolean finalAnalysis = options.plannedTotal() != null && mature.size() >= options.plannedTotal();
+        anyInterim |= !finalAnalysis;
+        add(scope, stratum, "analysis status", finalAnalysis ? "FINAL" : "INTERIM — not for decision", null, null, mature.size(),
+                Status.DESCRIPTIVE, options.plannedTotal() == null ? "no pre-registered sample size" : "pre-registered " + options.plannedTotal());
         add(scope, stratum, "immature invoices (eligible + horizon after as_of; excluded from outcomes)",
                 Long.toString(all.size() - mature.size()), null, null, all.size() - mature.size(), Status.DESCRIPTIVE, "");
 
-        long assignedT = all.stream().filter(u -> !u.control()).count();
-        long assignedC = all.size() - assignedT;
+        long assignedC = all.stream().filter(Unit::control).count();
         ChiSquare.Result srm = ChiSquare.sampleRatio(assignedC, all.size(), rateBp);
         add(scope, stratum, "sample-ratio mismatch (chi-square p; flagged below 0.001)", fmt(srm.pValue(), 6), null, null, all.size(),
                 srm.mismatch() ? Status.ALERT : Status.OK, "CONTROL " + assignedC + " of " + all.size() + " at " + rateBp + " bp"
                         + (srm.mismatch() ? " — MISMATCH: assignment or data loss is suspect; do not interpret the effect" : ""));
 
-        rates(scope, stratum, "recovery rate", t, c, u -> u.row().recovered());
+        rates(scope, stratum, "recovery rate", t, c, Unit::recovered, Status.OK, "causal (randomized, ITT)");
         for (int day : CUMULATIVE_DAYS) {
             if (day <= snapshot.horizonDays()) {
                 long limit = day * 86_400L;
                 rates(scope, stratum, "cumulative recovery by day " + day, t, c,
-                        u -> u.row().recovered() && u.row().captureOffsetS() != null && u.row().captureOffsetS() <= limit);
+                        u -> u.recovered() && u.captureOffsetS() != null && u.captureOffsetS() <= limit, Status.OK, "causal (randomized, ITT)");
             }
         }
-        money(scope, stratum, t, c);
+        BigDecimal[] money = money(scope, stratum, t, c);
         timeToRecovery(scope, stratum, "TREATMENT", t);
         timeToRecovery(scope, stratum, "CONTROL", c);
         contacts(scope, stratum, t, c);
         attribution(scope, stratum, "TREATMENT", t);
         attribution(scope, stratum, "CONTROL", c);
+        cost(scope, stratum, t, money);
         byFailureClass(scope, stratum, t, c);
         byStrategy(scope, stratum, t);
     }
 
-    private void rates(String scope, String stratum, String name, List<Unit> t, List<Unit> c, Predicate<Unit> success) {
+    private void rates(String scope, String stratum, String name, List<Unit> t, List<Unit> c, Predicate<Unit> success,
+                       Status okStatus, String okNote) {
         long xt = t.stream().filter(success).count();
         long xc = c.stream().filter(success).count();
         arm(scope, stratum, name + " TREATMENT", xt, t.size());
         arm(scope, stratum, name + " CONTROL", xc, c.size());
         String incremental = "incremental " + name + " (TREATMENT − CONTROL)";
         if (t.size() < MIN_N_RATE || c.size() < MIN_N_RATE) {
-            add(scope, stratum, incremental, "insufficient data", null, null, t.size() + c.size(), Status.INSUFFICIENT_DATA,
+            add(scope, stratum, incremental, INSUFFICIENT, null, null, t.size() + c.size(), Status.INSUFFICIENT_DATA,
                     "n TREATMENT " + t.size() + ", CONTROL " + c.size() + "; need " + MIN_N_RATE + " per arm");
             return;
         }
         Interval d = Newcombe.difference(xt, t.size(), xc, c.size());
-        add(scope, stratum, incremental, pct(d.estimate()), pct(d.low()), pct(d.high()), t.size() + c.size(), Status.OK,
-                "Newcombe hybrid score 95 %; causal (randomized, ITT)");
+        add(scope, stratum, incremental, pp(d.estimate()), pp(d.low()), pp(d.high()), t.size() + c.size(), okStatus,
+                "Newcombe hybrid score 95 %; " + okNote);
     }
 
     private void arm(String scope, String stratum, String name, long x, long n) {
         if (n < MIN_N_RATE) {
-            add(scope, stratum, name, n == 0 ? "no data" : pct((double) x / n), null, null, n, Status.INSUFFICIENT_DATA,
-                    x + " of " + n + "; no interval below n " + MIN_N_RATE);
+            add(scope, stratum, name, n == 0 ? "no data" : INSUFFICIENT, null, null, n, Status.INSUFFICIENT_DATA,
+                    x + " of " + n + "; no figure below n " + MIN_N_RATE);
             return;
         }
         Interval w = Wilson.interval(x, n);
         add(scope, stratum, name, pct(w.estimate()), pct(w.low()), pct(w.high()), n, Status.OK, x + " of " + n + "; Wilson 95 %");
     }
 
-    private void money(String scope, String stratum, List<Unit> t, List<Unit> c) {
+    /** @return {estimate, low, high} of the incremental amount per invoice (minor units), or null when not computed. */
+    private BigDecimal[] money(String scope, String stratum, List<Unit> t, List<Unit> c) {
         long[] mt = recoveredMinor(t);
         long[] mc = recoveredMinor(c);
         long unknown = t.size() + c.size() - mt.length - mc.length;
@@ -176,56 +216,77 @@ public final class MetricsReport {
                 unknown, Status.DESCRIPTIVE, "");
         for (String arm : List.of("TREATMENT", "CONTROL")) {
             long[] values = arm.equals("TREATMENT") ? mt : mc;
-            add(scope, stratum, "recovered amount per eligible invoice " + arm + " (INR)", values.length == 0 ? "no data"
-                    : rupees(Bootstrap.mean(values)), null, null, values.length, Status.DESCRIPTIVE, "sum " + rupees(sum(values)) + " INR");
+            String name = "amount of recovered invoices per eligible invoice, " + arm + " (INR; failure amount, not captured amount)";
+            if (values.length < MIN_N_MONEY) {
+                add(scope, stratum, name, values.length == 0 ? "no data" : INSUFFICIENT, null, null, values.length,
+                        Status.INSUFFICIENT_DATA, "need " + MIN_N_MONEY + "; sum " + rupees(sum(values)) + " INR");
+                continue;
+            }
+            Bootstrap.BigInterval m = Bootstrap.meanInterval(values, options.resamples(), options.seed());
+            add(scope, stratum, name, rupees(m.estimate()), rupees(m.low()), rupees(m.high()), values.length,
+                    values.length >= STABLE_N_MONEY ? Status.DESCRIPTIVE : Status.UNSTABLE,
+                    "seeded bootstrap 95 %; sum " + rupees(sum(values)) + " INR" + (values.length >= STABLE_N_MONEY ? "" : "; UNSTABLE below " + STABLE_N_MONEY));
         }
-        String name = "incremental recovered amount per eligible invoice (INR, TREATMENT − CONTROL)";
+        String name = "incremental amount per eligible invoice (INR, TREATMENT − CONTROL)";
         if (mt.length < MIN_N_MONEY || mc.length < MIN_N_MONEY) {
-            add(scope, stratum, name, "insufficient data", null, null, mt.length + mc.length, Status.INSUFFICIENT_DATA,
+            add(scope, stratum, name, INSUFFICIENT, null, null, mt.length + mc.length, Status.INSUFFICIENT_DATA,
                     "n " + mt.length + " / " + mc.length + "; need " + MIN_N_MONEY + " per arm");
-            cost(scope, stratum, t, null);
-            return;
+            add(scope, stratum, "north star: incremental amount (per-invoice difference × TREATMENT invoices, INR)", INSUFFICIENT, null, null,
+                    mt.length + mc.length, Status.INSUFFICIENT_DATA, "");
+            return null;
         }
         Bootstrap.BigInterval d = Bootstrap.meanDifference(mt, mc, options.resamples(), options.seed());
         boolean stable = mt.length >= STABLE_N_MONEY && mc.length >= STABLE_N_MONEY;
         add(scope, stratum, name, rupees(d.estimate()), rupees(d.low()), rupees(d.high()), mt.length + mc.length,
                 stable ? Status.OK : Status.UNSTABLE, "seeded percentile bootstrap (seed " + options.seed() + ", " + options.resamples()
-                        + " resamples, stratified by arm); exact means rounded HALF_EVEN to the paisa; gross of refunds"
+                        + " resamples, stratified by arm); exact means rounded HALF_EVEN to the paisa"
                         + (stable ? "" : "; UNSTABLE below " + STABLE_N_MONEY + " per arm"));
-        cost(scope, stratum, t, d.estimate());
+        BigDecimal n = BigDecimal.valueOf(mt.length);
+        add(scope, stratum, "north star: incremental amount (per-invoice difference × TREATMENT invoices, INR)",
+                rupees(d.estimate().multiply(n)), rupees(d.low().multiply(n)), rupees(d.high().multiply(n)), mt.length,
+                stable ? Status.OK : Status.UNSTABLE, "scaled interval of the per-invoice difference");
+        return new BigDecimal[]{d.estimate(), d.low(), d.high(), stable ? BigDecimal.ONE : BigDecimal.ZERO};
     }
 
-    private void cost(String scope, String stratum, List<Unit> t, BigDecimal incrementalMinorPerInvoice) {
-        String name = "cost per incremental recovered rupee";
+    /** Decision metric: configured cost per incremental rupee, with the interval of the money difference (U4.4 review). */
+    private void cost(String scope, String stratum, List<Unit> t, BigDecimal[] money) {
+        String name = "cost per incremental recovered rupee (decision metric)";
+        String observed = "cost per observed recovered rupee (non-causal)";
         if (options.costPerContactMinor() == null) {
             add(scope, stratum, name, "TBD", null, null, t.size(), Status.TBD, "no cost model configured");
-            add(scope, stratum, "cost per observed recovered rupee (non-causal)", "TBD", null, null, t.size(), Status.TBD, "no cost model configured");
+            add(scope, stratum, observed, "TBD", null, null, t.size(), Status.TBD, "no cost model configured");
             return;
         }
-        long contacts = t.stream().mapToLong(u -> u.row().contactCount()).sum();
-        BigDecimal costPerInvoice = t.isEmpty() ? BigDecimal.ZERO : BigDecimal.valueOf(contacts * options.costPerContactMinor())
-                .divide(BigDecimal.valueOf(t.size()), 6, RoundingMode.HALF_EVEN);
-        if (incrementalMinorPerInvoice == null || incrementalMinorPerInvoice.signum() <= 0) {
-            add(scope, stratum, name, "TBD", null, null, t.size(), Status.TBD,
-                    incrementalMinorPerInvoice == null ? "incremental money not measured (insufficient data)" : "no positive incremental money");
+        List<Unit> known = t.stream().filter(Unit::knownInr).toList();   // the same subset as the money figures
+        long contacts = known.stream().mapToLong(Unit::contacts).sum();
+        long totalCost = Math.multiplyExact(contacts, options.costPerContactMinor());
+        String assumption = "configured cost " + options.costPerContactMinor() + " minor units per contact (an assumption); "
+                + contacts + " contacts over " + known.size() + " TREATMENT invoices";
+        if (money == null || known.isEmpty()) {
+            add(scope, stratum, name, "TBD", null, null, known.size(), Status.TBD, "incremental money not measured (insufficient data)");
         } else {
-            add(scope, stratum, name, costPerInvoice.divide(incrementalMinorPerInvoice, 4, RoundingMode.HALF_EVEN).toPlainString(), null, null,
-                    t.size(), Status.OK, "configured cost " + options.costPerContactMinor() + " minor units per contact; " + contacts + " contacts");
+            BigDecimal costPerInvoice = BigDecimal.valueOf(totalCost).divide(BigDecimal.valueOf(known.size()), 6, RoundingMode.HALF_EVEN);
+            if (money[1].signum() <= 0) {
+                add(scope, stratum, name, "TBD", null, null, known.size(), Status.TBD,
+                        "incremental money is not significantly positive (interval reaches 0): the ratio is undefined; " + assumption);
+            } else {
+                add(scope, stratum, name, ratio(costPerInvoice, money[0]), ratio(costPerInvoice, money[2]), ratio(costPerInvoice, money[1]),
+                        known.size(), money[3].signum() > 0 ? Status.OK : Status.UNSTABLE,
+                        "interval = cost ÷ the money interval's bounds; " + assumption);
+            }
         }
-        long recovered = sum(recoveredMinor(t));
-        add(scope, stratum, "cost per observed recovered rupee (non-causal)", recovered == 0 ? "TBD"
-                        : BigDecimal.valueOf(contacts * options.costPerContactMinor()).divide(BigDecimal.valueOf(recovered), 4, RoundingMode.HALF_EVEN).toPlainString(),
-                null, null, t.size(), recovered == 0 ? Status.TBD : Status.DESCRIPTIVE,
+        long recovered = sum(recoveredMinor(known));
+        add(scope, stratum, observed, recovered == 0 ? "TBD" : ratio(BigDecimal.valueOf(totalCost), BigDecimal.valueOf(recovered)), null, null,
+                known.size(), recovered == 0 ? Status.TBD : Status.DESCRIPTIVE,
                 "includes recoveries MEND did not cause (late captures); not a decision metric");
     }
 
     private void timeToRecovery(String scope, String stratum, String arm, List<Unit> units) {
-        long[] seconds = units.stream().filter(u -> u.row().recovered() && u.row().captureOffsetS() != null)
-                .mapToLong(u -> u.row().captureOffsetS()).toArray();
+        long[] seconds = units.stream().filter(u -> u.recovered() && u.captureOffsetS() != null).mapToLong(Unit::captureOffsetS).toArray();
         String name = "median time to recovery among recovered, " + arm + " (hours; DESCRIPTIVE, not causal)";
         if (seconds.length < MIN_RECOVERED_MEDIAN) {
-            add(scope, stratum, name, seconds.length == 0 ? "no data" : hours(Median.of(seconds)), null, null, seconds.length,
-                    Status.INSUFFICIENT_DATA, "no interval below " + MIN_RECOVERED_MEDIAN + " recoveries");
+            add(scope, stratum, name, seconds.length == 0 ? "no data" : INSUFFICIENT, null, null, seconds.length,
+                    Status.INSUFFICIENT_DATA, "needs " + MIN_RECOVERED_MEDIAN + " recoveries");
             return;
         }
         Bootstrap.BigInterval m = Bootstrap.median(seconds, options.resamples(), options.seed());
@@ -234,20 +295,21 @@ public final class MetricsReport {
     }
 
     private void contacts(String scope, String stratum, List<Unit> t, List<Unit> c) {
-        long ct = t.stream().filter(u -> u.row().contacted()).count();
-        long cc = c.stream().filter(u -> u.row().contacted()).count();
+        long ct = t.stream().filter(u -> u.contacts() > 0).count();
+        long cc = c.stream().filter(u -> u.contacts() > 0).count();
         add(scope, stratum, "contact rate TREATMENT", t.isEmpty() ? "no data" : pct((double) ct / t.size()), null, null, t.size(),
-                Status.DESCRIPTIVE, ct + " contacted");
+                Status.DESCRIPTIVE, ct + " invoices contacted");
         add(scope, stratum, "contact rate CONTROL (must be 0)", c.isEmpty() ? "no data" : pct((double) cc / c.size()), null, null, c.size(),
-                cc == 0 ? Status.DESCRIPTIVE : Status.ALERT, cc == 0 ? "" : cc + " CONTROL invoices contacted: contamination");
+                cc == 0 ? Status.DESCRIPTIVE : Status.ALERT, cc == 0 ? "" : cc + " CONTROL invoices contacted (any of their campaigns): contamination");
     }
 
     private void attribution(String scope, String stratum, String arm, List<Unit> units) {
-        Map<String, List<Unit>> bySource = units.stream().filter(u -> u.row().recovered())
-                .collect(Collectors.groupingBy(u -> u.row().captureSource(), TreeMap::new, Collectors.toList()));
+        Map<String, List<Unit>> bySource = units.stream().filter(Unit::recovered)
+                .collect(Collectors.groupingBy(Unit::captureSource, TreeMap::new, Collectors.toList()));
         for (String source : List.of("MEND", "ORIGINAL", "SYNTHETIC", "UNKNOWN")) {
             List<Unit> list = bySource.getOrDefault(source, List.of());
-            add(scope, stratum, "recoveries attributed " + source + ", " + arm, Long.toString(list.size()), null, null, units.size(),
+            String display = source.equals("ORIGINAL") ? "LATE_CAPTURE" : source;
+            add(scope, stratum, "recoveries attributed " + display + ", " + arm, Long.toString(list.size()), null, null, units.size(),
                     Status.DESCRIPTIVE, "amount " + rupees(sum(recoveredMinor(list))) + " INR (known amounts only)");
         }
     }
@@ -259,7 +321,7 @@ public final class MetricsReport {
         for (String cls : classes) {
             rates(scope, stratum + " / class " + cls, "recovery rate",
                     t.stream().filter(u -> cls(u).equals(cls)).toList(), c.stream().filter(u -> cls(u).equals(cls)).toList(),
-                    u -> u.row().recovered());
+                    Unit::recovered, Status.EXPLORATORY, "EXPLORATORY: one of " + classes.size() + " class comparisons, no multiplicity control");
         }
     }
 
@@ -267,9 +329,16 @@ public final class MetricsReport {
         Map<String, List<Unit>> byStrategy = t.stream()
                 .collect(Collectors.groupingBy(u -> u.row().strategy() == null ? "none" : u.row().strategy(), TreeMap::new, Collectors.toList()));
         byStrategy.forEach((strategy, list) -> {
-            long x = list.stream().filter(u -> u.row().recovered()).count();
-            add(scope, stratum + " / strategy " + strategy, "recovery rate TREATMENT (DESCRIPTIVE: strategy follows the class, not randomized)",
-                    pct((double) x / list.size()), null, null, list.size(), Status.DESCRIPTIVE, "channel " + channel(strategy));
+            long x = list.stream().filter(Unit::recovered).count();
+            String name = "recovery rate TREATMENT (DESCRIPTIVE: strategy follows the class, not randomized)";
+            if (list.size() < MIN_N_RATE) {
+                add(scope, stratum + " / strategy " + strategy, name, INSUFFICIENT, null, null, list.size(), Status.INSUFFICIENT_DATA,
+                        "channel " + channel(strategy) + "; no figure below n " + MIN_N_RATE);
+                return;
+            }
+            Interval w = Wilson.interval(x, list.size());
+            add(scope, stratum + " / strategy " + strategy, name, pct(w.estimate()), pct(w.low()), pct(w.high()), list.size(),
+                    Status.DESCRIPTIVE, "channel " + channel(strategy));
         });
     }
 
@@ -289,8 +358,10 @@ public final class MetricsReport {
         long unclassified = rows.stream().filter(r -> "UNCLASSIFIED".equals(r.failureClass())).count();
         long legacy = rows.stream().mapToLong(SnapshotRow::legacyDecisionBlocks).sum();
         long amountUnknown = rows.stream().filter(r -> r.amountMinor() == null).count();
+        long multi = rows.stream().filter(r -> r.invoiceFirst() && r.invoiceCampaigns() > 1).count();
         String h = "system health";
         add(scope, h, "campaign rows", Long.toString(rows.size()), null, null, rows.size(), Status.DESCRIPTIVE, "");
+        add(scope, h, "invoices with more than one campaign (collapsed into one unit)", Long.toString(multi), null, null, rows.size(), Status.DESCRIPTIVE, "");
         add(scope, h, "UNASSIGNED (pre-M4) campaigns, outside the experiment", Long.toString(unassigned), null, null, rows.size(), Status.DESCRIPTIVE, "");
         add(scope, h, "post-M4 campaigns without an assignment (must be 0)", Long.toString(postM4Missing), null, null, rows.size(),
                 postM4Missing == 0 ? Status.DESCRIPTIVE : Status.ALERT, "");
@@ -312,15 +383,11 @@ public final class MetricsReport {
         }
     }
 
-    /** One unit per invoice: the HASH row (first assignment) or, failing that, the earliest row. */
+    /** One unit per invoice: the row of its first eligible campaign, when that campaign was assigned (pre-M4 invoices are out). */
     static List<Unit> units(List<SnapshotRow> rows) {
-        Map<String, SnapshotRow> first = new TreeMap<>();
-        rows.stream().filter(r -> !SnapshotRow.UNASSIGNED.equals(r.arm()))
-                .sorted(Comparator.comparing(SnapshotRow::eligibleDay)
-                        .thenComparing(r -> "HASH".equals(r.assignmentSource()) && rate(r) > 0 ? 0 : 1)
-                        .thenComparing(SnapshotRow::campaignRef))
-                .forEach(r -> first.putIfAbsent(r.merchantRef() + "/" + r.invoiceRef(), r));
-        return first.values().stream().map(Unit::new).toList();
+        return rows.stream().filter(r -> r.invoiceFirst() && !SnapshotRow.UNASSIGNED.equals(r.arm()))
+                .sorted(Comparator.comparing(SnapshotRow::merchantRef).thenComparing(SnapshotRow::invoiceRef))
+                .map(Unit::new).toList();
     }
 
     private static int rate(SnapshotRow r) {
@@ -332,8 +399,7 @@ public final class MetricsReport {
     }
 
     private static long[] recoveredMinor(List<Unit> units) {
-        return units.stream().filter(u -> u.row().amountMinor() != null && "INR".equals(u.row().currency()))
-                .mapToLong(u -> u.row().recovered() ? u.row().amountMinor() : 0L).toArray();
+        return units.stream().filter(Unit::knownInr).mapToLong(u -> u.recovered() ? u.row().amountMinor() : 0L).toArray();
     }
 
     private static long sum(long[] values) {
@@ -345,15 +411,25 @@ public final class MetricsReport {
     }
 
     private void add(String scope, String stratum, String name, String value, String low, String high, long n, Status status, String note) {
-        figures.add(new Figure(scope, stratum, name, value, low, high, n, status == Status.TBD ? EvidenceLabel.TBD : label, status, note));
+        boolean computed = status != Status.TBD && status != Status.INSUFFICIENT_DATA && !"no data".equals(value) && !"TBD".equals(value);
+        figures.add(new Figure(scope, stratum, name, value, low, high, n, computed ? label : EvidenceLabel.TBD, status, note));
     }
 
     static String pct(double v) {
         return BigDecimal.valueOf(v * 100).setScale(2, RoundingMode.HALF_EVEN).toPlainString() + " %";
     }
 
+    /** A difference of two rates, in percentage points. */
+    static String pp(double v) {
+        return BigDecimal.valueOf(v * 100).setScale(2, RoundingMode.HALF_EVEN).toPlainString() + " pp";
+    }
+
     static String fmt(double v, int scale) {
         return BigDecimal.valueOf(v).setScale(scale, RoundingMode.HALF_EVEN).toPlainString();
+    }
+
+    static String ratio(BigDecimal numerator, BigDecimal denominator) {
+        return numerator.divide(denominator, 4, RoundingMode.HALF_EVEN).toPlainString();
     }
 
     /** Minor units (paise) to rupees, exact, rounded HALF_EVEN to the paisa. */

@@ -3,6 +3,7 @@ package com.mend.evaluation.metrics;
 import com.mend.evaluation.snapshot.SnapshotCodec;
 import com.mend.evaluation.snapshot.SnapshotRow;
 import com.mend.evaluation.snapshot.SnapshotValidator;
+import com.mend.evaluation.snapshot.SnapshotWriter;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -25,7 +26,15 @@ public record SnapshotFiles(String snapshotId, String sha256, String asOf, int h
             JsonNode manifest = JsonMapper.builder().build().readTree(Files.readString(dir.resolve("manifest.json"), StandardCharsets.UTF_8));
             String campaigns = Files.readString(dir.resolve("campaigns.jsonl"), StandardCharsets.UTF_8);
             String decisions = Files.readString(dir.resolve("decisions.jsonl"), StandardCharsets.UTF_8);
-            String sha = SnapshotCodec.snapshotSha256(campaigns, decisions);
+            String snapshotId = manifest.path("snapshot_id").stringValue();
+            if (snapshotId == null || !SnapshotWriter.SNAPSHOT_ID.matcher(snapshotId).matches()) {
+                throw new IllegalStateException("manifest snapshot_id is not a safe identifier (refused)");
+            }
+            // U4.4 review: the parameters that give the rows their meaning are part of the checksum
+            String sha = SnapshotCodec.snapshotSha256(campaigns, decisions, SnapshotCodec.canonicalParams(
+                    manifest.path("window_from").stringValue(), manifest.path("window_to").stringValue(),
+                    manifest.path("as_of").stringValue(), manifest.path("horizon_days").intValue(),
+                    manifest.path("provider_mode").stringValue()));
             if (!sha.equals(manifest.path("sha256").stringValue())) {
                 throw new IllegalStateException("snapshot files do not match the manifest sha256 (refused)");
             }

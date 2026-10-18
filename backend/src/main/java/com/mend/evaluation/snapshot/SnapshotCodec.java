@@ -24,7 +24,9 @@ public final class SnapshotCodec {
             "holdout_rate_bp", "propensity_bp", "assignment_source", "salt_version", "hash_version", "post_m4", "failure_class",
             "taxonomy_version", "strategy", "compliance", "compliance_reason", "contacted", "contact_count",
             "first_contact_offset_s", "mature", "recovered", "capture_offset_s", "capture_source", "recovery_attribution",
-            "amount_minor", "currency", "amount_status", "state_as_of", "legacy_decision_blocks", "evidence_label");
+            "amount_minor", "currency", "amount_status", "state_as_of", "legacy_decision_blocks", "invoice_first", "invoice_campaigns",
+            "invoice_mature", "invoice_recovered", "invoice_capture_offset_s", "invoice_capture_source", "invoice_contact_count",
+            "evidence_label");
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
 
@@ -37,7 +39,8 @@ public final class SnapshotCodec {
                 r.failureClass(), r.taxonomyVersion(), r.strategy(), r.compliance(), r.complianceReason(), r.contacted(),
                 r.contactCount(), r.firstContactOffsetS(), r.mature(), r.recovered(), r.captureOffsetS(), r.captureSource(),
                 r.recoveryAttribution(), r.amountMinor(), r.currency(), r.amountStatus(), r.stateAsOf(), r.legacyDecisionBlocks(),
-                r.evidenceLabel()};
+                r.invoiceFirst(), r.invoiceCampaigns(), r.invoiceMature(), r.invoiceRecovered(), r.invoiceCaptureOffsetS(),
+                r.invoiceCaptureSource(), r.invoiceContactCount(), r.evidenceLabel()};
         Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < values.length; i++) {
             map.put(CAMPAIGN_COLUMNS.get(i), values[i]);
@@ -121,7 +124,9 @@ public final class SnapshotCodec {
                     lng(n, "first_contact_offset_s"), n.path("mature").asBoolean(), n.path("recovered").asBoolean(),
                     lng(n, "capture_offset_s"), str(n, "capture_source"), str(n, "recovery_attribution"), lng(n, "amount_minor"),
                     str(n, "currency"), str(n, "amount_status"), str(n, "state_as_of"), n.path("legacy_decision_blocks").asInt(),
-                    str(n, "evidence_label")));
+                    n.path("invoice_first").asBoolean(), n.path("invoice_campaigns").asInt(), n.path("invoice_mature").asBoolean(),
+                    n.path("invoice_recovered").asBoolean(), lng(n, "invoice_capture_offset_s"), str(n, "invoice_capture_source"),
+                    n.path("invoice_contact_count").asInt(), str(n, "evidence_label")));
         }
         return rows;
     }
@@ -145,8 +150,23 @@ public final class SnapshotCodec {
      * U4.3 review: the snapshot checksum = sha256 of "campaigns.jsonl:&lt;sha&gt;\ndecisions.jsonl:&lt;sha&gt;\n" (per-file hashes), so
      * moving a line from one file to the other changes it.
      */
-    public static String snapshotSha256(String campaignsJsonl, String decisionsJsonl) {
-        return sha256("campaigns.jsonl:" + sha256(campaignsJsonl) + "\ndecisions.jsonl:" + sha256(decisionsJsonl) + "\n");
+    public static String snapshotSha256(String campaignsJsonl, String decisionsJsonl, SnapshotParams params) {
+        return snapshotSha256(campaignsJsonl, decisionsJsonl, canonicalParams(params));
+    }
+
+    /** U4.4 review: the manifest parameters that change the content's meaning are covered by the checksum too. */
+    public static String snapshotSha256(String campaignsJsonl, String decisionsJsonl, String canonicalParams) {
+        return sha256("campaigns.jsonl:" + sha256(campaignsJsonl) + "\ndecisions.jsonl:" + sha256(decisionsJsonl)
+                + "\nparams:" + sha256(canonicalParams) + "\n");
+    }
+
+    public static String canonicalParams(SnapshotParams p) {
+        return canonicalParams(p.windowFrom().toString(), p.windowTo().toString(), p.asOf().toString(), p.horizonDays(), p.providerMode());
+    }
+
+    public static String canonicalParams(String windowFrom, String windowTo, String asOf, int horizonDays, String providerMode) {
+        return "schema_version=" + SnapshotRow.SCHEMA_VERSION + ";window_from=" + windowFrom + ";window_to=" + windowTo + ";as_of=" + asOf
+                + ";horizon_days=" + horizonDays + ";provider_mode=" + providerMode;
     }
 
     public static String sha256(String... parts) {

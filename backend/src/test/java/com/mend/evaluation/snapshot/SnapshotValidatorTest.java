@@ -45,7 +45,7 @@ class SnapshotValidatorTest {
             "AMOUNT_STATUS_INCONSISTENT| \"amount_status\":\"KNOWN\" | \"amount_status\":\"UNKNOWN\"",
             "ASSIGNMENT_MISSING        | \"arm\":\"TREATMENT\" | \"arm\":\"UNASSIGNED\"",
             "SCHEMA_BAD_ENUM           | \"arm\":\"TREATMENT\" | \"arm\":\"TREATED\"",
-            "SCHEMA_VERSION            | eval-snapshot-v1 | eval-snapshot-v0",
+            "SCHEMA_VERSION            | eval-snapshot-v2 | eval-snapshot-v0",
             "SCHEMA_BAD_DAY            | \"eligible_day\":\"2026-09-01\" | \"eligible_day\":\"2026-09-01T00:00:00Z\"",
             "SCHEMA_BAD_TYPE           | \"mature\":true | \"mature\":\"yes\"",
             "SCHEMA_MISSING_FIELD      | \"currency\":\"INR\", | ''"
@@ -70,7 +70,7 @@ class SnapshotValidatorTest {
         assertTrue(codes(line.replace("\"propensity_bp\":8000", "\"propensity_bp\":9000")).contains("PROPENSITY_INCONSISTENT"));
         assertTrue(codes(line.replace("\"currency\":\"INR\"", "\"currency\":\"rupee\"")).contains("AMOUNT_BAD_CURRENCY"));
 
-        String decision = "{\"schema_version\":\"eval-snapshot-v1\",\"merchant_ref\":\"x\",\"campaign_ref\":\"%s\",\"intent_ref\":null,"
+        String decision = "{\"schema_version\":\"eval-snapshot-v2\",\"merchant_ref\":\"x\",\"campaign_ref\":\"%s\",\"intent_ref\":null,"
                 + "\"decision_point\":\"%s\",\"chosen\":\"A\",\"reason_code\":null,\"alternatives\":[%s],\"propensity_bp\":%d,"
                 + "\"taxonomy_version\":null,\"strategy_version\":null,\"compliance_version\":null,\"assignment_version\":null,\"offset_s\":0}\n";
         String ref = line.substring(line.indexOf("\"campaign_ref\":\"") + 16, line.indexOf("\"campaign_ref\":\"") + 48);

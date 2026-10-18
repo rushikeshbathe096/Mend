@@ -153,7 +153,8 @@ class SnapshotBuilderTest {
     @Test
     @DisplayName("Checksum: moving a line from one file to the other changes it; parameters are truncated to microseconds")
     void checksumRule() {
-        assertNotEquals(SnapshotCodec.snapshotSha256("a\nb\n", "c\n"), SnapshotCodec.snapshotSha256("a\n", "b\nc\n"));
+        assertNotEquals(SnapshotCodec.snapshotSha256("a\nb\n", "c\n", "p"), SnapshotCodec.snapshotSha256("a\n", "b\nc\n", "p"));
+        assertNotEquals(SnapshotCodec.snapshotSha256("a\n", "c\n", "horizon_days=14"), SnapshotCodec.snapshotSha256("a\n", "c\n", "horizon_days=7"));
         SnapshotParams p = new SnapshotParams(Instant.parse("2026-09-01T00:00:00.123456789Z"), PARAMS.windowTo(), AS_OF, 14, null, "mock", List.of());
         assertEquals(Instant.parse("2026-09-01T00:00:00.123456Z"), p.windowFrom());
     }

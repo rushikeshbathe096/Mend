@@ -78,9 +78,9 @@ class MetricsReportTest {
         assertEquals("10.00 %", c.value());
         assertEquals("3.96 %", c.low());
         Figure d = figure(r, s, "incremental recovery rate (TREATMENT − CONTROL)");
-        assertEquals("20.00 %", d.value());
-        assertEquals("2.32 %", d.low());
-        assertEquals("36.57 %", d.high());
+        assertEquals("20.00 pp", d.value());
+        assertEquals("2.32 pp", d.low());
+        assertEquals("36.57 pp", d.high());
         assertEquals(Figure.Status.OK, d.status());
         assertEquals(EvidenceLabel.SYNTHETIC, d.label());
         assertEquals(EvidenceLabel.SYNTHETIC, r.label());
@@ -104,8 +104,11 @@ class MetricsReportTest {
         assertEquals(Figure.Status.INSUFFICIENT_DATA, d.status());
         assertEquals(30, d.n());
         assertEquals(Figure.Status.INSUFFICIENT_DATA, figure(r, s, "recovery rate CONTROL").status());
-        assertEquals("insufficient data", figure(r, s, "incremental recovered amount per eligible invoice (INR, TREATMENT − CONTROL)").value());
-        Figure cost = figure(r, s, "cost per incremental recovered rupee");
+        assertEquals("insufficient data", figure(r, s, "incremental amount per eligible invoice (INR, TREATMENT − CONTROL)").value());
+        assertEquals(EvidenceLabel.TBD, d.label(), "a number that was not computed is TBD (invariant 20)");
+        Figure median = figure(r, s, "median time to recovery among recovered, CONTROL (hours; DESCRIPTIVE, not causal)");
+        assertEquals("insufficient data", median.value(), "1 recovery: no median below 10");
+        Figure cost = figure(r, s, "cost per incremental recovered rupee (decision metric)");
         assertEquals("TBD", cost.value());
         assertEquals(EvidenceLabel.TBD, cost.label());
         assertEquals("TBD", figure(r, "system health", "customers with invoices in both arms (interference)").value());
@@ -116,22 +119,97 @@ class MetricsReportTest {
     void moneyAndCost() {
         MetricsReport.Report r = report(snapshot("simulator", 120, 60, 120, 30, 5), 500L, 240L);
         String s = "holdout 5000 bp";
-        assertEquals("500.00", figure(r, s, "recovered amount per eligible invoice TREATMENT (INR)").value());
-        assertEquals("250.00", figure(r, s, "recovered amount per eligible invoice CONTROL (INR)").value());
-        Figure m = figure(r, s, "incremental recovered amount per eligible invoice (INR, TREATMENT − CONTROL)");
+        assertEquals("500.00", figure(r, s, "amount of recovered invoices per eligible invoice, TREATMENT (INR; failure amount, not captured amount)").value());
+        assertEquals("250.00", figure(r, s, "amount of recovered invoices per eligible invoice, CONTROL (INR; failure amount, not captured amount)").value());
+        Figure m = figure(r, s, "incremental amount per eligible invoice (INR, TREATMENT − CONTROL)");
         assertEquals("250.00", m.value());
         assertEquals(Figure.Status.UNSTABLE, m.status());
         assertNotNull(m.low());
         assertTrue(new java.math.BigDecimal(m.low()).compareTo(new java.math.BigDecimal(m.high())) < 0);
         // 120 contacts × 5.00 INR / 120 invoices = 5.00 INR per invoice; ÷ 250.00 INR incremental = 0.0200
-        assertEquals("0.0200", figure(r, s, "cost per incremental recovered rupee").value());
-        assertEquals("25.00 %", figure(r, s, "incremental recovery rate (TREATMENT − CONTROL)").value());
-        assertEquals("12.80 %", figure(r, s, "incremental recovery rate (TREATMENT − CONTROL)").low());
+        Figure cost = figure(r, s, "cost per incremental recovered rupee (decision metric)");
+        assertEquals("0.0200", cost.value());
+        assertEquals(Figure.Status.UNSTABLE, cost.status(), "inherits the money figure's instability");
+        assertNotNull(cost.low());
+        assertTrue(new java.math.BigDecimal(cost.low()).compareTo(new java.math.BigDecimal(cost.high())) < 0);
+        // 120 contacts × 5.00 INR / 60 recovered × 1 000.00 INR
+        assertEquals("0.0100", figure(r, s, "cost per observed recovered rupee (non-causal)").value());
+        assertEquals("25.00 pp", figure(r, s, "incremental recovery rate (TREATMENT − CONTROL)").value());
+        assertEquals("12.80 pp", figure(r, s, "incremental recovery rate (TREATMENT − CONTROL)").low());
+        assertEquals(Figure.Status.UNSTABLE,
+                figure(r, s, "amount of recovered invoices per eligible invoice, TREATMENT (INR; failure amount, not captured amount)").status());
+        assertEquals("30000.00", figure(r, s, "north star: incremental amount (per-invoice difference × TREATMENT invoices, INR)").value());
         assertFalse(r.interim(), "240 mature invoices reached the pre-registered 240");
         assertEquals("5.0", figure(r, s, "median time to recovery among recovered, TREATMENT (hours; DESCRIPTIVE, not causal)").value());
         assertEquals("0.00 %", figure(r, s, "contact rate CONTROL (must be 0)").value());
         assertEquals("60", figure(r, s, "recoveries attributed MEND, TREATMENT").value());
-        assertEquals("30", figure(r, s, "recoveries attributed ORIGINAL, CONTROL").value());
+        assertEquals("30", figure(r, s, "recoveries attributed LATE_CAPTURE, CONTROL").value());
+    }
+
+    @Test
+    @DisplayName("Fail closed: razorpay-test data and an empty snapshot are SYNTHETIC, never MEASURED")
+    void labelFailsClosed() {
+        assertEquals(EvidenceLabel.SYNTHETIC, report(snapshot("razorpay-test", 40, 12, 40, 4, 30), null, null).label());
+        assertEquals(EvidenceLabel.SYNTHETIC, report(snapshot("razorpay-live", 0, 0, 0, 0, 30), null, null).label());
+    }
+
+    @Test
+    @DisplayName("Invoice-level ITT: a later campaign's recovery and contact count for the invoice's first arm (CONTROL → contamination ALERT)")
+    void invoiceLevelOutcome() {
+        List<CampaignFacts> facts = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            facts.add(simple("t" + i, "TREATMENT", 5000, T0.plusSeconds(i), List.of(), false));
+            facts.add(simple("c" + i, "CONTROL", 5000, T0.plusSeconds(100 + i), List.of(), false));
+        }
+        // invoice c0 also has a later campaign (holdout switched off, rate 0: TREATMENT) that MEND contacted and recovered
+        CampaignFacts later = new CampaignFacts(MERCHANT, UUID.nameUUIDFromBytes("c0-later".getBytes()), "inv:inv_c0", null,
+                T0.plus(Duration.ofDays(2)), new CampaignFacts.Assignment("TREATMENT", 0, 10_000, "HASH", 1, "h"), null, null,
+                "CUSTOMER_ACTION_REQUIRED", "ALLOWED", null, List.of(T0.plus(Duration.ofDays(2)).plusSeconds(60)),
+                List.of(new Capture(T0.plus(Duration.ofDays(3)), CaptureSource.MEND)), "MEND", "RECOVERED", 100_000L, "INR", 0, T0, false);
+        facts.add(later);
+        MetricsReport.Report r = report(write("multi", facts), null, null);
+        String s = "holdout 5000 bp";
+        assertEquals("2.50 %", rate(r, s, "recovery rate CONTROL"), "1 of 40 CONTROL invoices recovered (via its later campaign)");
+        Figure contamination = figure(r, s, "contact rate CONTROL (must be 0)");
+        assertEquals(Figure.Status.ALERT, contamination.status());
+        assertEquals("1", figure(r, "system health", "invoices with more than one campaign (collapsed into one unit)").value());
+        assertEquals("0", figure(r, "-", "invoices without a holdout (rate 0, no CONTROL): not part of any causal figure").value(),
+                "the later rate-0 campaign is part of its invoice, not a unit of its own");
+    }
+
+    @Test
+    @DisplayName("Strata are never pooled; an SRM mismatch is an ALERT")
+    void strataAndSrm() {
+        List<CampaignFacts> facts = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            facts.add(simple("a" + i, i < 70 ? "CONTROL" : "TREATMENT", 5000, T0.plusSeconds(i), List.of(), false));   // 70/80 CONTROL at 0.5
+            facts.add(simple("b" + i, i < 16 ? "CONTROL" : "TREATMENT", 2000, T0.plusSeconds(500 + i), List.of(), false)); // 16/80 at 0.2
+        }
+        MetricsReport.Report r = report(write("strata", facts), null, null);
+        assertEquals(Figure.Status.ALERT, figure(r, "holdout 5000 bp", "sample-ratio mismatch (chi-square p; flagged below 0.001)").status());
+        assertEquals(Figure.Status.OK, figure(r, "holdout 2000 bp", "sample-ratio mismatch (chi-square p; flagged below 0.001)").status());
+        assertEquals(80, figure(r, "holdout 2000 bp", "analysis status").n());
+    }
+
+    private CampaignFacts simple(String id, String arm, int rate, Instant eligible, List<Capture> captures, boolean contacted) {
+        int propensity = "CONTROL".equals(arm) ? rate : 10_000 - rate;
+        return new CampaignFacts(MERCHANT, UUID.nameUUIDFromBytes(id.getBytes()), "inv:inv_" + id, null, eligible,
+                new CampaignFacts.Assignment(arm, rate, propensity, "HASH", 1, "h"), "INSUFFICIENT_FUNDS", "t", null, null, null,
+                contacted ? List.of(eligible.plusSeconds(60)) : List.of(), captures, null, "ELIGIBLE", 100_000L, "INR", 0, T0, false);
+    }
+
+    private Path write(String name, List<CampaignFacts> facts) {
+        SnapshotParams params = new SnapshotParams(T0, T0.plus(Duration.ofDays(3)), AS_OF, 14, null, "simulator", List.of());
+        Path dir = tmp.resolve(name);
+        SnapshotWriter.write(dir, name, Instant.EPOCH, params,
+                SnapshotBuilder.build(facts, List.of(), new Pseudonyms(Map.of(MERCHANT, new byte[32])), params), List.of());
+        return dir;
+    }
+
+    private static String rate(MetricsReport.Report r, String stratum, String name) {
+        // below n 30 the arm shows no value, so read the note ("x of n")
+        Figure f = figure(r, stratum, name);
+        return f.status() == Figure.Status.OK ? f.value() : f.note();
     }
 
     @Test

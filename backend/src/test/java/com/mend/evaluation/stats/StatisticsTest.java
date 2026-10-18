@@ -93,6 +93,36 @@ class StatisticsTest {
         assertEquals(0, i.high().compareTo(BigDecimal.ONE), "P(both draws 1) = 0.25 > 0.025");
     }
 
+    @Test
+    @DisplayName("Percentile indices: B = 2 000 sorted values 1..2000 give bounds 50 and 1 950")
+    void percentileIndexExact() {
+        BigDecimal[] stats = new BigDecimal[2000];
+        for (int i = 0; i < 2000; i++) {
+            stats[i] = BigDecimal.valueOf(2000 - i);   // reversed: percentile sorts
+        }
+        Bootstrap.BigInterval i = Bootstrap.percentile(BigDecimal.ZERO, stats);
+        assertEquals(0, i.low().compareTo(BigDecimal.valueOf(50)));
+        assertEquals(0, i.high().compareTo(BigDecimal.valueOf(1950)));
+    }
+
+    @Test
+    @DisplayName("Newcombe at the edges: 0/30 − 0/30 and 30/30 − 0/30 stay inside [−1, 1]")
+    void newcombeEdges() {
+        Interval zero = Newcombe.difference(0, 30, 0, 30);
+        assertEquals(0.0, zero.estimate(), EPS);
+        assertTrue(zero.low() < 0 && zero.high() > 0 && zero.low() >= -1 && zero.high() <= 1);
+        Interval full = Newcombe.difference(30, 30, 0, 30);
+        assertEquals(1.0, full.estimate(), EPS);
+        assertTrue(full.high() <= 1.0 + EPS && full.low() > 0.8);
+    }
+
+    @Test
+    @DisplayName("erfc accuracy at small p: χ² 10.8276 → p 0.001, χ² 15.1367 → p 0.0001 (relative 1e-6)")
+    void erfcSmallP() {
+        assertEquals(1e-3, ChiSquare.erfc(Math.sqrt(10.827566170662733 / 2)), 1e-9);
+        assertEquals(1e-4, ChiSquare.erfc(Math.sqrt(15.136705226623606 / 2)), 1e-10);
+    }
+
     @ParameterizedTest(name = "control {0} vs treatment {1} at holdout {2}: N = {3}, CONTROL = {4}")
     @CsvSource({
             "0.10, 0.15, 0.1, 3271, 328",

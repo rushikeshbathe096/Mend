@@ -132,6 +132,11 @@ class EvalSnapshotIntegrationTest {
         jdbc.update("UPDATE audit_logs SET created_at = created_at - make_interval(secs => ?) WHERE merchant_id = ?", (double) by.toSeconds(), merchantId);
     }
 
+    private static String canonicalParams(Path dir) throws java.io.IOException {
+        return tools.jackson.databind.json.JsonMapper.builder().build().readTree(Files.readString(dir.resolve("manifest.json")))
+                .path("canonical_params").stringValue();
+    }
+
     private EvalSnapshotService.Request request(Instant asOf) {
         return new EvalSnapshotService.Request(asOf.minus(Duration.ofDays(30)), asOf, asOf, 1, List.of(merchantId));
     }
@@ -163,7 +168,7 @@ class EvalSnapshotIntegrationTest {
         Path dir = snapshotDir.resolve(s.getId().toString());
         String campaignsJsonl = Files.readString(dir.resolve("campaigns.jsonl"));
         String decisionsJsonl = Files.readString(dir.resolve("decisions.jsonl"));
-        assertEquals(s.getSha256(), SnapshotCodec.snapshotSha256(campaignsJsonl, decisionsJsonl));
+        assertEquals(s.getSha256(), SnapshotCodec.snapshotSha256(campaignsJsonl, decisionsJsonl, canonicalParams(dir)));
         try (var entries = Files.list(snapshotDir)) {
             assertTrue(entries.noneMatch(p -> p.getFileName().toString().startsWith(".tmp-")), "published atomically, no temp dir left");
         }
@@ -242,7 +247,7 @@ class EvalSnapshotIntegrationTest {
             EvalSnapshot again = snapshots.createSnapshot(request(asOf));
             assertEquals(s.getId(), again.getId());
             assertEquals(s.getSha256(), SnapshotCodec.snapshotSha256(Files.readString(dir.resolve("campaigns.jsonl")),
-                    Files.readString(dir.resolve("decisions.jsonl"))));
+                    Files.readString(dir.resolve("decisions.jsonl")), canonicalParams(dir)));
         } finally {
             TestRows.deleteMerchant(jdbc, other);
         }
