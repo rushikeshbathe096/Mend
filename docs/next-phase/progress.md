@@ -263,3 +263,28 @@ Verify: backend `[INFO] Tests run: 895, Failures: 0, Errors: 0, Skipped: 0`, `BU
   now` (fenced by status), never NEEDS_RECONCILIATION; none → review `CUSTOMER_SAYS_PAID`. DISPUTE → review
   `CUSTOMER_DISPUTE` (appends to an open review). Others → shown only. Never RECOVERED.
 - Retention: 90 days, purge job M5-owned (documented).
+
+### U2.4 — done (review pending)
+Commits: `8fe7e0c` ai-service, `3f6209d` backend, frontend panel (next commit after `3f6209d`).
+- As planned, except DECISION U2.4-c: a single `model_id` column (the provider's `modelVersion`); no separate
+  `model_version`, which would duplicate it.
+- DECISION U2.4-d: the opt-out column is read-only in JPA and written only by conditional updates (a stale entity save
+  cannot clear it). The executor gate reads it `FOR SHARE` in the dispatch transaction.
+- DECISION U2.4-e: compliance policy version v2.0 → v2.1 (new rule; one assertion updated with an M3 behaviour-change
+  comment).
+- DECISION U2.4-f: ALREADY_PAID changes only `reconcile_after`. Status-fenced and no version bump, so an in-flight
+  reconcile keeps its own fence.
+- DECISION U2.4-g: PROMISE_TO_PAY's date is shown only (no reschedule).
+Tests: ReplyParsingIntegrationTest (13, real PostgreSQL and threads), ReplySuggestionValidatorTest (15),
+HttpReplyParserClientTest (4), TenantGuard table +4 methods, ai-service test_parse_reply (10), frontend panel (3).
+Test-time fact: the DB session time zone is Asia/Kolkata while Hibernate stores Instants as UTC wall-clock, so tests make
+rows due relative to the row's own timestamps, never `now()`.
+Revert proofs (all five run at once, each targeting one test):
+- `optOutBlocksContactAtComplianceAndDispatch:151 Expected ComplianceBlockedException` (no dispatch gate)
+- `staleCampaignSaveKeepsOptOut:173 expected: not <null>` (writable column)
+- `invalidAndAbstainedHaveNoEffect:257 expected: <NONE> but was: <CONTACT_OPTED_OUT>` (no abstain check)
+- `staleResultIsDropped:320 expected: <0> but was: <1>` (unfenced markParsed)
+- `alreadyPaidNeverTouchesNeedsReconciliation:203 expected: <REVIEW_CUSTOMER_SAYS_PAID> but was: <PAYMENT_LOOKUP_BROUGHT_FORWARD>` (unfenced lookup)
+Verify: backend `[INFO] Tests run: 938, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS`; frontend
+`Tests: 62 passed, 62 total`, build OK, lint 0 errors; ai-service `61 passed`.
+

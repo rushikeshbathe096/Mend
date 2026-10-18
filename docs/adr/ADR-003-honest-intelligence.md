@@ -75,6 +75,16 @@ they can stop or hold a recovery. Inventory: `docs/m3/M3-analysis.md`.
 
    LLM output never triggers a financial action. The model id comes from the provider response. With no key, the reply
    is `model_unavailable` and there is no output.
+
+   Implementation (U2.4):
+   - Intents: `OPT_OUT`, `ALREADY_PAID`, `DISPUTE`, `PROMISE_TO_PAY` (with an optional promised date) and `OTHER`.
+   - Strict schema: exactly `intent`, `promised_date` and `abstain`; a date only with a promise. Invalid output is
+     stored as invalid and never coerced.
+   - Model: Gemini `generateContent` over httpx. `model_id` is the response's `modelVersion`, NULL when it is absent.
+   - The opt-out lives in `campaigns.contact_opted_out_at`, which is read-only in JPA. The executor reads it `FOR SHARE`
+     in the dispatch transaction (compliance policy v2.1).
+   - The PROMISE_TO_PAY date is shown only: no reschedule.
+   - Replies are PII: text ≤ 2000 characters, never logged or audited, retention 90 days (purge job M5-owned).
 6. **Evaluation**: a versioned SYNTHETIC-labelled dataset and a keyword baseline. Model metrics are recorded only when a
    model was actually run.
 
