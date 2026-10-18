@@ -305,7 +305,11 @@ public class Phase19MerchantProductIntegrationTest extends AbstractIntegrationTe
         // M3 behaviour change (ADR-003): the AGENT_FAILURE scenario was AI theatre; it is now UNCLASSIFIED_FAILURE (an
         // undocumented error_reason is never guessed), with the same safe outcome
         JsonNode response = runScenarioJson(tokenA, merchantA.getMerchantId(), "UNCLASSIFIED_FAILURE");
-        org.junit.jupiter.api.Assertions.assertEquals("EXHAUSTED", response.get("finalCampaignState").asText());
+        // M3 behaviour change (owner decision B): was EXHAUSTED; an UNCLASSIFIED failure now gets a payment link, never a retry
+        org.junit.jupiter.api.Assertions.assertEquals("ACTION_PENDING", response.get("finalCampaignState").asText());
+        java.util.List<String> steps = new java.util.ArrayList<>();
+        response.get("executionSteps").forEach(step -> steps.add(step.asText()));
+        org.junit.jupiter.api.Assertions.assertTrue(steps.stream().anyMatch(step -> step.contains("REQUEST_CUSTOMER_ACTION")), steps.toString());
     }
 
     // ------------------------------------------------------------------

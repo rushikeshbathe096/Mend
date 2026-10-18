@@ -51,17 +51,27 @@ they can stop or hold a recovery. Inventory: `docs/m3/M3-analysis.md`.
    | `AUTHENTICATION_FAILURE` | pre-M3 `AUTHENTICATION_FAILED` | CUSTOMER_ACTION_REQUIRED |
    | `INSTRUMENT_INVALID` | pre-M3 `CARD_EXPIRED` | CUSTOMER_ACTION_REQUIRED |
    | `CUSTOMER_DECLINED`, `MANDATE_INVALID` | new rows | CUSTOMER_ACTION_REQUIRED (a payment link) |
-   | `UNCLASSIFIED` | pre-M3 `UNKNOWN` | ineligible → EXHAUSTED; compliance block |
+   | `UNCLASSIFIED` | owner decision B (2026-10-18; was: pre-M3 `UNKNOWN`, ineligible) | CUSTOMER_ACTION_REQUIRED (a payment link) only; a retry is blocked by compliance |
 
    Pre-M3 `BANK_DECLINED` has no taxonomy equivalent: the documented declines (`card_declined`, `payment_declined`,
    `debit_declined`) are deliberately unmapped.
 
-   Legacy rows (pre-M3 classes, AI confidence) are treated as UNCLASSIFIED (fail closed) wherever they are re-evaluated.
-   They are never rewritten.
+   Legacy rows (pre-M3 classes, AI confidence, or no taxonomy version) fail closed wherever they are re-evaluated:
+   ineligible, strategy MANUAL_REVIEW, compliance `UNKNOWN_CLASSIFICATION`. They are never rewritten.
+
+   **Amendment, owner decision B (2026-10-18).** An unmapped decline is still never guessed. But a *deterministic*
+   UNCLASSIFIED row may get a payment link: the customer chooses whether to pay, and MEND never moves money on a guess.
+   This covers an undocumented reason, or a documented one with no actor (`card_declined`, `payment_declined`,
+   `debit_declined`, `payment_failed`, `authorisation_declined_by_psp`, `payment_session_expired`,
+   `payment_collect_request_expired`).
+   - The row is eligible.
+   - The strategy table gives CUSTOMER_ACTION_REQUIRED (strategy policy v2.1).
+   - Compliance rule 3c blocks RETRY_IMMEDIATELY / RETRY_LATER for UNCLASSIFIED with `RETRY_NOT_ALLOWED_UNCLASSIFIED`
+     (compliance policy v2.2). Neither the table nor compliance alone can allow a retry or a debit for it.
 
    All confidence gates go: eligibility 0.50, strategy and compliance 0.80, and the agent's 0.70. Compliance's
-   `UNKNOWN` and `LOW_CONFIDENCE` blocks are replaced by a block on `UNCLASSIFIED` or any non-taxonomy class, so a failure
-   without evidence is still blocked. MANUAL_REVIEW now comes only from the strategy table (merchant's enabled actions)
+   `UNKNOWN` and `LOW_CONFIDENCE` blocks are replaced by a block on any non-taxonomy class (and, before decision B, on
+   `UNCLASSIFIED`), so a failure without evidence is still never retried. MANUAL_REVIEW now comes only from the strategy table (merchant's enabled actions)
    and from explicit review codes.
 5. **One AI task: customer-reply parsing, asynchronous.** The output is a schema-validated *suggestion* (intent enum,
    optional promised date, abstain flag). A deterministic policy owns every effect:
@@ -94,7 +104,8 @@ confidence is not. Async parsing keeps AI useful without putting it between a fa
 
 ## Consequences
 - ai-service outages no longer change payment outcomes.
-- An undocumented Razorpay reason is not auto-recovered until it is mapped with evidence.
+- An undocumented Razorpay reason is never retried until it is mapped with evidence. Under decision B it gets a payment
+  link, so the customer can still pay.
 - A classification row decides only if it carries a taxonomy version. A pre-M3 row fails closed even when its class name
   matches a taxonomy class (`INSUFFICIENT_FUNDS`, `LIMIT_EXCEEDED`), and so does a campaign with no classification row.
 - Compliance checks the class before the strategy rules, so a legacy campaign is blocked (`UNKNOWN_CLASSIFICATION`) and is

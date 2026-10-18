@@ -18,8 +18,11 @@ public class RecoveryStrategyEngine {
 
     private static final Logger log = LoggerFactory.getLogger(RecoveryStrategyEngine.class);
 
-    /** v2.0 (M3 U2.2): rules keyed by the deterministic taxonomy class; no confidence rule (ADR-003 §4). */
-    public static final String POLICY_VERSION = "v2.0";
+    /**
+     * v2.0 (M3 U2.2): rules keyed by the deterministic taxonomy class; no confidence rule (ADR-003 §4).
+     * v2.1 (M3 follow-up, owner decision B): UNCLASSIFIED -> CUSTOMER_ACTION_REQUIRED (payment link only).
+     */
+    public static final String POLICY_VERSION = "v2.1";
     public static final int DEFAULT_MAX_ATTEMPTS = 3;
 
 
@@ -91,8 +94,12 @@ public class RecoveryStrategyEngine {
         PaymentFailureClass failureClass = classification != null && classification.getTaxonomyVersion() != null
                 ? PaymentFailureClass.fromStored(failureClassStr) : null;
 
-        // A switch expression, so the compiler checks that every taxonomy class has a rule.
-        StrategyRule rule = switch (failureClass == null ? PaymentFailureClass.UNCLASSIFIED : failureClass) {
+        // A switch expression, so the compiler checks that every taxonomy class has a rule. A legacy row or a missing
+        // classification (failureClass null) fails closed to MANUAL_REVIEW, which compliance blocks.
+        StrategyRule rule = failureClass == null
+                ? new StrategyRule(RecoveryStrategy.MANUAL_REVIEW,
+                        "No deterministic classification (legacy pre-M3 row or none); fail closed to manual review", "HIGH")
+                : switch (failureClass) {
             case INSUFFICIENT_FUNDS -> currentAttemptCount == 0
                     ? new StrategyRule(RecoveryStrategy.RETRY_LATER, "Soft failure due to insufficient funds; schedule initial retry", "NORMAL")
                     : currentAttemptCount == 1
@@ -108,8 +115,10 @@ public class RecoveryStrategyEngine {
             case CUSTOMER_DECLINED -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
                     "Customer cancelled or did not complete the payment; send a payment link", "NORMAL");
             case MANDATE_INVALID -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED, "Mandate could not be set up; customer action required", "HIGH");
-            case UNCLASSIFIED -> new StrategyRule(RecoveryStrategy.MANUAL_REVIEW,
-                    "No documented failure classification ('" + failureClassStr + "')", "LOW");
+            // Owner decision B (2026-10-18): an unmapped decline (e.g. card_declined, payment_failed) gets a payment link,
+            // never a retry or debit; compliance also blocks a retry for UNCLASSIFIED.
+            case UNCLASSIFIED -> new StrategyRule(RecoveryStrategy.CUSTOMER_ACTION_REQUIRED,
+                    "No documented mapping for the failure reason; payment link only, never a retry", "HIGH");
         };
         RecoveryStrategy computedStrategy = rule.strategy();
         String reason = rule.reason();

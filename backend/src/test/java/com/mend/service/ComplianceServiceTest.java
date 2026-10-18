@@ -126,8 +126,8 @@ public class ComplianceServiceTest extends AbstractIntegrationTest {
         assertEquals(ComplianceReason.ALLOWED, complianceDecision.getReason());
         assertEquals(RecoveryStrategy.RETRY_LATER, complianceDecision.getStrategy());
         // M3 behaviour change (ADR-003 §4): compliance policy v2.0 (taxonomy-class rule, no confidence rule); was v1.0
-        // M3 behaviour change: v2.1 adds the CUSTOMER_OPTED_OUT rule (ADR-003 §5)
-        assertEquals("v2.1", complianceDecision.getPolicyVersion());
+        // M3 behaviour change: v2.1 adds the CUSTOMER_OPTED_OUT rule (ADR-003 §5); v2.2 the UNCLASSIFIED link-only rule
+        assertEquals("v2.2", complianceDecision.getPolicyVersion());
 
         // 6. DB Verification
         List<ComplianceDecisionEntity> persistedDecisions = complianceDecisionRepository.findByCampaignIdOrderByEvaluatedAtDesc(campaign.getId());

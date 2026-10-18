@@ -21,7 +21,7 @@ public enum PaymentFailureClass {
     INSTRUMENT_INVALID,
     /** A recurring mandate could not be created or acknowledged. */
     MANDATE_INVALID,
-    /** No documented mapping: never guessed. */
+    /** No documented mapping: never guessed. Recovered only by a payment link, never by a retry (ADR-003 §4, decision B). */
     UNCLASSIFIED;
 
     /**
@@ -40,9 +40,11 @@ public enum PaymentFailureClass {
         return null;
     }
 
-    /** True only for a taxonomy class other than UNCLASSIFIED: legacy and unclassified values fail closed. */
-    public static boolean isRecoverable(String value) {
-        PaymentFailureClass c = fromStored(value);
-        return c != null && c != UNCLASSIFIED;
+    /**
+     * True for any taxonomy class, UNCLASSIFIED included (owner decision B, 2026-10-18: an unmapped decline gets a payment
+     * link, never a retry). A legacy (pre-M3) or unknown value is false and fails closed.
+     */
+    public static boolean isTaxonomyClass(String value) {
+        return fromStored(value) != null;
     }
 }

@@ -377,18 +377,22 @@ public class DemoController {
     // ------------------------------------------------------------------
     private void runUnclassifiedFailure(UUID merchantId, DemoTriggerResponse response, List<String> steps) {
         BigDecimal amount = new BigDecimal("3499.00");
-        Setup setup = prepareCampaign(merchantId, "unclassified_failure", "payment_failed", "customer", null, amount, response, steps, false);
+        Setup setup = prepareCampaign(merchantId, "unclassified_failure", "payment_failed", "customer",
+                "CUSTOMER_ACTION_REQUIRED", amount, response, steps);
 
-        campaignLifecycleService.transitionState(merchantId, setup.campaignId(), CampaignStatus.EXHAUSTED,
-                "Ineligible for recovery: failure class 'UNCLASSIFIED' has no documented recovery mapping", "SYSTEM", null);
-        steps.add("UNCLASSIFIED is ineligible (as in the real pipeline): campaign EXHAUSTED, no payment action was taken.");
+        // Owner decision B (ADR-003 §4), as in the real pipeline: an unmapped decline gets a payment link, never a retry.
+        ActionIntent intent = actionIntentService.createActionIntentFromCompliance(merchantId, setup.campaignId());
+        transitionToActionPending(merchantId, setup.campaignId(),
+                simulated("payment link requested for an UNCLASSIFIED failure (intent " + intent.getId() + ")"));
+        steps.add("UNCLASSIFIED (payment_failed has no documented mapping): compliance allows a payment link only; ActionIntent "
+                + intent.getId() + " (" + intent.getActionType() + ") created. A retry would be blocked (RETRY_NOT_ALLOWED_UNCLASSIFIED).");
 
         Campaign updated = campaignRepository.findById(setup.campaignId()).orElseThrow();
         response.setCampaignId(updated.getId());
         response.setFinalCampaignState(updated.getCurrentState());
         response.setAmount(amount);
-        response.setMessage("Scenario UNCLASSIFIED_FAILURE completed: the undocumented failure left campaign "
-                + updated.getId() + " in " + updated.getCurrentState() + ".");
+        response.setMessage("Scenario UNCLASSIFIED_FAILURE completed: the undocumented failure got a payment-link intent, never a "
+                + "retry; campaign " + updated.getId() + " is " + updated.getCurrentState() + ".");
     }
 
     // ------------------------------------------------------------------

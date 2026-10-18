@@ -48,6 +48,7 @@ public class DeterministicRecoveryPathIntegrationTest {
     @Autowired private ComplianceDecisionRepository complianceDecisionRepository;
     @Autowired private AuditLogRepository auditLogRepository;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.mend.service.ComplianceService complianceService;
 
     private Merchant merchantA;
     private Merchant merchantB;
@@ -106,7 +107,7 @@ public class DeterministicRecoveryPathIntegrationTest {
     }
 
     @Test
-    @DisplayName("2. Unmapped reason (was: malformed AI response) -> UNCLASSIFIED -> campaign EXHAUSTED, no intent")
+    @DisplayName("2. Unmapped reason (was: malformed AI response) -> UNCLASSIFIED -> payment-link intent only")
     void unmappedReasonIsUnclassified() {
         String paymentId = pay("d2");
         WebhookEvent event = failedEvent(paymentId, "bad_code", "customer");
@@ -116,8 +117,8 @@ public class DeterministicRecoveryPathIntegrationTest {
         assertEquals("UNCLASSIFIED", result.getFailureClass());
         assertNull(result.getConfidence());
         Campaign campaign = campaignRepository.findByMerchantIdAndPaymentId(merchantA.getId(), paymentId).orElseThrow();
-        assertEquals(CampaignStatus.EXHAUSTED, campaign.getCurrentState());
-        assertTrue(actionIntentRepository.findByCampaignId(campaign.getId()).isEmpty());
+        // M3 behaviour change (owner decision B, ADR-003 §4): was EXHAUSTED with no intent; now a payment link, never a retry
+        assertLinkOnly(campaign);
     }
 
     @Test
@@ -231,7 +232,7 @@ public class DeterministicRecoveryPathIntegrationTest {
     }
 
     @Test
-    @DisplayName("10. Untrusted reason text (was: prohibited action proposal): 'bypass_safety_direct_charge' -> UNCLASSIFIED, EXHAUSTED")
+    @DisplayName("10. Untrusted reason text (was: prohibited action proposal): 'bypass_safety_direct_charge' -> UNCLASSIFIED, link only")
     void untrustedReasonTextIsNeverActedOn() {
         String paymentId = pay("d10");
         WebhookEvent event = failedEvent(paymentId, "bypass_safety_direct_charge", "customer");
@@ -241,8 +242,8 @@ public class DeterministicRecoveryPathIntegrationTest {
 
         assertEquals("UNCLASSIFIED", result.getFailureClass());
         Campaign campaign = campaignRepository.findByMerchantIdAndPaymentId(merchantA.getId(), paymentId).orElseThrow();
-        assertEquals(CampaignStatus.EXHAUSTED, campaign.getCurrentState());
-        assertTrue(actionIntentRepository.findByCampaignId(campaign.getId()).isEmpty());
+        // M3 behaviour change (owner decision B, ADR-003 §4): was EXHAUSTED with no intent; now a payment link, never a retry
+        assertLinkOnly(campaign);
     }
 
     @Test
@@ -283,4 +284,46 @@ public class DeterministicRecoveryPathIntegrationTest {
         assertThat(auditLogs).anyMatch(log -> "ACTION_EXECUTED".equals(log.getEventType()) || "ACTION_EXECUTING".equals(log.getEventType())
                 || "ACTION_SUCCEEDED".equals(log.getEventType()));
     }
+
+    private void assertLinkOnly(Campaign campaign) {
+        Campaign current = campaignRepository.findById(campaign.getId()).orElseThrow();
+        assertEquals(CampaignStatus.ACTION_PENDING, current.getCurrentState());
+        List<ActionIntent> intents = actionIntentRepository.findByCampaignId(campaign.getId());
+        assertEquals(1, intents.size());
+        assertEquals("REQUEST_CUSTOMER_ACTION", intents.get(0).getActionType());
+        assertEquals("CUSTOMER_ACTION_REQUIRED", intents.get(0).getSourceStrategy());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"card_declined", "payment_declined", "debit_declined", "payment_failed",
+            "authorisation_declined_by_psp", "payment_session_expired", "payment_collect_request_expired"})
+    @DisplayName("Decision B: every documented-but-unmapped reason -> UNCLASSIFIED -> a payment-link intent, never a retry")
+    void unmappedDeclinesGetALinkOnly(String reason) {
+        String paymentId = pay("u" + Math.abs(reason.hashCode() % 100000));
+        WebhookEvent event = failedEvent(paymentId, reason, "customer");
+
+        ClassificationResult result = classificationService.classifyAndPersist(event, ProviderFailure.of("BAD_REQUEST_ERROR", reason, "customer"));
+
+        assertEquals("UNCLASSIFIED", result.getFailureClass());
+        assertLinkOnly(campaignRepository.findByMerchantIdAndPaymentId(merchantA.getId(), paymentId).orElseThrow());
+    }
+
+    @Test
+    @DisplayName("Decision B: a RETRY strategy forced onto an UNCLASSIFIED campaign is blocked by compliance")
+    void retryForcedOntoUnclassifiedIsBlocked() {
+        Campaign campaign = new Campaign(UUID.randomUUID(), merchantA.getId());
+        campaign.setPaymentId(pay("rf"));
+        campaign.setFailureClass("UNCLASSIFIED");
+        campaign.setCurrentState(CampaignStatus.ELIGIBLE);
+        campaign = campaignRepository.saveAndFlush(campaign);
+        com.mend.testsupport.TestClassifications.saveFor(classificationResultRepository, campaign);
+
+        for (RecoveryStrategy retry : new RecoveryStrategy[]{RecoveryStrategy.RETRY_IMMEDIATELY, RecoveryStrategy.RETRY_LATER}) {
+            var decision = complianceService.evaluateAndPersistCompliance(merchantA.getId(), campaign.getId(), retry);
+            assertTrue(decision.isBlocked(), retry.name());
+            assertEquals(ComplianceReason.RETRY_NOT_ALLOWED_UNCLASSIFIED, decision.getReason(), retry.name());
+        }
+        assertTrue(actionIntentRepository.findByCampaignId(campaign.getId()).isEmpty());
+    }
 }
+

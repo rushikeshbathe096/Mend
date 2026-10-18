@@ -51,8 +51,8 @@ public class DemoScenarioDto {
                         "SIMULATED: The same webhook delivered twice is intercepted by strict deduplication: one business event, one recovery path.",
                         List.of("Webhook delivery", "Duplicate delivery", "Deduplication", "One business event")),
                 new DemoScenarioDto("UNCLASSIFIED_FAILURE", "Unclassified Failure",
-                        "SIMULATED: a failure whose error_reason has no documented mapping is UNCLASSIFIED; it is never guessed and no payment action is taken.",
-                        List.of("Failed payment", "UNCLASSIFIED", "Ineligible", "No payment action", "Campaign closed"))
+                        "SIMULATED: a failure whose error_reason has no documented mapping is UNCLASSIFIED; it is never guessed. It gets a payment link only, never a retry.",
+                        List.of("Failed payment", "UNCLASSIFIED", "Payment link only", "Compliance blocks any retry", "ActionIntent"))
         );
     }
 }

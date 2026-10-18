@@ -12,5 +12,7 @@ public enum ComplianceReason {
     TENANT_MISMATCH,
     MISSING_CONTEXT,
     /** M3 U2.4: the customer opted out of contact (reply policy); fail closed until a merchant admin clears it. */
-    CUSTOMER_OPTED_OUT
+    CUSTOMER_OPTED_OUT,
+    /** M3 follow-up (owner decision B): a retry strategy for an UNCLASSIFIED failure; only a payment link is allowed. */
+    RETRY_NOT_ALLOWED_UNCLASSIFIED
 }
