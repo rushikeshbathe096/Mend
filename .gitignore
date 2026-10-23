@@ -22,3 +22,4 @@ __pycache__/
 ai-service/.pytest_cache/
 docs/**/*.txt
 !docs/**/*-summary.txt
+.claude/worktrees/
