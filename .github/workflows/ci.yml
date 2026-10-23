@@ -93,11 +93,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: scripts/ci/frontend.sh
 
-    ai-service:
+  ai-service:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: mend_user
           POSTGRES_PASSWORD: mend_password
@@ -105,12 +106,17 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd "pg_isready -U mend_user"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "pg_isready -U mend_user" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MEND_CHECKPOINT_POSTGRES_URI: postgresql://mend_user:mend_password@localhost:5433/mend
     steps:
-      # ...your existing steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-service/requirements.txt
+      - run: scripts/ci/ai-service.sh
 
   secret-scan:
     runs-on: ubuntu-latest
